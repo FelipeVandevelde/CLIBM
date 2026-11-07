@@ -10,7 +10,20 @@ When you run `./install.sh` (or `.\install.ps1` on Windows) inside `plugins/clib
 2. **`stdio` only** — Stdio JSON-RPC 2.0 transport only
 3. **`http` only** — Local HTTP + SSE JSON-RPC 2.0 server only (`127.0.0.1:7879`)
 
+```powershell
+# Windows PowerShell — Quick install directly from GitHub:
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1 | iex
+
+# Or from local folder:
+cd plugins\clibm-mcp
+.\install.ps1
+```
+
 ```bash
+# Linux / macOS — Quick install directly from GitHub:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.sh | bash
+
+# Or from local folder:
 cd plugins/clibm-mcp
 ./install.sh
 # Or non-interactively:

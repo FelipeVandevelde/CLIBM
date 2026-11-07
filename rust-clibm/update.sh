@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
 # CLIBM v0.1.0 — GitHub Update Script (Linux / macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-REPO_URL="${CLIBM_GITHUB_REPO:-https://github.com/clibm-org/clibm.git}"
+REPO_URL="${CLIBM_GITHUB_REPO:-https://github.com/FelipeVandevelde/CLIBM.git}"
 BRANCH="main"
 UPDATE_PLUGINS=false
 

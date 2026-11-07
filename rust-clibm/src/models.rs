@@ -31,7 +31,7 @@ fn default_priority_str() -> String {
 }
 
 fn default_github_repo_url() -> String {
-    "https://github.com/clibm-org/clibm.git".to_string()
+    "https://github.com/FelipeVandevelde/CLIBM.git".to_string()
 }
 
 fn default_update_branch() -> String {

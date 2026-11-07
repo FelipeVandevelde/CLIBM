@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # CLIBM v0.1.0 — GitHub Update Script (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
@@ -7,7 +7,7 @@
 #   .\update.ps1 [-Repo <github-url>] [-Branch <branch>] [-Plugins]
 
 param (
-    [string]$Repo = "https://github.com/clibm-org/clibm.git",
+    [string]$Repo = "https://github.com/FelipeVandevelde/CLIBM.git",
     [string]$Branch = "main",
     [switch]$Plugins = $false
 )
@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 if (Test-Path ".clibm\config.json") {
     try {
         $Cfg = Get-Content ".clibm\config.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($Cfg.github_repo_url -and $Repo -eq "https://github.com/clibm-org/clibm.git") {
+        if ($Cfg.github_repo_url -and $Repo -eq "https://github.com/FelipeVandevelde/CLIBM.git") {
             $Repo = $Cfg.github_repo_url
         }
         if ($Cfg.update_branch -and $Branch -eq "main") {

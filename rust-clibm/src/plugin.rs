@@ -362,18 +362,114 @@ impl PluginManager {
         Ok(())
     }
 
-    /// Builds and installs a standalone plugin from its own folder in `plugins/`,
-    /// copies its binary to the configured `install_path` (or `~/.local/bin`),
-    /// and registers it in the plugin registry.
+    /// Resolves an official plugin's remote directory and source file list for raw GitHub installation.
+    fn official_remote_plugin_spec(raw_target: &str) -> Option<(&'static str, &'static str, Vec<&'static str>)> {
+        let leaf = Path::new(raw_target)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(raw_target);
+        let norm = Self::normalize_plugin_name(leaf);
+        match norm.as_str() {
+            "clibm-mcp" => Some(("clibm-mcp", "plugins/clibm-mcp", vec!["Cargo.toml", "src/main.rs"])),
+            "clibm-docs" => Some(("clibm-docs", "plugins/clibm-docs", vec!["Cargo.toml", "src/main.rs"])),
+            "clibm-dep-audit" => Some(("clibm-dep-audit", "plugins/clibm-dep-audit", vec!["Cargo.toml", "src/main.rs"])),
+            "clibm-export-md" => Some(("clibm-export-md", "plugins/clibm-export-md", vec!["Cargo.toml", "src/main.rs"])),
+            "clibm-workflow-lint" => Some(("clibm-workflow-lint", "plugins/clibm-workflow-lint", vec!["Cargo.toml", "src/main.rs"])),
+            "clibm-tui" => Some(("clibm-tui", "plugins/clibm-tui", vec!["Cargo.toml", "src/main.rs"])),
+            "clibm-web" => Some(("clibm-web", "plugins/clibm-web", vec!["Cargo.toml", "src/main.rs", "src/ui.html"])),
+            "plugin-template" | "clibm-plugin-template" => Some((
+                "clibm-plugin-template",
+                "plugins/plugin-template",
+                vec!["Cargo.toml", "src/main.rs"],
+            )),
+            _ => None,
+        }
+    }
+
+    fn download_remote_file(url: &str, dest: &Path) -> Result<()> {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let status = if cfg!(windows) {
+            Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    &format!(
+                        "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                        url.replace('\'', "''"),
+                        dest.display().to_string().replace('\'', "''")
+                    ),
+                ])
+                .status()
+                .context("Failed to invoke PowerShell Invoke-WebRequest")?
+        } else {
+            Command::new("curl")
+                .args(["-fsSL", url, "-o"])
+                .arg(dest)
+                .status()
+                .context("Failed to invoke curl for remote plugin source download")?
+        };
+        if !status.success() {
+            bail!("Failed to download remote plugin file from {}", url);
+        }
+        Ok(())
+    }
+
+    /// Builds and installs a standalone plugin from its own folder in `plugins/` (or fetches from
+    /// raw GitHub if not present locally), copies its binary to the configured `install_path`
+    /// (or `~/.local/bin` / `~/.clibm-bin`), and registers it in the plugin registry.
     pub fn install_plugin_from_dir(
         cas: &CasStore,
         plugin_dir: &Path,
         mcp_transport: Option<&str>,
     ) -> Result<PluginManifest> {
-        let cargo_toml = plugin_dir.join("Cargo.toml");
+        let mut resolved_dir = plugin_dir.to_path_buf();
+        let mut temp_cleanup_dir: Option<PathBuf> = None;
+
+        if !resolved_dir.join("Cargo.toml").exists() {
+            let raw_str = plugin_dir.to_string_lossy();
+            if let Some((crate_name, remote_subpath, files)) = Self::official_remote_plugin_spec(&raw_str) {
+                let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let local_candidates = [
+                    cwd.join(remote_subpath),
+                    cwd.join("rust-clibm").join(remote_subpath),
+                ];
+                if let Some(found_local) = local_candidates.into_iter().find(|p| p.join("Cargo.toml").exists()) {
+                    resolved_dir = found_local;
+                } else {
+                    let raw_base = env::var("CLIBM_RAW_BASE").unwrap_or_else(|_| {
+                        "https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm".to_string()
+                    });
+                    let base_url = format!("{}/{}", raw_base.trim_end_matches('/'), remote_subpath);
+                    let tmp_dir = env::temp_dir().join(format!(
+                        "{}-remote-build-{}",
+                        crate_name,
+                        std::process::id()
+                    ));
+                    let _ = fs::remove_dir_all(&tmp_dir);
+                    fs::create_dir_all(&tmp_dir)?;
+                    println!(
+                        "==> [Remote Mode] Fetching '{}' from {}...",
+                        crate_name, base_url
+                    );
+                    for rel in files {
+                        let url = format!("{}/{}", base_url, rel);
+                        let dest = tmp_dir.join(rel);
+                        Self::download_remote_file(&url, &dest)?;
+                    }
+                    resolved_dir = tmp_dir.clone();
+                    temp_cleanup_dir = Some(tmp_dir);
+                }
+            }
+        }
+
+        let cargo_toml = resolved_dir.join("Cargo.toml");
         if !cargo_toml.exists() {
             bail!(
-                "No Cargo.toml found in '{}'. Plugins must be installed from within their own plugin folder.",
+                "No Cargo.toml found in '{}'. Provide a valid plugin folder path or an official plugin name (e.g. `clibm plugin install tui`).",
                 plugin_dir.display()
             );
         }
@@ -401,17 +497,29 @@ impl PluginManager {
             })
             .unwrap_or_else(|| format!("Installed CLIBM standalone plugin ({})", name));
 
-        println!("==> Building plugin '{}' in {}...", name, plugin_dir.display());
+        println!("==> Building plugin '{}' in {}...", name, resolved_dir.display());
         let status = Command::new("cargo")
             .args(["build", "--release"])
-            .current_dir(plugin_dir)
+            .current_dir(&resolved_dir)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .status()
-            .context("Failed to invoke `cargo build --release` in plugin folder")?;
+            .status();
+
+        let status = match status {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(tmp) = &temp_cleanup_dir {
+                    let _ = fs::remove_dir_all(tmp);
+                }
+                return Err(e).context("Failed to invoke `cargo build --release` in plugin folder");
+            }
+        };
 
         if !status.success() {
+            if let Some(tmp) = &temp_cleanup_dir {
+                let _ = fs::remove_dir_all(tmp);
+            }
             bail!("Plugin build failed for '{}'", name);
         }
 
@@ -420,8 +528,11 @@ impl PluginManager {
         } else {
             name.clone()
         };
-        let built_bin = plugin_dir.join("target").join("release").join(&bin_filename);
+        let built_bin = resolved_dir.join("target").join("release").join(&bin_filename);
         if !built_bin.exists() {
+            if let Some(tmp) = &temp_cleanup_dir {
+                let _ = fs::remove_dir_all(tmp);
+            }
             bail!("Expected release binary not found at {}", built_bin.display());
         }
 
@@ -440,6 +551,10 @@ impl PluginManager {
         fs::create_dir_all(&install_dir)?;
         let installed_bin = install_dir.join(&bin_filename);
         fs::copy(&built_bin, &installed_bin)?;
+
+        if let Some(tmp) = temp_cleanup_dir {
+            let _ = fs::remove_dir_all(tmp);
+        }
 
         if !Self::is_dir_on_env_path(&install_dir) {
             println!(
@@ -583,15 +698,22 @@ fn main() -> Result<()> {{
             "#!/usr/bin/env bash\n\
 # Encoding: UTF-8 with BOM (EF BB BF)\n\
 set -euo pipefail\n\
-cd \"$(dirname \"$0\")\"\n\
+if [ -n \"${{BASH_SOURCE[0]:-}}\" ] && [ -f \"${{BASH_SOURCE[0]}}\" ]; then\n\
+  SCRIPT_DIR=\"$(cd \"$(dirname \"${{BASH_SOURCE[0]}}\")\" && pwd)\"\n\
+  cd \"$SCRIPT_DIR\"\n\
+else\n\
+  SCRIPT_DIR=\"$(pwd)\"\n\
+fi\n\
 HOOK_MODE=\"\"\n\
 INSTALL_DIR=\"${{INSTALL_DIR:-}}\"\n\
+RAW_BASE_URL=\"\"\n\
 NO_MODIFY_PATH=false\n\
 NON_INTERACTIVE=false\n\
 while [[ $# -gt 0 ]]; do\n\
   case \"$1\" in\n\
     --hooks|-h) HOOK_MODE=\"$2\"; shift 2 ;;\n\
     --install-dir|--path) INSTALL_DIR=\"$2\"; shift 2 ;;\n\
+    --raw-base) RAW_BASE_URL=\"$2\"; shift 2 ;;\n\
     --no-modify-path) NO_MODIFY_PATH=true; shift ;;\n\
     -y|--yes) NON_INTERACTIVE=true; shift ;;\n\
     *) shift ;;\n\
@@ -605,7 +727,7 @@ if [ -z \"$HOOK_MODE\" ]; then\n\
     echo \"[1/2] Select Hook Subscription Mode for {crate_name}:\"\n\
     echo \"  1) Default Hooks [Default]\"\n\
     echo \"  2) Manual Only\"\n\
-    read -r -p \"Select option [1-2, default: 1]: \" c || true\n\
+    clibm_prompt \"Select option [1-2, default: 1]: \" c\n\
     case \"${{c:-1}}\" in 2) HOOK_MODE=\"manual-only\" ;; *) HOOK_MODE=\"default-hooks\" ;; esac\n\
   fi\n\
 fi\n\
@@ -613,7 +735,7 @@ if [ -z \"$INSTALL_DIR\" ]; then\n\
   if [ \"$NON_INTERACTIVE\" = true ]; then\n\
     INSTALL_DIR=\"$HOME/.local/bin\"\n\
   else\n\
-    read -r -p \"[2/2] Specify install directory [default: $HOME/.local/bin]: \" d || true\n\
+    clibm_prompt \"[2/2] Specify install directory [default: $HOME/.local/bin]: \" d\n\
     INSTALL_DIR=\"${{d:-$HOME/.local/bin}}\"\n\
   fi\n\
 fi\n\
@@ -621,10 +743,9 @@ INSTALL_DIR=$(clibm_normalize_dir \"$INSTALL_DIR\")\n\
 if ! clibm_core_installed \"$INSTALL_DIR\"; then\n\
   echo \"==> Warning: CLIBM core installation not detected. {crate_name} depends on CLIBM core at runtime; proceeding with standalone plugin installation...\"\n\
 fi\n\
-cargo build --release\n\
 mkdir -p \"$INSTALL_DIR\"\n\
-cp \"target/release/{crate_name}\" \"$INSTALL_DIR/{crate_name}\"\n\
-chmod +x \"$INSTALL_DIR/{crate_name}\"\n\
+clibm_build_and_stage \"{crate_name}\" \"plugins/{crate_name}\" \"$INSTALL_DIR/{crate_name}\" \"$SCRIPT_DIR\" \"$RAW_BASE_URL\" \"Cargo.toml\" \"src/main.rs\"\n\
+clibm_register_global_plugin \"{crate_name}\" \"{description}\" \"$HOOK_MODE\" \"$INSTALL_DIR/{crate_name}\"\n\
 if [ \"$NO_MODIFY_PATH\" = false ]; then\n\
   clibm_path_add \"{crate_name}\" \"$INSTALL_DIR\"\n\
   echo \"==> User PATH ($INSTALL_DIR): $CLIBM_LAST_PATH_STATUS\"\n\
@@ -640,11 +761,13 @@ echo \"Installed {crate_name} to $INSTALL_DIR/{crate_name} (hooks: $HOOK_MODE)\"
 param(\n\
     [string]$Hooks = \"\",\n\
     [string]$InstallDir = \"\",\n\
+    [string]$RawBaseUrl = \"\",\n\
     [switch]$NoModifyPath = $false,\n\
     [switch]$Yes = $false\n\
 )\n\
 $ErrorActionPreference = \"Stop\"\n\
-Set-Location -Path $PSScriptRoot\n\
+$ScriptDir = if ($PSScriptRoot) {{ $PSScriptRoot }} else {{ (Get-Location).ProviderPath }}\n\
+if ($PSScriptRoot) {{ Set-Location -Path $PSScriptRoot }}\n\
 {ps1_helper_block}\n\
 if (-not $Hooks) {{\n\
   if ($Yes) {{ $Hooks = \"default-hooks\" }} else {{\n\
@@ -652,7 +775,8 @@ if (-not $Hooks) {{\n\
     if ($c -eq \"2\") {{ $Hooks = \"manual-only\" }} else {{ $Hooks = \"default-hooks\" }}\n\
   }}\n\
 }}\n\
-$DefaultBin = Join-Path $HOME \".clibm-bin\"\n\
+$HomeDir = Get-ClibmHomeDirectory\n\
+$DefaultBin = Join-Path $HomeDir \".clibm-bin\"\n\
 if (-not $InstallDir) {{\n\
   if ($Yes) {{ $InstallDir = $DefaultBin }} else {{\n\
     $d = Read-Host \"[2/2] Specify install directory [default: $DefaultBin]\"\n\
@@ -663,9 +787,10 @@ $InstallDir = Resolve-ClibmNormalizedDir $InstallDir\n\
 if (-not (Test-ClibmCoreInstalled -ExtraDir $InstallDir)) {{\n\
   Write-Host \"==> Warning: CLIBM core installation not detected. {crate_name} depends on CLIBM core at runtime; proceeding with standalone plugin installation...\" -ForegroundColor Yellow\n\
 }}\n\
-cargo build --release\n\
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null\n\
-Copy-Item \"target\\release\\{crate_name}.exe\" -Destination (Join-Path $InstallDir \"{crate_name}.exe\") -Force\n\
+$InstalledExe = Join-Path $InstallDir \"{crate_name}.exe\"\n\
+Invoke-ClibmBuildAndStage -CrateName \"{crate_name}\" -RemoteSubPath \"plugins/{crate_name}\" -SourceFiles @(\"Cargo.toml\", \"src/main.rs\") -DestinationBinary $InstalledExe -LocalCandidateDir $ScriptDir -RawBaseUrl $RawBaseUrl | Out-Null\n\
+Register-ClibmGlobalPlugin -Name \"{crate_name}\" -Description \"{description}\" -Hooks @($Hooks) -Executable $InstalledExe\n\
 if (-not $NoModifyPath) {{\n\
   $PathRes = Add-ClibmPathEntry -Owner \"{crate_name}\" -Dir $InstallDir\n\
   Write-Host \"==> User PATH ($InstallDir): $($PathRes.Status)\"\n\

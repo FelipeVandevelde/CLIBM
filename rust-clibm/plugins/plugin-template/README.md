@@ -29,6 +29,18 @@ cd plugins/clibm-my-plugin
 ./install.sh
 ```
 
+### Option C: Direct Install from GitHub Raw Script
+
+```powershell
+# Windows PowerShell:
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.ps1 | iex
+```
+
+```bash
+# Linux / macOS:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.sh | bash
+```
+
 ## Running Your Plugin in an Ongoing Project
 
 Once installed via `./install.sh` (or `.\install.ps1` on Windows) or `clibm plugin install .`, run your plugin inside any CLIBM project:

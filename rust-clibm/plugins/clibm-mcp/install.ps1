@@ -14,21 +14,25 @@ param (
     [string]$Transport = "",
     [int]$Port = 0,
     [string]$InstallDir = "",
+    [string]$RawBaseUrl = "",
     [switch]$NoModifyPath = $false,
     [switch]$Yes = $false
 )
 
 $ErrorActionPreference = "Stop"
-Set-Location -Path $PSScriptRoot
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).ProviderPath }
+if ($PSScriptRoot) {
+    Set-Location -Path $PSScriptRoot
+}
 
 # >>> clibm-env-path (generated) >>>
 function Initialize-ClibmEnvPathHelper {
     $HomeDir = if ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
     $LibDir = Join-Path $HomeDir '.clibm\lib'
     $HelperFile = Join-Path $LibDir 'env-path.ps1'
-    $EmbeddedVersion = 1
+    $EmbeddedVersion = 2
     $EmbeddedContent = @'
-# clibm-env-path-version: 1
+# clibm-env-path-version: 2
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
 # Encoding: UTF-8 with BOM (EF BB BF)
@@ -451,6 +455,196 @@ function Test-ClibmCoreInstalled {
     }
     return $false
 }
+
+function Get-ClibmRawRepoBase {
+    if ($env:CLIBM_RAW_BASE) {
+        return $env:CLIBM_RAW_BASE.TrimEnd('/')
+    }
+    return 'https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm'
+}
+
+function Resolve-ClibmLocalSourceDir {
+    param(
+        [Parameter(Mandatory = $true)][string]$CrateName,
+        [string]$RemoteSubPath = '',
+        [string]$CandidateDir = ''
+    )
+    $SearchDirs = @()
+    if (-not [string]::IsNullOrWhiteSpace($CandidateDir)) {
+        $SearchDirs += $CandidateDir
+        if (-not [string]::IsNullOrWhiteSpace($RemoteSubPath)) {
+            $SearchDirs += (Join-Path $CandidateDir ($RemoteSubPath -replace '/', '\'))
+            $SearchDirs += (Join-Path (Join-Path $CandidateDir 'rust-clibm') ($RemoteSubPath -replace '/', '\'))
+        } else {
+            $SearchDirs += (Join-Path $CandidateDir 'rust-clibm')
+        }
+    }
+    $Cwd = (Get-Location).ProviderPath
+    if ($Cwd -and ($SearchDirs -notcontains $Cwd)) {
+        $SearchDirs += $Cwd
+        if (-not [string]::IsNullOrWhiteSpace($RemoteSubPath)) {
+            $SearchDirs += (Join-Path $Cwd ($RemoteSubPath -replace '/', '\'))
+            $SearchDirs += (Join-Path (Join-Path $Cwd 'rust-clibm') ($RemoteSubPath -replace '/', '\'))
+        } else {
+            $SearchDirs += (Join-Path $Cwd 'rust-clibm')
+        }
+    }
+    foreach ($Dir in $SearchDirs) {
+        if ([string]::IsNullOrWhiteSpace($Dir)) { continue }
+        $CargoFile = Join-Path $Dir 'Cargo.toml'
+        $MainFile  = Join-Path $Dir 'src\main.rs'
+        if ((Test-Path -LiteralPath $CargoFile) -and (Test-Path -LiteralPath $MainFile)) {
+            try {
+                $Toml = Get-Content -LiteralPath $CargoFile -Raw -Encoding UTF8 -ErrorAction Stop
+                $Escaped = [regex]::Escape($CrateName)
+                if ($Toml -match ('(?m)^\s*name\s*=\s*"' + $Escaped + '"')) {
+                    return $Dir
+                }
+            } catch {
+                # Continue searching
+            }
+        }
+    }
+    return ''
+}
+
+function Invoke-ClibmBuildAndStage {
+    param(
+        [Parameter(Mandatory = $true)][string]$CrateName,
+        [AllowEmptyString()][string]$RemoteSubPath = '',
+        [Parameter(Mandatory = $true)][string[]]$SourceFiles,
+        [Parameter(Mandatory = $true)][string]$DestinationBinary,
+        [string]$LocalCandidateDir = '',
+        [string]$RawBaseUrl = ''
+    )
+    $DestDir = Split-Path -Parent $DestinationBinary
+    if ($DestDir -and -not (Test-Path -LiteralPath $DestDir)) {
+        New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+    }
+
+    $LocalDir = Resolve-ClibmLocalSourceDir -CrateName $CrateName -RemoteSubPath $RemoteSubPath -CandidateDir $LocalCandidateDir
+    if (-not [string]::IsNullOrWhiteSpace($LocalDir)) {
+        Write-Host "==> [Local Mode] Building $CrateName from local source ($LocalDir)..."
+        Push-Location -LiteralPath $LocalDir
+        try {
+            cargo build --release
+            if ($LASTEXITCODE -ne 0) {
+                throw "cargo build --release failed for $CrateName (exit code $LASTEXITCODE)"
+            }
+            $BuiltBin = Join-Path $LocalDir "target\release\$CrateName.exe"
+            if (-not (Test-Path -LiteralPath $BuiltBin)) {
+                throw "Compiled binary not found at $BuiltBin"
+            }
+            Copy-Item -LiteralPath $BuiltBin -Destination $DestinationBinary -Force
+        } finally {
+            Pop-Location
+        }
+        return 'local'
+    }
+
+    $Base = if (-not [string]::IsNullOrWhiteSpace($RawBaseUrl)) {
+        $RawBaseUrl.TrimEnd('/')
+    } else {
+        $RootBase = Get-ClibmRawRepoBase
+        if ([string]::IsNullOrWhiteSpace($RemoteSubPath)) {
+            $RootBase
+        } else {
+            "$RootBase/$($RemoteSubPath.Trim('/'))"
+        }
+    }
+
+    $TempBuildDir = Join-Path ([System.IO.Path]::GetTempPath()) ("$CrateName-build-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $TempBuildDir | Out-Null
+    Write-Host "==> [Remote Mode] Fetching $CrateName source files from GitHub ($Base)..."
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        foreach ($RelFile in $SourceFiles) {
+            $CleanRel = $RelFile.TrimStart('/')
+            $DestFile = Join-Path $TempBuildDir ($CleanRel -replace '/', '\')
+            $DestParent = Split-Path -Parent $DestFile
+            if ($DestParent -and -not (Test-Path -LiteralPath $DestParent)) {
+                New-Item -ItemType Directory -Force -Path $DestParent | Out-Null
+            }
+            $FileUrl = "$Base/$CleanRel"
+            Invoke-WebRequest -Uri $FileUrl -OutFile $DestFile -UseBasicParsing
+        }
+
+        Write-Host "==> Building $CrateName (Release Mode)..."
+        Push-Location -LiteralPath $TempBuildDir
+        try {
+            cargo build --release
+            if ($LASTEXITCODE -ne 0) {
+                throw "cargo build --release failed for $CrateName (exit code $LASTEXITCODE)"
+            }
+            $BuiltBin = Join-Path $TempBuildDir "target\release\$CrateName.exe"
+            if (-not (Test-Path -LiteralPath $BuiltBin)) {
+                throw "Compiled binary not found at $BuiltBin"
+            }
+            Copy-Item -LiteralPath $BuiltBin -Destination $DestinationBinary -Force
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        if (Test-Path -LiteralPath $TempBuildDir) {
+            Remove-Item -LiteralPath $TempBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return 'remote'
+}
+
+function Register-ClibmGlobalPlugin {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Description,
+        [Parameter(Mandatory = $true)][string[]]$Hooks,
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [string]$Version = '0.1.0'
+    )
+    $HomeDir = Get-ClibmHomeDirectory
+    $PluginsDir = Join-Path (Join-Path $HomeDir '.clibm') 'plugins'
+    New-Item -ItemType Directory -Force -Path $PluginsDir | Out-Null
+    $RegFile = Join-Path $PluginsDir 'registry.json'
+    $List = @()
+    if (Test-Path -LiteralPath $RegFile) {
+        try {
+            $Raw = [System.IO.File]::ReadAllText($RegFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF)
+            $Parsed = $Raw | ConvertFrom-Json
+            if ($null -ne $Parsed) {
+                $List = @($Parsed)
+            }
+        } catch {
+            $List = @()
+        }
+    }
+    $Updated = @()
+    $Found = $false
+    $NewEntry = [PSCustomObject][ordered]@{
+        name        = $Name
+        version     = $Version
+        description = $Description
+        enabled     = $true
+        hooks       = @($Hooks)
+        executable  = ($Executable -replace '\\', '/')
+    }
+    foreach ($Item in $List) {
+        if ($null -eq $Item) { continue }
+        if ($Item.name -eq $Name) {
+            $Updated += $NewEntry
+            $Found = $true
+        } else {
+            $Updated += $Item
+        }
+    }
+    if (-not $Found) {
+        $Updated += $NewEntry
+    }
+    $Json = ConvertTo-Json -InputObject @($Updated) -Depth 5
+    if (-not $Json.TrimStart().StartsWith('[')) {
+        $Json = "[$Json]"
+    }
+    $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($RegFile, $Json, $Utf8Bom)
+}
 '@
     $NeedsWrite = $true
     if (Test-Path -LiteralPath $HelperFile) {
@@ -512,7 +706,8 @@ if ($Port -le 0) {
     }
 }
 
-$DefaultBin = Join-Path $HOME ".clibm-bin"
+$HomeDir = Get-ClibmHomeDirectory
+$DefaultBin = Join-Path $HomeDir ".clibm-bin"
 if (-not $InstallDir) {
     if ($Yes) {
         $InstallDir = $DefaultBin
@@ -529,12 +724,17 @@ if (-not (Test-ClibmCoreInstalled -ExtraDir $InstallDir)) {
 }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-$GlobalCfgDir = Join-Path $HOME ".clibm"
+$GlobalCfgDir = Join-Path $HomeDir ".clibm"
 New-Item -ItemType Directory -Force -Path $GlobalCfgDir | Out-Null
 
-Write-Host "==> Building standalone clibm-mcp plugin (Release Mode)..."
-cargo build --release
-Copy-Item "target\release\clibm-mcp.exe" -Destination (Join-Path $InstallDir "clibm-mcp.exe") -Force
+$InstalledExe = Join-Path $InstallDir "clibm-mcp.exe"
+$InstallMode = Invoke-ClibmBuildAndStage `
+    -CrateName "clibm-mcp" `
+    -RemoteSubPath "plugins/clibm-mcp" `
+    -SourceFiles @("Cargo.toml", "src/main.rs") `
+    -DestinationBinary $InstalledExe `
+    -LocalCandidateDir $ScriptDir `
+    -RawBaseUrl $RawBaseUrl
 
 $Utf8BomEncoding = New-Object System.Text.UTF8Encoding($true)
 $McpCfg = @{
@@ -546,6 +746,17 @@ $McpCfg = @{
 } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $GlobalCfgDir "mcp-config.json"), $McpCfg, $Utf8BomEncoding)
 
+$McpHooks = switch ($Transport) {
+    "stdio" { @("mcp-stdio", "on-ai-tool-call") }
+    "http"  { @("mcp-http-sse", "on-ai-tool-call") }
+    default { @("mcp-stdio", "mcp-http-sse", "on-ai-tool-call") }
+}
+Register-ClibmGlobalPlugin `
+    -Name "clibm-mcp" `
+    -Description "Self-hosted Model Context Protocol (MCP) server plugin for AI agents over stdio JSON-RPC 2.0 and HTTP SSE" `
+    -Hooks $McpHooks `
+    -Executable $InstalledExe
+
 if (-not $NoModifyPath) {
     $PathRes = Add-ClibmPathEntry -Owner "clibm-mcp" -Dir $InstallDir
     Write-Host "==> User PATH ($InstallDir): $($PathRes.Status)"
@@ -553,6 +764,6 @@ if (-not $NoModifyPath) {
     Write-Host "==> User PATH: skipped (-NoModifyPath)"
 }
 
-Write-Host "==> Installed clibm-mcp.exe to $InstallDir\clibm-mcp.exe"
+Write-Host "==> Installed clibm-mcp.exe ($InstallMode mode) to $InstalledExe"
 Write-Host "==> Saved MCP transport preference ('$Transport', port $Port) to ~/.clibm/mcp-config.json"
 Write-Host "==> Run inside any ongoing project via: clibm plugin run mcp"

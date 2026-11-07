@@ -4,17 +4,27 @@
 
 ---
 
-## 1. Folder-Scoped Build & Installation
+## 1. Build & Installation (Direct from GitHub or Local Folder)
 
-`clibm-tui` is a standalone Cargo crate and **must be built or installed from within its own `clibm-tui` directory**:
+`clibm-tui` supports both direct installation via its raw GitHub script and local folder-scoped installation:
 
-### Linux
+### Quick Install (Direct from GitHub)
+```powershell
+# Windows PowerShell:
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1 | iex
+```
+```bash
+# Linux / macOS:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.sh | bash
+```
+
+### Local Installation (Linux / macOS)
 ```bash
 cd plugins/clibm-tui   # (or cd clibm-tui if extracted from clibm-tui-v0.1.0.zip)
 ./install.sh
 ```
 
-### Windows (PowerShell)
+### Local Installation (Windows PowerShell)
 ```powershell
 cd plugins\clibm-tui   # (or cd clibm-tui if extracted from clibm-tui-v0.1.0.zip)
 .\install.ps1

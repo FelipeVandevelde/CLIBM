@@ -158,33 +158,40 @@ $BlockRegex = [regex]::new(
     '(?ms)^# >>> clibm-env-path \(generated\) >>>.*?^# <<< clibm-env-path \(generated\) <<<'
 )
 
+$TargetFiles = @(
+    (Join-Path $RustRoot 'install.ps1'),
+    (Join-Path $RustRoot 'install.sh')
+)
 foreach ($PDir in $PluginDirs) {
     foreach ($ScriptName in @('install.ps1', 'uninstall.ps1', 'install.sh', 'uninstall.sh')) {
-        $FilePath = Join-Path $PDir.FullName $ScriptName
-        if (-not (Test-Path -LiteralPath $FilePath)) { continue }
+        $TargetFiles += (Join-Path $PDir.FullName $ScriptName)
+    }
+}
 
-        $RawText = [System.IO.File]::ReadAllText($FilePath, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF)
-        $UsesCrlf = $RawText -match "`r`n"
-        $NormLf = $RawText -replace "`r`n", "`n"
+foreach ($FilePath in $TargetFiles) {
+    if (-not (Test-Path -LiteralPath $FilePath)) { continue }
 
-        if (-not $BlockRegex.IsMatch($NormLf)) {
-            $DriftedFiles += "$FilePath (missing generated marker block)"
-            continue
-        }
+    $RawText = [System.IO.File]::ReadAllText($FilePath, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF)
+    $UsesCrlf = $RawText -match "`r`n"
+    $NormLf = $RawText -replace "`r`n", "`n"
 
-        $DesiredBlock = if ($ScriptName.EndsWith('.ps1')) { $Ps1BlockLf } else { $ShBlockLf }
-        $ReplacedLf = $BlockRegex.Replace($NormLf, { param($m) $DesiredBlock }, 1)
+    if (-not $BlockRegex.IsMatch($NormLf)) {
+        $DriftedFiles += "$FilePath (missing generated marker block)"
+        continue
+    }
 
-        $FinalText = if ($UsesCrlf) { $ReplacedLf -replace "`n", "`r`n" } else { $ReplacedLf }
-        $HasBom = Test-HasUtf8Bom $FilePath
+    $DesiredBlock = if ($FilePath.EndsWith('.ps1')) { $Ps1BlockLf } else { $ShBlockLf }
+    $ReplacedLf = $BlockRegex.Replace($NormLf, { param($m) $DesiredBlock }, 1)
 
-        if (($ReplacedLf -cne $NormLf) -or (-not $HasBom)) {
-            if ($Check) {
-                $DriftedFiles += $FilePath
-            } else {
-                [System.IO.File]::WriteAllText($FilePath, $FinalText, $Utf8Bom)
-                $UpdatedFiles += $FilePath
-            }
+    $FinalText = if ($UsesCrlf) { $ReplacedLf -replace "`n", "`r`n" } else { $ReplacedLf }
+    $HasBom = Test-HasUtf8Bom $FilePath
+
+    if (($ReplacedLf -cne $NormLf) -or (-not $HasBom)) {
+        if ($Check) {
+            $DriftedFiles += $FilePath
+        } else {
+            [System.IO.File]::WriteAllText($FilePath, $FinalText, $Utf8Bom)
+            $UpdatedFiles += $FilePath
         }
     }
 }

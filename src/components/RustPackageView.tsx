@@ -50,29 +50,31 @@ export const RustPackageView: React.FC = () => {
 
   const linuxQuickStart =
     packageScope === 'core-only'
-      ? `# 1. Unzip Core-Only archive (strictly clibm_core + clibm CLI, zero plugins)
-unzip clibm-core-v0.1.0.zip
-cd clibm-core
+      ? `# Option A — Quick Install Directly from GitHub (No Clone Required):
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
 
-# 2. Build & install core CLI (registers install dir on user PATH; open a new terminal after)
+# Option B — Local Install from Downloaded Core-Only Archive:
+unzip clibm-core-v0.1.0.zip && cd clibm-core
 ./install.sh
 
-# 3. Open a new terminal (or reload your shell profile) and initialize a project
+# Initialize a project in a new terminal session:
 mkdir -p ~/my-project && cd ~/my-project
 clibm init --workspace "engineering" --code "CLIBM" --name "CLIBM Core"
 clibm task add "Implement BLAKE3 CAS storage" -p critical -c in-progress --tags rust,cas
 clibm board show
 clibm commit -m "Initial project snapshot"`
-      : `# 1. Unzip Bundle & install Core CLI (registers install dir on user PATH)
-unzip clibm-v0.1.0-workspace.zip
-cd clibm
-./install.sh
+      : `# Option A — Quick Install Core + Plugins Directly from GitHub:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.sh | bash
 
-# 2. Build & install plugins strictly from within their own folders
+# Option B — Local Install from Complete Bundle Archive:
+unzip clibm-v0.1.0-workspace.zip && cd clibm
+./install.sh
 (cd plugins/clibm-tui && ./install.sh)
 (cd plugins/clibm-web && ./install.sh)
 
-# 3. Open a new terminal and run installed plugins inside any ongoing CLIBM project!
+# Open a new terminal and run installed plugins inside any ongoing CLIBM project!
 mkdir -p ~/my-project && cd ~/my-project
 clibm init --workspace "engineering" --code "CLIBM" --name "Ongoing Project"
 clibm plugin list
@@ -81,29 +83,33 @@ clibm plugin run web -- --port 7878  # or run binary directly: clibm-web --port 
 
   const windowsQuickStart =
     packageScope === 'core-only'
-      ? `# 1. Extract Core-Only archive in PowerShell (zero plugins)
+      ? `# Option A — Quick Install Directly from GitHub in PowerShell (No Clone Required):
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1 | iex
+
+# Option B — Local Install from Downloaded Core-Only Archive:
 Expand-Archive -Path .\\clibm-core-v0.1.0.zip -DestinationPath .
 cd clibm-core
-
-# 2. Build & install core CLI (registers install dir on user PATH; open a new terminal after)
 .\\install.ps1
 
-# 3. Open a new PowerShell window and initialize an ongoing project anywhere on disk
+# Open a new PowerShell window and initialize an ongoing project anywhere on disk:
 mkdir ~\\my-project ; cd ~\\my-project
 clibm init --workspace "engineering" --code "CLIBM" --name "CLIBM Core"
 clibm task add "Implement BLAKE3 CAS storage" -p critical -c in-progress --tags rust,cas
 clibm board show
 clibm commit -m "Initial project snapshot"`
-      : `# 1. Extract Bundle & install Core CLI in PowerShell (registers install dir on user PATH)
+      : `# Option A — Quick Install Core + Plugins Directly from GitHub in PowerShell:
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1 | iex
+
+# Option B — Local Install from Complete Bundle Archive:
 Expand-Archive -Path .\\clibm-v0.1.0-workspace.zip -DestinationPath .
 cd clibm
 .\\install.ps1
-
-# 2. Build & install plugins strictly from within their own folders
 Push-Location plugins\\clibm-tui ; .\\install.ps1 ; Pop-Location
 Push-Location plugins\\clibm-web ; .\\install.ps1 ; Pop-Location
 
-# 3. Open a new PowerShell window and run installed plugins inside any ongoing CLIBM project!
+# Open a new PowerShell window and run installed plugins inside any ongoing CLIBM project!
 mkdir ~\\my-project ; cd ~\\my-project
 clibm init --workspace "engineering" --code "CLIBM" --name "Ongoing Project"
 clibm plugin list

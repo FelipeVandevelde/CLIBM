@@ -22,7 +22,23 @@ A lightweight, high-performance, local-first CLI project management system writt
 ### Prerequisites
 - Rust toolchain (`rustc` & `cargo` 1.75+): https://rustup.rs
 
-### Install Core CLI
+### Quick Installation (Direct from GitHub)
+```powershell
+# Windows PowerShell (interactive one-liner via raw GitHub script)
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1 | iex
+
+# Or download and run with parameters:
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1" -OutFile install.ps1
+.\install.ps1 -Yes
+```
+
+```bash
+# Linux / macOS (interactive or non-interactive via raw GitHub script)
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- -y
+```
+
+### Local Installation (From Cloned Repository)
 ```bash
 # Linux / macOS (interactive wizard; registers install dir on user PATH)
 ./install.sh
@@ -75,15 +91,25 @@ clibm fsck
 
 Plugins are standalone Cargo crates located in their own directories (`plugins/clibm-tui` and `plugins/clibm-web`). Each plugin has its own `README.md` and install scripts and must be built or installed from within its own folder.
 
-### 1. Install a Plugin from its Respective Folder
-```bash
-# Install the Ratatui Terminal UI plugin:
-cd plugins/clibm-tui
-./install.sh          # or: clibm plugin install .
+### 1. Install a Plugin (Direct from GitHub or From Local Folder)
+```powershell
+# Windows PowerShell — Quick install directly from GitHub:
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1 | iex
+```
 
-# Install the Self-Hosted Web Server plugin:
+```bash
+# Linux / macOS — Quick install directly from GitHub:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.sh | bash
+
+# Or install from its local folder inside a cloned repository:
+cd plugins/clibm-tui
+./install.sh          # On Windows: .\install.ps1 (or: clibm plugin install .)
+
 cd ../clibm-web
-./install.sh          # or: clibm plugin install .
+./install.sh          # On Windows: .\install.ps1 (or: clibm plugin install .)
 ```
 
 ### 2. Run the Installed Plugin Inside Any Ongoing Project

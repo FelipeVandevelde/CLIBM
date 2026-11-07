@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==============================================================================
 # clibm-workflow-lint — Uninstallation Script (Linux / macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
@@ -9,7 +9,7 @@ set -euo pipefail
 clibm_init_env_path_helper() {
   local lib_dir="${HOME}/.clibm/lib"
   local helper_file="${lib_dir}/env-path.sh"
-  local embedded_version=1
+  local embedded_version=2
   local needs_write=1
   local bom=$'\xef\xbb\xbf'
   if [ -f "$helper_file" ]; then
@@ -24,7 +24,7 @@ clibm_init_env_path_helper() {
   if [ "$needs_write" -eq 1 ]; then
     mkdir -p "$lib_dir"
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
-# clibm-env-path-version: 1
+# clibm-env-path-version: 2
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
 # Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
@@ -431,6 +431,159 @@ clibm_core_installed() {
     fi
   done
   return 1
+}
+
+clibm_raw_repo_base() {
+  local base="${CLIBM_RAW_BASE:-https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm}"
+  printf '%s\n' "${base%/}"
+}
+
+clibm_prompt() {
+  local prompt_text="$1"
+  local __outvar="$2"
+  local ans=""
+  if [ -t 0 ]; then
+    read -r -p "$prompt_text" ans || true
+  elif [ -e /dev/tty ] && [ -r /dev/tty ]; then
+    read -r -p "$prompt_text" ans < /dev/tty || true
+  fi
+  printf -v "$__outvar" '%s' "$ans"
+}
+
+clibm_download_url() {
+  local url="$1"
+  local dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$dest"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$dest" "$url"
+  else
+    echo "ERROR: Neither 'curl' nor 'wget' is available to download ${url}" >&2
+    return 1
+  fi
+}
+
+clibm_resolve_local_source_dir() {
+  local crate_name="$1"
+  local remote_subpath="${2:-}"
+  local candidate_dir="${3:-}"
+  local cwd_dir
+  cwd_dir="$(pwd)"
+  local d
+  for d in \
+    "$candidate_dir" \
+    "${candidate_dir:+${candidate_dir}/${remote_subpath}}" \
+    "${candidate_dir:+${candidate_dir}/rust-clibm/${remote_subpath}}" \
+    "${candidate_dir:+${candidate_dir}/rust-clibm}" \
+    "$cwd_dir" \
+    "${cwd_dir}/${remote_subpath}" \
+    "${cwd_dir}/rust-clibm/${remote_subpath}" \
+    "${cwd_dir}/rust-clibm"; do
+    [ -z "$d" ] && continue
+    d="${d%/}"
+    if [ -f "${d}/Cargo.toml" ] && [ -f "${d}/src/main.rs" ]; then
+      if grep -Eq "^[[:space:]]*name[[:space:]]*=[[:space:]]*\"${crate_name}\"" "${d}/Cargo.toml" 2>/dev/null; then
+        printf '%s\n' "$d"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+clibm_build_and_stage() {
+  local crate_name="$1"
+  local remote_subpath="$2"
+  local dest_binary="$3"
+  local local_candidate_dir="$4"
+  local raw_base_override="$5"
+  shift 5
+
+  mkdir -p "$(dirname "$dest_binary")"
+
+  local local_dir=""
+  if local_dir=$(clibm_resolve_local_source_dir "$crate_name" "$remote_subpath" "$local_candidate_dir"); then
+    echo "==> [Local Mode] Building ${crate_name} from local source (${local_dir})..."
+    (cd "$local_dir" && cargo build --release)
+    cp "${local_dir}/target/release/${crate_name}" "$dest_binary"
+    chmod +x "$dest_binary"
+    return 0
+  fi
+
+  local base_url
+  if [ -n "$raw_base_override" ]; then
+    base_url="${raw_base_override%/}"
+  else
+    local root_base
+    root_base=$(clibm_raw_repo_base)
+    if [ -n "$remote_subpath" ]; then
+      base_url="${root_base}/${remote_subpath#/}"
+    else
+      base_url="$root_base"
+    fi
+  fi
+
+  local tmp_build_dir
+  tmp_build_dir=$(mktemp -d "${TMPDIR:-/tmp}/${crate_name}-build.XXXXXX")
+  echo "==> [Remote Mode] Fetching ${crate_name} source files from GitHub (${base_url})..."
+  local rel_file clean_rel
+  for rel_file in "$@"; do
+    clean_rel="${rel_file#/}"
+    if ! clibm_download_url "${base_url}/${clean_rel}" "${tmp_build_dir}/${clean_rel}"; then
+      rm -rf "$tmp_build_dir"
+      return 1
+    fi
+  done
+
+  echo "==> Building ${crate_name} (Release Mode)..."
+  if ! (cd "$tmp_build_dir" && cargo build --release); then
+    rm -rf "$tmp_build_dir"
+    return 1
+  fi
+  cp "${tmp_build_dir}/target/release/${crate_name}" "$dest_binary"
+  chmod +x "$dest_binary"
+  rm -rf "$tmp_build_dir"
+  return 0
+}
+
+clibm_register_global_plugin() {
+  local name="$1"
+  local description="$2"
+  local hooks_csv="$3"
+  local executable="$4"
+  local version="${5:-0.1.0}"
+  local plugins_dir="${HOME}/.clibm/plugins"
+  local reg_file="${plugins_dir}/registry.json"
+  mkdir -p "$plugins_dir"
+
+  local hooks_json=""
+  local IFS=','
+  local h
+  for h in $hooks_csv; do
+    [ -z "$h" ] && continue
+    if [ -z "$hooks_json" ]; then
+      hooks_json="\"${h}\""
+    else
+      hooks_json="${hooks_json}, \"${h}\""
+    fi
+  done
+  if [ -z "$hooks_json" ]; then
+    hooks_json="\"manual-run\""
+  fi
+
+  local new_obj
+  new_obj=$(printf '{\n    "name": "%s",\n    "version": "%s",\n    "description": "%s",\n    "enabled": true,\n    "hooks": [%s],\n    "executable": "%s"\n  }' \
+    "$name" "$version" "$description" "$hooks_json" "$executable")
+
+  if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
+    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
+  elif ! grep -Fq "\"name\": \"${name}\"" "$reg_file" 2>/dev/null; then
+    local bom=$'\xef\xbb\xbf'
+    local body
+    body=$(tr -d '\r' < "$reg_file" | sed "1s/^${bom}//" | sed '$d')
+    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+  fi
 }
 CLIBM_ENV_PATH_EOF
   fi

@@ -21,8 +21,8 @@
 - [Monorepo Structure](#monorepo-structure)
 - [Quick Start — Native Rust CLI](#quick-start--native-rust-cli)
   - [Prerequisites](#prerequisites)
-  - [Installation (Linux / macOS)](#installation-linux--macos)
-  - [Installation (Windows PowerShell)](#installation-windows-powershell)
+  - [Quick Installation (Direct from GitHub)](#quick-installation-direct-from-github)
+  - [Local Installation (From Cloned Repository)](#local-installation-from-cloned-repository)
   - [Non-Elevated User PATH & Reference-Counted Ledger](#non-elevated-user-path--reference-counted-ledger)
   - [First Steps in a Project](#first-steps-in-a-project)
 - [Quick Start — Web Workbench & Simulator](#quick-start--web-workbench--simulator)
@@ -193,43 +193,77 @@ CLIBM/
 
 - **Rust toolchain** (`rustc` & `cargo` 1.75+): Install via [rustup.rs](https://rustup.rs).
 
-### Installation (Linux / macOS)
+### Quick Installation (Direct from GitHub)
 
-Run the interactive installation script:
+You can install CLIBM directly via the raw GitHub installer without manually cloning the repository. The installer automatically fetches the required Rust sources into a temporary build workspace, compiles the release binary, registers your user `PATH`, and cleans up temporary files.
 
-```bash
-cd rust-clibm
-./install.sh
+#### Windows (PowerShell)
+
+Run the interactive one-liner in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1 | iex
 ```
 
-For automated / non-interactive installations (e.g., CI/CD):
+Or download `install.ps1` and run it with custom flags (such as `-Yes`, `-Profile with-defaults`, or `-NoModifyPath`):
 
-```bash
-./install.sh -y --no-modify-path
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1" -OutFile install.ps1
+.\install.ps1
+# Silent / non-interactive install (Pure Core):
+.\install.ps1 -Yes
+# Silent install including the 3 default plugins (dep-audit, export-md, workflow-lint):
+.\install.ps1 -Profile with-defaults -Yes
 ```
 
-Or install directly via Cargo:
+#### Linux / macOS (Bash / Zsh)
+
+Run the interactive installer directly from GitHub:
 
 ```bash
-cargo install --path .
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
 ```
 
-> **Tip:** Open a new terminal session or run `source ~/.bashrc` (or `source ~/.zshrc`) to load the updated `PATH`.
+Or pass non-interactive flags:
 
-### Installation (Windows PowerShell)
+```bash
+# Silent install (Pure Core):
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- -y
 
-Run the interactive PowerShell installer:
+# Silent install including the 3 default plugins:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- --with-defaults -y
+```
+
+---
+
+### Local Installation (From Cloned Repository)
+
+When running `install.ps1` or `install.sh` from a local clone of the repository, the installer automatically detects the local `Cargo.toml` and `src/` tree and builds directly in-place.
+
+#### Windows (PowerShell — Local)
 
 ```powershell
 cd rust-clibm
 .\install.ps1
-```
 
-For silent / non-interactive installation without modifying `PATH`:
-
-```powershell
+# For silent / non-interactive installation without modifying PATH:
 .\install.ps1 -Yes -NoModifyPath
 ```
+
+#### Linux / macOS (Bash — Local)
+
+```bash
+cd rust-clibm
+./install.sh
+
+# For automated / non-interactive installations (e.g., CI/CD):
+./install.sh -y --no-modify-path
+
+# Or install directly via Cargo:
+cargo install --path .
+```
+
+> **Tip:** Open a new terminal session (or run `source ~/.bashrc` / `source ~/.zshrc` on Linux/macOS) to load the updated `PATH`.
 
 ### Non-Elevated User PATH & Reference-Counted Ledger
 
@@ -305,30 +339,63 @@ CLIBM provides a folder-scoped, contract-driven plugin architecture. Plugins are
 
 ### Official Plugins Overview
 
-| Plugin | Folder | Description |
-|---|---|---|
-| **`clibm-mcp`** | `plugins/clibm-mcp` | **Model Context Protocol (MCP)** server for AI assistants (Claude Desktop, Cursor, Windsurf). Supports stdio JSON-RPC 2.0 and HTTP SSE transports. |
-| **`clibm-tui`** | `plugins/clibm-tui` | Interactive terminal UI powered by **Ratatui + Crossterm** with split-pane Kanban, CAS inspector, and commit creator. |
-| **`clibm-web`** | `plugins/clibm-web` | Self-hosted single-binary HTTP server (`tiny_http`) with an embedded monochromatic workbench (`ui.html`). |
-| **`clibm-dep-audit`**| `plugins/clibm-dep-audit` | Analyzes task dependency DAGs, flags cycle risks, and highlights critical-path blockers. |
-| **`clibm-docs`** | `plugins/clibm-docs` | Context generator that teaches AI agents and developers how to interact with CLIBM repositories. |
-| **`clibm-export-md`**| `plugins/clibm-export-md` | Exports current project/sprint trees into portable, publication-ready Markdown tables. |
-| **`clibm-workflow-lint`**| `plugins/clibm-workflow-lint` | Validates Kanban WIP column limits, unblocked dependencies, and workflow policies. |
-| **`plugin-template`**| `plugins/plugin-template` | Reference starter template for building custom CLIBM plugins in Rust. |
+| Plugin | Folder | Raw PowerShell Installer (`install.ps1`) | Description |
+|---|---|---|---|
+| **`clibm-mcp`** | `plugins/clibm-mcp` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1) | **Model Context Protocol (MCP)** server for AI assistants (Claude Desktop, Cursor, Windsurf). Supports stdio JSON-RPC 2.0 and HTTP SSE transports. |
+| **`clibm-tui`** | `plugins/clibm-tui` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1) | Interactive terminal UI powered by **Ratatui + Crossterm** with split-pane Kanban, CAS inspector, and commit creator. |
+| **`clibm-web`** | `plugins/clibm-web` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1) | Self-hosted single-binary HTTP server (`tiny_http`) with an embedded monochromatic workbench (`ui.html`). |
+| **`clibm-dep-audit`**| `plugins/clibm-dep-audit` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/install.ps1) | Analyzes task dependency DAGs, flags cycle risks, and highlights critical-path blockers. |
+| **`clibm-docs`** | `plugins/clibm-docs` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1) | Context generator that teaches AI agents and developers how to interact with CLIBM repositories. |
+| **`clibm-export-md`**| `plugins/clibm-export-md` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-export-md/install.ps1) | Exports current project/sprint trees into portable, publication-ready Markdown tables. |
+| **`clibm-workflow-lint`**| `plugins/clibm-workflow-lint` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1) | Validates Kanban WIP column limits, unblocked dependencies, and workflow policies. |
+| **`plugin-template`**| `plugins/plugin-template` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.ps1) | Reference starter template for building custom CLIBM plugins in Rust. |
 
 ### Installing & Running Plugins in Ongoing Projects
 
-Each plugin is self-contained. You build and install it from its own folder:
+Every standalone plugin supports **both** direct installation from its raw GitHub script and local folder installation.
+
+#### Option A: Quick Plugin Installation via GitHub Raw Script
+
+```powershell
+# Windows PowerShell — Install any official plugin directly from GitHub:
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-export-md/install.ps1 | iex
+irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1 | iex
+```
 
 ```bash
-# Example: Install the Ratatui TUI plugin
+# Linux / macOS — Install any official plugin directly from GitHub:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.sh | bash
+```
+
+```bash
+# Or via the CLIBM CLI (fetches from GitHub automatically if not in a local clone):
+clibm plugin install tui
+clibm plugin install web
+clibm plugin install mcp --transport both
+```
+
+#### Option B: Local Plugin Installation (From Cloned Repository)
+
+Each plugin is self-contained. When working in a local repository clone, you can build and install it directly from its own folder:
+
+```bash
+# Example: Install the Ratatui TUI plugin locally
 cd rust-clibm/plugins/clibm-tui
 ./install.sh            # On Windows: .\install.ps1
 
-# Example: Install the Self-Hosted Web Server plugin
+# Example: Install the Self-Hosted Web Server plugin locally
 cd ../clibm-web
 ./install.sh            # On Windows: .\install.ps1
 ```
+
+#### Running Installed Plugins
 
 Once installed, navigate to **any ongoing CLIBM project directory** (containing `.clibm/`) and run:
 
