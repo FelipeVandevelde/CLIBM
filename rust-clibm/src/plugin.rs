@@ -42,21 +42,29 @@ fn build_embedded_ps1_helper_block() -> String {
     format!(
         "# >>> clibm-env-path (generated) >>>\n\
 function Initialize-ClibmEnvPathHelper {{\n\
-    $HomeDir = if ($HOME) {{ $HOME }} elseif ($env:USERPROFILE) {{ $env:USERPROFILE }} else {{ [Environment]::GetFolderPath('UserProfile') }}\n\
+    try {{ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue }} catch {{}}\n\
+    $HomeDir = if ($env:CLIBM_HOME) {{ $env:CLIBM_HOME }} elseif ($HOME) {{ $HOME }} elseif ($env:USERPROFILE) {{ $env:USERPROFILE }} else {{ [Environment]::GetFolderPath('UserProfile') }}\n\
     $LibDir = Join-Path $HomeDir '.clibm\\lib'\n\
     $HelperFile = Join-Path $LibDir 'env-path.ps1'\n\
     $EmbeddedVersion = {ver}\n\
     $EmbeddedContent = @'\n\
 {clean}\n\
 '@\n\
+    $script:ClibmEmbeddedHelperContent = $EmbeddedContent\n\
     $NeedsWrite = $true\n\
     if (Test-Path -LiteralPath $HelperFile) {{\n\
         try {{\n\
             $HeadLines = Get-Content -LiteralPath $HelperFile -TotalCount 5 -Encoding UTF8 -ErrorAction Stop\n\
             foreach ($Line in $HeadLines) {{\n\
                 if ($Line -match 'clibm-env-path-version:\\s*(\\d+)') {{\n\
-                    if ([int]$Matches[1] -ge $EmbeddedVersion) {{\n\
+                    if ([int]$Matches[1] -gt $EmbeddedVersion) {{\n\
                         $NeedsWrite = $false\n\
+                    }} elseif ([int]$Matches[1] -eq $EmbeddedVersion) {{\n\
+                        $ExistingClean = ([System.IO.File]::ReadAllText($HelperFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF) -replace \"`r`n\", \"`n\").TrimEnd(\"`n\")\n\
+                        $TargetClean = ($EmbeddedContent -replace \"`r`n\", \"`n\").TrimEnd(\"`n\")\n\
+                        if ($ExistingClean -ceq $TargetClean) {{\n\
+                            $NeedsWrite = $false\n\
+                        }}\n\
                     }}\n\
                     break\n\
                 }}\n\
@@ -72,7 +80,7 @@ function Initialize-ClibmEnvPathHelper {{\n\
     }}\n\
     return $HelperFile\n\
 }}\n\
-. (Initialize-ClibmEnvPathHelper)\n\
+try {{ . (Initialize-ClibmEnvPathHelper) }} catch {{ Invoke-Expression $script:ClibmEmbeddedHelperContent }}\n\
 # <<< clibm-env-path (generated) <<<"
     )
 }
@@ -87,7 +95,8 @@ fn build_embedded_sh_helper_block() -> String {
     format!(
         "# >>> clibm-env-path (generated) >>>\n\
 clibm_init_env_path_helper() {{\n\
-  local lib_dir=\"${{HOME}}/.clibm/lib\"\n\
+  local home_dir=\"${{CLIBM_HOME:-${{HOME}}}}\"\n\
+  local lib_dir=\"${{home_dir%/}}/.clibm/lib\"\n\
   local helper_file=\"${{lib_dir}}/env-path.sh\"\n\
   local embedded_version={ver}\n\
   local needs_write=1\n\
@@ -97,7 +106,7 @@ clibm_init_env_path_helper() {{\n\
     first_three=$(head -c 3 \"$helper_file\" 2>/dev/null || true)\n\
     local existing_ver\n\
     existing_ver=$(tr -d '\\r' < \"$helper_file\" | sed \"1s/^${{bom}}//\" | sed -n '1,5s/^# clibm-env-path-version:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' | head -n1)\n\
-    if [ \"$first_three\" != \"$bom\" ] && [ -n \"$existing_ver\" ] && [ \"$existing_ver\" -ge \"$embedded_version\" ] 2>/dev/null; then\n\
+    if [ \"$first_three\" != \"$bom\" ] && [ -n \"$existing_ver\" ] && [ \"$existing_ver\" -gt \"$embedded_version\" ] 2>/dev/null; then\n\
       needs_write=0\n\
     fi\n\
   fi\n\
@@ -199,12 +208,45 @@ impl PluginManager {
     /// Returns the user-level global plugin registry path (`~/.clibm/plugins/registry.json`)
     /// so plugins installed once from their own folder are available in all ongoing projects.
     pub fn global_registry_file() -> Option<PathBuf> {
-        let home = env::var("HOME")
+        let home = env::var("CLIBM_HOME")
+            .or_else(|_| env::var("HOME"))
             .or_else(|_| env::var("USERPROFILE"))
             .ok()?;
         let dir = PathBuf::from(home).join(".clibm").join("plugins");
         let _ = fs::create_dir_all(&dir);
         Some(dir.join("registry.json"))
+    }
+
+    /// Returns candidate `registry.json` files located alongside installed binaries
+    /// (`<install_path>/registry.json`, `<current_exe_dir>/registry.json`, `~/.clibm-bin/registry.json`, `~/.local/bin/registry.json`).
+    pub fn extra_registry_files(cas: &CasStore) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        let home = env::var("CLIBM_HOME")
+            .or_else(|_| env::var("HOME"))
+            .or_else(|_| env::var("USERPROFILE"))
+            .ok()
+            .map(PathBuf::from);
+
+        if let Ok(cfg) = cas.load_config() {
+            if !cfg.install_path.is_empty() {
+                let expanded = if let Some(ref h) = home {
+                    cfg.install_path.replace('~', &h.to_string_lossy())
+                } else {
+                    cfg.install_path.clone()
+                };
+                files.push(PathBuf::from(expanded).join("registry.json"));
+            }
+        }
+        if let Ok(exe) = env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                files.push(dir.join("registry.json"));
+            }
+        }
+        if let Some(h) = home {
+            files.push(h.join(".clibm-bin").join("registry.json"));
+            files.push(h.join(".local").join("bin").join("registry.json"));
+        }
+        files
     }
 
     /// Resolves short plugin aliases to their standalone crate binary names in `plugins/`.
@@ -234,7 +276,19 @@ impl PluginManager {
             return Some(explicit);
         }
 
-        if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        if let Ok(exe) = env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let candidate = dir.join(&exe_name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        if let Ok(home) = env::var("CLIBM_HOME")
+            .or_else(|_| env::var("HOME"))
+            .or_else(|_| env::var("USERPROFILE"))
+        {
             let home_path = PathBuf::from(home);
             let candidates = [
                 home_path.join(".local").join("bin").join(&exe_name),
@@ -291,42 +345,52 @@ impl PluginManager {
     }
 
     /// Loads the merged plugin registry (project `.clibm/plugins/registry.json` +
-    /// global `~/.clibm/plugins/registry.json`). Starts empty on a Pure Core repository.
+    /// global `~/.clibm/plugins/registry.json` + binary directory `registry.json`).
+    /// Starts empty on a Pure Core repository and persists merged manifests into `.clibm/plugins/registry.json`.
     pub fn load_registry(cas: &CasStore) -> Result<Vec<PluginManifest>> {
         let reg_file = cas.plugins_dir().join("registry.json");
-        let mut plugins = if reg_file.exists() {
+        let had_reg_file = reg_file.exists();
+        let mut plugins = if had_reg_file {
             let content = read_utf8_strip_bom(&reg_file)?;
             serde_json::from_str::<Vec<PluginManifest>>(&content)
                 .unwrap_or_else(|_| Self::default_manifests())
         } else {
-            let defaults = Self::default_manifests();
-            if cas.is_initialized() {
-                let _ = Self::save_registry(cas, &defaults);
-            }
-            defaults
+            Self::default_manifests()
         };
 
-        // Merge global registry (`~/.clibm/plugins/registry.json`)
+        let mut changed = !had_reg_file;
+        let mut candidate_files = Vec::new();
         if let Some(global_file) = Self::global_registry_file() {
-            if global_file.exists() {
-                if let Ok(content) = read_utf8_strip_bom(&global_file) {
-                    if let Ok(global_plugins) =
+            candidate_files.push(global_file);
+        }
+        candidate_files.extend(Self::extra_registry_files(cas));
+
+        for ext_file in candidate_files {
+            if ext_file.exists() && ext_file != reg_file {
+                if let Ok(content) = read_utf8_strip_bom(&ext_file) {
+                    if let Ok(ext_plugins) =
                         serde_json::from_str::<Vec<PluginManifest>>(&content)
                     {
-                        for gp in global_plugins {
+                        for gp in ext_plugins {
                             if let Some(existing) =
                                 plugins.iter_mut().find(|p| p.name == gp.name)
                             {
                                 if existing.executable.is_none() && gp.executable.is_some() {
                                     existing.executable = gp.executable;
+                                    changed = true;
                                 }
                             } else {
                                 plugins.push(gp);
+                                changed = true;
                             }
                         }
                     }
                 }
             }
+        }
+
+        if cas.is_initialized() && changed {
+            let _ = Self::save_registry(cas, &plugins);
         }
 
         Ok(plugins)
@@ -341,23 +405,31 @@ impl PluginManager {
         Ok(())
     }
 
+    pub fn save_manifest_to_file(reg_file: &Path, manifest: &PluginManifest) -> Result<()> {
+        if let Some(parent) = reg_file.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let mut list: Vec<PluginManifest> = if reg_file.exists() {
+            read_utf8_strip_bom(reg_file)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        if let Some(existing) = list.iter_mut().find(|p| p.name == manifest.name) {
+            *existing = manifest.clone();
+        } else {
+            list.push(manifest.clone());
+        }
+        write_utf8_bom_file(reg_file, &serde_json::to_string_pretty(&list)?)?;
+        Ok(())
+    }
+
     pub fn save_global_manifest(manifest: PluginManifest) -> Result<()> {
         if let Some(global_file) = Self::global_registry_file() {
-            let mut global_list: Vec<PluginManifest> = if global_file.exists() {
-                read_utf8_strip_bom(&global_file)
-                    .ok()
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-
-            if let Some(existing) = global_list.iter_mut().find(|p| p.name == manifest.name) {
-                *existing = manifest;
-            } else {
-                global_list.push(manifest);
-            }
-            write_utf8_bom_file(&global_file, &serde_json::to_string_pretty(&global_list)?)?;
+            Self::save_manifest_to_file(&global_file, &manifest)?;
         }
         Ok(())
     }
@@ -606,6 +678,7 @@ impl PluginManager {
         };
 
         Self::save_global_manifest(manifest.clone())?;
+        let _ = Self::save_manifest_to_file(&install_dir.join("registry.json"), &manifest);
 
         if cas.is_initialized() {
             let mut project_plugins = Self::load_registry(cas)?;
@@ -693,18 +766,31 @@ fn main() -> Result<()> {{
 
         let ps1_helper_block = build_embedded_ps1_helper_block();
         let sh_helper_block = build_embedded_sh_helper_block();
+        let default_hooks: Vec<String> = if hooks.is_empty() {
+            vec!["pre-commit".to_string(), "on-task-move".to_string()]
+        } else {
+            hooks.clone()
+        };
+        let default_hooks_csv = default_hooks.join(",");
+        let default_hooks_ps1 = default_hooks
+            .iter()
+            .map(|h| format!("\"{}\"", h))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         let install_sh = format!(
             "#!/usr/bin/env bash\n\
 # Encoding: UTF-8 with BOM (EF BB BF)\n\
 set -euo pipefail\n\
+CALLER_DIR=\"$(pwd)\"\n\
 if [ -n \"${{BASH_SOURCE[0]:-}}\" ] && [ -f \"${{BASH_SOURCE[0]}}\" ]; then\n\
   SCRIPT_DIR=\"$(cd \"$(dirname \"${{BASH_SOURCE[0]}}\")\" && pwd)\"\n\
   cd \"$SCRIPT_DIR\"\n\
 else\n\
-  SCRIPT_DIR=\"$(pwd)\"\n\
+  SCRIPT_DIR=\"$CALLER_DIR\"\n\
 fi\n\
 HOOK_MODE=\"\"\n\
+SCOPE=\"\"\n\
 INSTALL_DIR=\"${{INSTALL_DIR:-}}\"\n\
 RAW_BASE_URL=\"\"\n\
 NO_MODIFY_PATH=false\n\
@@ -712,6 +798,7 @@ NON_INTERACTIVE=false\n\
 while [[ $# -gt 0 ]]; do\n\
   case \"$1\" in\n\
     --hooks|-h) HOOK_MODE=\"$2\"; shift 2 ;;\n\
+    --scope|-s) SCOPE=\"$2\"; shift 2 ;;\n\
     --install-dir|--path) INSTALL_DIR=\"$2\"; shift 2 ;;\n\
     --raw-base) RAW_BASE_URL=\"$2\"; shift 2 ;;\n\
     --no-modify-path) NO_MODIFY_PATH=true; shift ;;\n\
@@ -724,18 +811,30 @@ if [ -z \"$HOOK_MODE\" ]; then\n\
   if [ \"$NON_INTERACTIVE\" = true ]; then\n\
     HOOK_MODE=\"default-hooks\"\n\
   else\n\
-    echo \"[1/2] Select Hook Subscription Mode for {crate_name}:\"\n\
-    echo \"  1) Default Hooks [Default]\"\n\
+    echo \"[1/3] Select Hook Subscription Mode for {crate_name}:\"\n\
+    echo \"  1) Default Hooks ({default_hooks_csv}) [Default]\"\n\
     echo \"  2) Manual Only\"\n\
-    clibm_prompt \"Select option [1-2, default: 1]: \" c\n\
-    case \"${{c:-1}}\" in 2) HOOK_MODE=\"manual-only\" ;; *) HOOK_MODE=\"default-hooks\" ;; esac\n\
+    echo \"  3) All Hooks\"\n\
+    clibm_prompt \"Select option [1-3, default: 1]: \" c\n\
+    case \"${{c:-1}}\" in 2) HOOK_MODE=\"manual-only\" ;; 3) HOOK_MODE=\"all-hooks\" ;; *) HOOK_MODE=\"default-hooks\" ;; esac\n\
+  fi\n\
+fi\n\
+if [ -z \"$SCOPE\" ]; then\n\
+  if [ \"$NON_INTERACTIVE\" = true ]; then\n\
+    SCOPE=\"global\"\n\
+  else\n\
+    echo \"[2/3] Select Plugin Registration Scope:\"\n\
+    echo \"  1) global [Default]\"\n\
+    echo \"  2) project-only\"\n\
+    clibm_prompt \"Select option [1-2, default: 1]: \" s\n\
+    case \"${{s:-1}}\" in 2|project|project-only) SCOPE=\"project-only\" ;; *) SCOPE=\"global\" ;; esac\n\
   fi\n\
 fi\n\
 if [ -z \"$INSTALL_DIR\" ]; then\n\
   if [ \"$NON_INTERACTIVE\" = true ]; then\n\
     INSTALL_DIR=\"$HOME/.local/bin\"\n\
   else\n\
-    clibm_prompt \"[2/2] Specify install directory [default: $HOME/.local/bin]: \" d\n\
+    clibm_prompt \"[3/3] Specify install directory [default: $HOME/.local/bin]: \" d\n\
     INSTALL_DIR=\"${{d:-$HOME/.local/bin}}\"\n\
   fi\n\
 fi\n\
@@ -745,14 +844,20 @@ if ! clibm_core_installed \"$INSTALL_DIR\"; then\n\
 fi\n\
 mkdir -p \"$INSTALL_DIR\"\n\
 clibm_build_and_stage \"{crate_name}\" \"plugins/{crate_name}\" \"$INSTALL_DIR/{crate_name}\" \"$SCRIPT_DIR\" \"$RAW_BASE_URL\" \"Cargo.toml\" \"src/main.rs\"\n\
-clibm_register_global_plugin \"{crate_name}\" \"{description}\" \"$HOOK_MODE\" \"$INSTALL_DIR/{crate_name}\"\n\
+case \"$HOOK_MODE\" in\n\
+  manual-only)   RESOLVED_HOOKS=\"manual-run\" ;;\n\
+  all-hooks)     RESOLVED_HOOKS=\"pre-commit,post-commit,on-task-move,on-workspace-switch,on-export\" ;;\n\
+  default-hooks) RESOLVED_HOOKS=\"{default_hooks_csv}\" ;;\n\
+  *)             RESOLVED_HOOKS=\"$HOOK_MODE\" ;;\n\
+esac\n\
+clibm_register_global_plugin \"{crate_name}\" \"{description}\" \"$RESOLVED_HOOKS\" \"$INSTALL_DIR/{crate_name}\" \"0.1.0\" \"$SCOPE\" \"$CALLER_DIR\" \"$INSTALL_DIR\"\n\
 if [ \"$NO_MODIFY_PATH\" = false ]; then\n\
   clibm_path_add \"{crate_name}\" \"$INSTALL_DIR\"\n\
   echo \"==> User PATH ($INSTALL_DIR): $CLIBM_LAST_PATH_STATUS\"\n\
 else\n\
   echo \"==> User PATH: skipped (--no-modify-path)\"\n\
 fi\n\
-echo \"Installed {crate_name} to $INSTALL_DIR/{crate_name} (hooks: $HOOK_MODE)\"\n"
+echo \"Installed {crate_name} to $INSTALL_DIR/{crate_name} (hooks: $HOOK_MODE, scope: $SCOPE)\"\n"
         );
         write_utf8_bom_file(&plugin_dir.join("install.sh"), &install_sh)?;
 
@@ -760,26 +865,34 @@ echo \"Installed {crate_name} to $INSTALL_DIR/{crate_name} (hooks: $HOOK_MODE)\"
             "# Encoding: UTF-8 with BOM (EF BB BF)\n\
 param(\n\
     [string]$Hooks = \"\",\n\
+    [string]$Scope = \"\",\n\
     [string]$InstallDir = \"\",\n\
     [string]$RawBaseUrl = \"\",\n\
     [switch]$NoModifyPath = $false,\n\
     [switch]$Yes = $false\n\
 )\n\
 $ErrorActionPreference = \"Stop\"\n\
-$ScriptDir = if ($PSScriptRoot) {{ $PSScriptRoot }} else {{ (Get-Location).ProviderPath }}\n\
+$CallerDir = (Get-Location).ProviderPath\n\
+$ScriptDir = if ($PSScriptRoot) {{ $PSScriptRoot }} else {{ $CallerDir }}\n\
 if ($PSScriptRoot) {{ Set-Location -Path $PSScriptRoot }}\n\
 {ps1_helper_block}\n\
 if (-not $Hooks) {{\n\
   if ($Yes) {{ $Hooks = \"default-hooks\" }} else {{\n\
-    $c = Read-Host \"[1/2] Select Hook Mode for {crate_name} (1=default-hooks [Default], 2=manual-only)\"\n\
-    if ($c -eq \"2\") {{ $Hooks = \"manual-only\" }} else {{ $Hooks = \"default-hooks\" }}\n\
+    $c = Read-Host \"[1/3] Select Hook Mode for {crate_name} (1=default-hooks [Default], 2=manual-only, 3=all-hooks)\"\n\
+    switch ($c) {{ \"2\" {{ $Hooks = \"manual-only\" }} \"3\" {{ $Hooks = \"all-hooks\" }} default {{ $Hooks = \"default-hooks\" }} }}\n\
+  }}\n\
+}}\n\
+if (-not $Scope) {{\n\
+  if ($Yes) {{ $Scope = \"global\" }} else {{\n\
+    $s = Read-Host \"[2/3] Select Registration Scope (1=global [Default], 2=project-only)\"\n\
+    if ($s -eq \"2\") {{ $Scope = \"project-only\" }} else {{ $Scope = \"global\" }}\n\
   }}\n\
 }}\n\
 $HomeDir = Get-ClibmHomeDirectory\n\
 $DefaultBin = Join-Path $HomeDir \".clibm-bin\"\n\
 if (-not $InstallDir) {{\n\
   if ($Yes) {{ $InstallDir = $DefaultBin }} else {{\n\
-    $d = Read-Host \"[2/2] Specify install directory [default: $DefaultBin]\"\n\
+    $d = Read-Host \"[3/3] Specify install directory [default: $DefaultBin]\"\n\
     if ([string]::IsNullOrWhiteSpace($d)) {{ $InstallDir = $DefaultBin }} else {{ $InstallDir = $d }}\n\
   }}\n\
 }}\n\
@@ -790,14 +903,20 @@ if (-not (Test-ClibmCoreInstalled -ExtraDir $InstallDir)) {{\n\
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null\n\
 $InstalledExe = Join-Path $InstallDir \"{crate_name}.exe\"\n\
 Invoke-ClibmBuildAndStage -CrateName \"{crate_name}\" -RemoteSubPath \"plugins/{crate_name}\" -SourceFiles @(\"Cargo.toml\", \"src/main.rs\") -DestinationBinary $InstalledExe -LocalCandidateDir $ScriptDir -RawBaseUrl $RawBaseUrl | Out-Null\n\
-Register-ClibmGlobalPlugin -Name \"{crate_name}\" -Description \"{description}\" -Hooks @($Hooks) -Executable $InstalledExe\n\
+$ResolvedHooks = switch ($Hooks) {{\n\
+  \"manual-only\"   {{ @(\"manual-run\") }}\n\
+  \"all-hooks\"     {{ @(\"pre-commit\", \"post-commit\", \"on-task-move\", \"on-workspace-switch\", \"on-export\") }}\n\
+  \"default-hooks\" {{ @({default_hooks_ps1}) }}\n\
+  default         {{ @($Hooks -split ',' | Where-Object {{ $_ }}) }}\n\
+}}\n\
+Register-ClibmGlobalPlugin -Name \"{crate_name}\" -Description \"{description}\" -Hooks $ResolvedHooks -Executable $InstalledExe -Scope $Scope -ProjectDir $CallerDir -InstallDir $InstallDir\n\
 if (-not $NoModifyPath) {{\n\
   $PathRes = Add-ClibmPathEntry -Owner \"{crate_name}\" -Dir $InstallDir\n\
   Write-Host \"==> User PATH ($InstallDir): $($PathRes.Status)\"\n\
 }} else {{\n\
   Write-Host \"==> User PATH: skipped (-NoModifyPath)\"\n\
 }}\n\
-Write-Host \"Installed {crate_name}.exe to $InstallDir (hooks: $Hooks)\"\n"
+Write-Host \"Installed {crate_name}.exe to $InstallDir (hooks: $Hooks, scope: $Scope)\"\n"
         );
         write_utf8_bom_file(&plugin_dir.join("install.ps1"), &install_ps1)?;
 
@@ -822,6 +941,7 @@ while IFS= read -r dir; do\n\
 done <<EOF\n\
 $SEARCH_DIRS\n\
 EOF\n\
+clibm_unregister_plugin \"{crate_name}\" \"$(pwd)\"\n\
 clibm_path_remove \"{crate_name}\"\n\
 if [ -n \"$CLIBM_REMOVED_PATH_DIRS\" ]; then\n\
   while IFS= read -r rdir; do\n\
@@ -857,6 +977,7 @@ foreach ($Dir in $SearchDirs) {{\n\
     Write-Host \"==> Removed binary: $Bin\"\n\
   }}\n\
 }}\n\
+Unregister-ClibmPlugin -Name \"{crate_name}\" -ProjectDir (Get-Location).ProviderPath -ExtraDirs $SearchDirs\n\
 $RemovedPathDirs = @(Remove-ClibmPathEntry -Owner \"{crate_name}\")\n\
 foreach ($RDir in $RemovedPathDirs) {{\n\
   Write-Host \"==> Removed user PATH entry: $RDir\"\n\
@@ -880,6 +1001,8 @@ Write-Host \"Uninstalled {crate_name}.exe\"\n"
             },
             executable: Some(format!("~/.local/bin/{}", crate_name)),
         };
+
+        let _ = Self::save_global_manifest(manifest.clone());
 
         if cas.is_initialized() {
             let mut list = Self::load_registry(cas)?;

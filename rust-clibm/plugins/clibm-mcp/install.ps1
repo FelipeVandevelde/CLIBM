@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # clibm-mcp — Standalone Plugin Installer with Interactive Choices (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
@@ -20,19 +20,21 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).ProviderPath }
+$CallerDir = (Get-Location).ProviderPath
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { $CallerDir }
 if ($PSScriptRoot) {
     Set-Location -Path $PSScriptRoot
 }
 
 # >>> clibm-env-path (generated) >>>
 function Initialize-ClibmEnvPathHelper {
-    $HomeDir = if ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
+    try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue } catch {}
+    $HomeDir = if ($env:CLIBM_HOME) { $env:CLIBM_HOME } elseif ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
     $LibDir = Join-Path $HomeDir '.clibm\lib'
     $HelperFile = Join-Path $LibDir 'env-path.ps1'
-    $EmbeddedVersion = 2
+    $EmbeddedVersion = 3
     $EmbeddedContent = @'
-# clibm-env-path-version: 2
+# clibm-env-path-version: 3
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
 # Encoding: UTF-8 with BOM (EF BB BF)
@@ -41,6 +43,7 @@ function Initialize-ClibmEnvPathHelper {
 # ==============================================================================
 
 function Get-ClibmHomeDirectory {
+    if ($env:CLIBM_HOME) { return $env:CLIBM_HOME }
     if ($HOME) { return $HOME }
     if ($env:USERPROFILE) { return $env:USERPROFILE }
     return [Environment]::GetFolderPath('UserProfile')
@@ -592,25 +595,91 @@ function Invoke-ClibmBuildAndStage {
     return 'remote'
 }
 
-function Register-ClibmGlobalPlugin {
-    param(
-        [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][string]$Description,
-        [Parameter(Mandatory = $true)][string[]]$Hooks,
-        [Parameter(Mandatory = $true)][string]$Executable,
-        [string]$Version = '0.1.0'
-    )
+function Find-ClibmProjectPluginDirs {
+    param([AllowEmptyCollection()][string[]]$SearchRoots = @())
     $HomeDir = Get-ClibmHomeDirectory
-    $PluginsDir = Join-Path (Join-Path $HomeDir '.clibm') 'plugins'
-    New-Item -ItemType Directory -Force -Path $PluginsDir | Out-Null
-    $RegFile = Join-Path $PluginsDir 'registry.json'
+    $GlobalClibmSet = @{}
+    foreach ($H in @($HomeDir, $HOME, $env:USERPROFILE)) {
+        if (-not [string]::IsNullOrWhiteSpace($H)) {
+            $C = ConvertTo-ClibmComparablePath (Join-Path $H '.clibm')
+            if ($C) { $GlobalClibmSet[$C] = $true }
+        }
+    }
+    $Seen = @{}
+    $Result = @()
+    $Candidates = @()
+    if ($env:CLIBM_PROJECT_ROOT) { $Candidates += $env:CLIBM_PROJECT_ROOT }
+    foreach ($R in $SearchRoots) {
+        if (-not [string]::IsNullOrWhiteSpace($R)) { $Candidates += $R }
+    }
+    $Cwd = (Get-Location).ProviderPath
+    if ($Cwd) { $Candidates += $Cwd }
+
+    foreach ($Root in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($Root)) { continue }
+        try {
+            $Curr = Resolve-ClibmNormalizedDir $Root
+        } catch {
+            continue
+        }
+        $StartCurr = $Curr
+        while (-not [string]::IsNullOrWhiteSpace($Curr)) {
+            $Leaf = Split-Path -Leaf $Curr
+            $Parent = Split-Path -Parent $Curr
+            if ($Leaf -ieq 'plugins' -and $Parent -and ((Split-Path -Leaf $Parent) -ieq '.clibm')) {
+                $ClibmComp = ConvertTo-ClibmComparablePath $Parent
+                if ($ClibmComp -and -not $GlobalClibmSet.ContainsKey($ClibmComp) -and -not $Seen.ContainsKey($ClibmComp)) {
+                    $Seen[$ClibmComp] = $true
+                    $Result += $Curr
+                }
+            } elseif ($Leaf -ieq '.clibm') {
+                $ClibmComp = ConvertTo-ClibmComparablePath $Curr
+                if ($ClibmComp -and -not $GlobalClibmSet.ContainsKey($ClibmComp) -and -not $Seen.ContainsKey($ClibmComp)) {
+                    $Seen[$ClibmComp] = $true
+                    $Result += (Join-Path $Curr 'plugins')
+                }
+            } else {
+                $DotClibm = Join-Path $Curr '.clibm'
+                $ClibmComp = ConvertTo-ClibmComparablePath $DotClibm
+                if ($ClibmComp -and -not $GlobalClibmSet.ContainsKey($ClibmComp) -and -not $Seen.ContainsKey($ClibmComp)) {
+                    $HasDotClibm = try { Test-Path -LiteralPath $DotClibm -ErrorAction SilentlyContinue } catch { $false }
+                    if ($HasDotClibm) {
+                        $IsRepo = ($Curr -eq $StartCurr) -or
+                            (try { Test-Path -LiteralPath (Join-Path $DotClibm 'objects') -ErrorAction SilentlyContinue } catch { $false }) -or
+                            (try { Test-Path -LiteralPath (Join-Path $DotClibm 'HEAD') -ErrorAction SilentlyContinue } catch { $false }) -or
+                            (try { Test-Path -LiteralPath (Join-Path $DotClibm 'config.json') -ErrorAction SilentlyContinue } catch { $false })
+                        if ($IsRepo) {
+                            $Seen[$ClibmComp] = $true
+                            $Result += (Join-Path $DotClibm 'plugins')
+                        }
+                    }
+                }
+            }
+            if (-not $Parent -or ($Parent -eq $Curr)) { break }
+            $Curr = $Parent
+        }
+    }
+    return $Result
+}
+
+function Update-ClibmRegistryFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$RegFile,
+        [Parameter(Mandatory = $true)][PSCustomObject]$NewEntry
+    )
+    $RegParent = Split-Path -Parent $RegFile
+    if ($RegParent -and -not (Test-Path -LiteralPath $RegParent)) {
+        New-Item -ItemType Directory -Force -Path $RegParent | Out-Null
+    }
     $List = @()
     if (Test-Path -LiteralPath $RegFile) {
         try {
-            $Raw = [System.IO.File]::ReadAllText($RegFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF)
-            $Parsed = $Raw | ConvertFrom-Json
-            if ($null -ne $Parsed) {
-                $List = @($Parsed)
+            $Raw = [System.IO.File]::ReadAllText($RegFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF).Trim()
+            if ($Raw -and $Raw -ne '[]') {
+                $Parsed = $Raw | ConvertFrom-Json
+                if ($null -ne $Parsed) {
+                    $List = @($Parsed)
+                }
             }
         } catch {
             $List = @()
@@ -618,42 +687,216 @@ function Register-ClibmGlobalPlugin {
     }
     $Updated = @()
     $Found = $false
-    $NewEntry = [PSCustomObject][ordered]@{
-        name        = $Name
-        version     = $Version
-        description = $Description
-        enabled     = $true
-        hooks       = @($Hooks)
-        executable  = ($Executable -replace '\\', '/')
-    }
     foreach ($Item in $List) {
-        if ($null -eq $Item) { continue }
-        if ($Item.name -eq $Name) {
+        if ($null -eq $Item -or [string]::IsNullOrWhiteSpace($Item.name)) { continue }
+        if ($Item.name -eq $NewEntry.name) {
             $Updated += $NewEntry
             $Found = $true
         } else {
-            $Updated += $Item
+            $ExistingHooks = @()
+            if ($null -ne $Item.hooks) {
+                foreach ($H in @($Item.hooks)) {
+                    if (-not [string]::IsNullOrWhiteSpace([string]$H)) {
+                        $ExistingHooks += [string]$H
+                    }
+                }
+            }
+            if ($ExistingHooks.Count -eq 0) { $ExistingHooks = @('manual-run') }
+            $Updated += [PSCustomObject][ordered]@{
+                name        = [string]$Item.name
+                version     = if ($Item.version) { [string]$Item.version } else { '0.1.0' }
+                description = if ($Item.description) { [string]$Item.description } else { '' }
+                enabled     = if ($null -ne $Item.enabled) { [bool]$Item.enabled } else { $true }
+                hooks       = [string[]]$ExistingHooks
+                executable  = if ($Item.executable) { ([string]$Item.executable -replace '\\', '/') } else { $null }
+            }
         }
     }
     if (-not $Found) {
         $Updated += $NewEntry
     }
-    $Json = ConvertTo-Json -InputObject @($Updated) -Depth 5
-    if (-not $Json.TrimStart().StartsWith('[')) {
-        $Json = "[$Json]"
+    if ($Updated.Count -eq 0) {
+        $Json = '[]'
+    } else {
+        $ItemJsonBlocks = foreach ($Entry in $Updated) {
+            $HooksArr = @($Entry.hooks | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if ($HooksArr.Count -eq 0) { $HooksArr = @('manual-run') }
+            $HooksJson = ($HooksArr | ForEach-Object { '"' + (([string]$_ -replace '\\', '\\') -replace '"', '\"') + '"' }) -join ', '
+            $EscName = ([string]$Entry.name -replace '\\', '\\') -replace '"', '\"'
+            $EscVer  = ([string]$Entry.version -replace '\\', '\\') -replace '"', '\"'
+            $EscDesc = ([string]$Entry.description -replace '\\', '\\') -replace '"', '\"'
+            $EnBool  = if ($Entry.enabled) { 'true' } else { 'false' }
+            $ExeField = if ($Entry.executable) {
+                '"' + ((([string]$Entry.executable -replace '\\', '/') -replace '"', '\"')) + '"'
+            } else {
+                'null'
+            }
+            "  {`n    `"name`": `"$EscName`",`n    `"version`": `"$EscVer`",`n    `"description`": `"$EscDesc`",`n    `"enabled`": $EnBool,`n    `"hooks`": [$HooksJson],`n    `"executable`": $ExeField`n  }"
+        }
+        $Json = "[`n" + ($ItemJsonBlocks -join ",`n") + "`n]`n"
     }
     $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
     [System.IO.File]::WriteAllText($RegFile, $Json, $Utf8Bom)
 }
+
+function Register-ClibmGlobalPlugin {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Description,
+        [Parameter(Mandatory = $true)][string[]]$Hooks,
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [string]$Version = '0.1.0',
+        [string]$Scope = 'global',
+        [string]$ProjectDir = '',
+        [string]$InstallDir = ''
+    )
+    $CleanHooks = @()
+    foreach ($RawH in $Hooks) {
+        foreach ($Part in ($RawH -split ',')) {
+            $Trimmed = $Part.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($Trimmed)) {
+                $CleanHooks += $Trimmed
+            }
+        }
+    }
+    if ($CleanHooks.Count -eq 0) { $CleanHooks = @('manual-run') }
+
+    $NewEntry = [PSCustomObject][ordered]@{
+        name        = $Name
+        version     = $Version
+        description = $Description
+        enabled     = $true
+        hooks       = [string[]]$CleanHooks
+        executable  = ($Executable -replace '\\', '/')
+    }
+
+    $CandidateRegFiles = @()
+    $HomeDir = Get-ClibmHomeDirectory
+    $GlobalPluginsDir = Join-Path (Join-Path $HomeDir '.clibm') 'plugins'
+    $GlobalRegFile = Join-Path $GlobalPluginsDir 'registry.json'
+
+    if ($Scope -ne 'project-only') {
+        $CandidateRegFiles += $GlobalRegFile
+    }
+
+    $ProjectPluginDirs = @(Find-ClibmProjectPluginDirs -SearchRoots @($ProjectDir, $InstallDir))
+    foreach ($PDir in $ProjectPluginDirs) {
+        $CandidateRegFiles += (Join-Path $PDir 'registry.json')
+    }
+
+    if ($Scope -eq 'project-only' -and $ProjectPluginDirs.Count -eq 0) {
+        $BaseProj = if (-not [string]::IsNullOrWhiteSpace($ProjectDir)) { $ProjectDir } else { (Get-Location).ProviderPath }
+        if (-not [string]::IsNullOrWhiteSpace($BaseProj)) {
+            $CandidateRegFiles += (Join-Path (Join-Path (Join-Path $BaseProj '.clibm') 'plugins') 'registry.json')
+        }
+        $CandidateRegFiles += $GlobalRegFile
+    }
+
+    $BinDir = if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
+        $InstallDir
+    } else {
+        Split-Path -Parent $Executable
+    }
+    if (-not [string]::IsNullOrWhiteSpace($BinDir)) {
+        $CandidateRegFiles += (Join-Path $BinDir 'registry.json')
+    }
+
+    $SeenReg = @{}
+    foreach ($RegFile in $CandidateRegFiles) {
+        if ([string]::IsNullOrWhiteSpace($RegFile)) { continue }
+        $Comp = ConvertTo-ClibmComparablePath $RegFile
+        if (-not $Comp -or $SeenReg.ContainsKey($Comp)) { continue }
+        $SeenReg[$Comp] = $true
+        Update-ClibmRegistryFile -RegFile $RegFile -NewEntry $NewEntry
+        Write-Host "==> Registered $Name in plugin registry: $RegFile"
+    }
+}
+
+function Unregister-ClibmPlugin {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$ProjectDir = '',
+        [string[]]$ExtraDirs = @()
+    )
+    $HomeDir = Get-ClibmHomeDirectory
+    $CandidateFiles = @(
+        (Join-Path (Join-Path (Join-Path $HomeDir '.clibm') 'plugins') 'registry.json'),
+        (Join-Path (Join-Path $HomeDir '.clibm-bin') 'registry.json'),
+        (Join-Path (Join-Path $HomeDir '.local\bin') 'registry.json')
+    )
+    foreach ($PDir in @(Find-ClibmProjectPluginDirs -SearchRoots (@($ProjectDir) + $ExtraDirs))) {
+        $CandidateFiles += (Join-Path $PDir 'registry.json')
+    }
+    foreach ($EDir in $ExtraDirs) {
+        if (-not [string]::IsNullOrWhiteSpace($EDir)) {
+            $CandidateFiles += (Join-Path $EDir 'registry.json')
+        }
+    }
+    $Seen = @{}
+    foreach ($RegFile in $CandidateFiles) {
+        if ([string]::IsNullOrWhiteSpace($RegFile)) { continue }
+        $Comp = ConvertTo-ClibmComparablePath $RegFile
+        if (-not $Comp -or $Seen.ContainsKey($Comp)) { continue }
+        $Seen[$Comp] = $true
+        if (-not (Test-Path -LiteralPath $RegFile)) { continue }
+        try {
+            $Raw = [System.IO.File]::ReadAllText($RegFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF).Trim()
+            if (-not $Raw -or $Raw -eq '[]') { continue }
+            $Parsed = $Raw | ConvertFrom-Json
+            if ($null -eq $Parsed) { continue }
+            $Kept = @()
+            $Removed = $false
+            foreach ($Item in @($Parsed)) {
+                if ($null -eq $Item -or [string]::IsNullOrWhiteSpace($Item.name)) { continue }
+                if ($Item.name -eq $Name) {
+                    $Removed = $true
+                } else {
+                    $Kept += $Item
+                }
+            }
+            if ($Removed) {
+                $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
+                if ($Kept.Count -eq 0) {
+                    [System.IO.File]::WriteAllText($RegFile, "[]`n", $Utf8Bom)
+                } else {
+                    $First = $Kept[0]
+                    $Rest  = if ($Kept.Count -gt 1) { $Kept[1..($Kept.Count - 1)] } else { @() }
+                    [System.IO.File]::WriteAllText($RegFile, "[]`n", $Utf8Bom)
+                    foreach ($K in $Kept) {
+                        $EntryObj = [PSCustomObject][ordered]@{
+                            name        = [string]$K.name
+                            version     = if ($K.version) { [string]$K.version } else { '0.1.0' }
+                            description = if ($K.description) { [string]$K.description } else { '' }
+                            enabled     = if ($null -ne $K.enabled) { [bool]$K.enabled } else { $true }
+                            hooks       = @($K.hooks | Where-Object { $_ })
+                            executable  = if ($K.executable) { ([string]$K.executable -replace '\\', '/') } else { $null }
+                        }
+                        Update-ClibmRegistryFile -RegFile $RegFile -NewEntry $EntryObj
+                    }
+                }
+                Write-Host "==> Removed $Name from plugin registry: $RegFile"
+            }
+        } catch {
+            # Ignore malformed registry files during uninstall
+        }
+    }
+}
 '@
+    $script:ClibmEmbeddedHelperContent = $EmbeddedContent
     $NeedsWrite = $true
     if (Test-Path -LiteralPath $HelperFile) {
         try {
             $HeadLines = Get-Content -LiteralPath $HelperFile -TotalCount 5 -Encoding UTF8 -ErrorAction Stop
             foreach ($Line in $HeadLines) {
                 if ($Line -match 'clibm-env-path-version:\s*(\d+)') {
-                    if ([int]$Matches[1] -ge $EmbeddedVersion) {
+                    if ([int]$Matches[1] -gt $EmbeddedVersion) {
                         $NeedsWrite = $false
+                    } elseif ([int]$Matches[1] -eq $EmbeddedVersion) {
+                        $ExistingClean = ([System.IO.File]::ReadAllText($HelperFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF) -replace "`r`n", "`n").TrimEnd("`n")
+                        $TargetClean = ($EmbeddedContent -replace "`r`n", "`n").TrimEnd("`n")
+                        if ($ExistingClean -ceq $TargetClean) {
+                            $NeedsWrite = $false
+                        }
                     }
                     break
                 }
@@ -669,7 +912,7 @@ function Register-ClibmGlobalPlugin {
     }
     return $HelperFile
 }
-. (Initialize-ClibmEnvPathHelper)
+try { . (Initialize-ClibmEnvPathHelper) } catch { Invoke-Expression $script:ClibmEmbeddedHelperContent }
 # <<< clibm-env-path (generated) <<<
 
 Write-Host "===================================================================="
@@ -755,7 +998,9 @@ Register-ClibmGlobalPlugin `
     -Name "clibm-mcp" `
     -Description "Self-hosted Model Context Protocol (MCP) server plugin for AI agents over stdio JSON-RPC 2.0 and HTTP SSE" `
     -Hooks $McpHooks `
-    -Executable $InstalledExe
+    -Executable $InstalledExe `
+    -ProjectDir $CallerDir `
+    -InstallDir $InstallDir
 
 if (-not $NoModifyPath) {
     $PathRes = Add-ClibmPathEntry -Owner "clibm-mcp" -Dir $InstallDir

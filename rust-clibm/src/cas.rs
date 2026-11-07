@@ -143,8 +143,9 @@ impl CasStore {
             }
             return Ok(def);
         }
-        let content = fs::read_to_string(&cfg_file).context("Failed to read .clibm/config.json")?;
-        Ok(serde_json::from_str(&content).unwrap_or_default())
+        let raw = fs::read_to_string(&cfg_file).context("Failed to read .clibm/config.json")?;
+        let content = raw.strip_prefix('\u{FEFF}').unwrap_or(&raw);
+        Ok(serde_json::from_str(content).unwrap_or_default())
     }
 
     pub fn save_config(&self, cfg: &ClibmConfig) -> Result<()> {
@@ -236,9 +237,10 @@ impl CasStore {
     pub fn get_raw_object(&self, hash_or_prefix: &str) -> Result<CasObject> {
         let full_hash = self.resolve_hash_prefix(hash_or_prefix)?;
         let path = self.object_path(&full_hash)?;
-        let content = fs::read_to_string(&path)
+        let raw = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read CAS object {}", full_hash))?;
-        let obj: CasObject = serde_json::from_str(&content)
+        let content = raw.strip_prefix('\u{FEFF}').unwrap_or(&raw);
+        let obj: CasObject = serde_json::from_str(content)
             .with_context(|| format!("Corrupt JSON in CAS object {}", full_hash))?;
         Ok(obj)
     }

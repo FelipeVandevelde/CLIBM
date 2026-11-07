@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
 # clibm-mcp — Uninstallation Script (Linux / macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
@@ -17,9 +17,10 @@ done
 
 # >>> clibm-env-path (generated) >>>
 clibm_init_env_path_helper() {
-  local lib_dir="${HOME}/.clibm/lib"
+  local home_dir="${CLIBM_HOME:-${HOME}}"
+  local lib_dir="${home_dir%/}/.clibm/lib"
   local helper_file="${lib_dir}/env-path.sh"
-  local embedded_version=2
+  local embedded_version=3
   local needs_write=1
   local bom=$'\xef\xbb\xbf'
   if [ -f "$helper_file" ]; then
@@ -27,14 +28,14 @@ clibm_init_env_path_helper() {
     first_three=$(head -c 3 "$helper_file" 2>/dev/null || true)
     local existing_ver
     existing_ver=$(tr -d '\r' < "$helper_file" | sed "1s/^${bom}//" | sed -n '1,5s/^# clibm-env-path-version:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1)
-    if [ "$first_three" != "$bom" ] && [ -n "$existing_ver" ] && [ "$existing_ver" -ge "$embedded_version" ] 2>/dev/null; then
+    if [ "$first_three" != "$bom" ] && [ -n "$existing_ver" ] && [ "$existing_ver" -gt "$embedded_version" ] 2>/dev/null; then
       needs_write=0
     fi
   fi
   if [ "$needs_write" -eq 1 ]; then
     mkdir -p "$lib_dir"
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
-# clibm-env-path-version: 2
+# clibm-env-path-version: 3
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
 # Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
@@ -557,20 +558,163 @@ clibm_build_and_stage() {
   return 0
 }
 
+clibm_find_project_plugin_dirs() {
+  local home_dir="${CLIBM_HOME:-${HOME}}"
+  local global_clibm="${home_dir%/}/.clibm"
+  local user_clibm="${HOME%/}/.clibm"
+  local seen_list=""
+  local root curr start_curr parent base dot_clibm
+  for root in "${CLIBM_PROJECT_ROOT:-}" "$@" "$(pwd)"; do
+    [ -z "$root" ] && continue
+    curr=$(clibm_normalize_dir "$root")
+    start_curr="$curr"
+    while [ -n "$curr" ]; do
+      base=$(basename "$curr")
+      parent=$(dirname "$curr")
+      if [ "$base" = "plugins" ] && [ "$(basename "$parent")" = ".clibm" ]; then
+        if [ "$parent" != "$global_clibm" ] && [ "$parent" != "$user_clibm" ]; then
+          case "
+${seen_list}
+" in
+            *"
+${curr}
+"*) ;;
+            *)
+              seen_list="${seen_list}
+${curr}"
+              printf '%s\n' "$curr"
+              ;;
+          esac
+        fi
+      elif [ "$base" = ".clibm" ]; then
+        if [ "$curr" != "$global_clibm" ] && [ "$curr" != "$user_clibm" ]; then
+          case "
+${seen_list}
+" in
+            *"
+${curr}/plugins
+"*) ;;
+            *)
+              seen_list="${seen_list}
+${curr}/plugins"
+              printf '%s\n' "${curr}/plugins"
+              ;;
+          esac
+        fi
+      elif [ -d "${curr}/.clibm" ]; then
+        dot_clibm="${curr}/.clibm"
+        if [ "$dot_clibm" != "$global_clibm" ] && [ "$dot_clibm" != "$user_clibm" ]; then
+          if [ "$curr" = "$start_curr" ] || [ -d "${dot_clibm}/objects" ] || [ -f "${dot_clibm}/HEAD" ] || [ -f "${dot_clibm}/config.json" ]; then
+            case "
+${seen_list}
+" in
+              *"
+${dot_clibm}/plugins
+"*) ;;
+              *)
+                seen_list="${seen_list}
+${dot_clibm}/plugins"
+                printf '%s\n' "${dot_clibm}/plugins"
+                ;;
+            esac
+          fi
+        fi
+      fi
+      if [ "$parent" = "$curr" ] || [ -z "$parent" ]; then
+        break
+      fi
+      curr="$parent"
+    done
+  done
+}
+
+clibm_update_registry_file() {
+  local reg_file="$1"
+  local name="$2"
+  local new_obj="$3"
+  mkdir -p "$(dirname "$reg_file")"
+
+  if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
+    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
+    return 0
+  fi
+
+  local bom=$'\xef\xbb\xbf'
+  local clean_content
+  clean_content=$(tr -d '\r' < "$reg_file" | sed "1s/^${bom}//")
+
+  if ! printf '%s\n' "$clean_content" | grep -Fq "\"name\": \"${name}\"" 2>/dev/null && \
+     ! printf '%s\n' "$clean_content" | grep -Fq "\"name\":\"${name}\"" 2>/dev/null; then
+    local body
+    body=$(printf '%s\n' "$clean_content" | sed '$d')
+    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+    return 0
+  fi
+
+  local tmp_file="${reg_file}.tmp.$$"
+  awk -v target_name="\"${name}\"" -v replacement="  ${new_obj}" '
+    BEGIN {
+      in_obj = 0
+      obj_buf = ""
+      obj_count = 0
+      replaced = 0
+    }
+    /^[[:space:]]*\{/ {
+      in_obj = 1
+      obj_buf = $0
+      next
+    }
+    in_obj {
+      obj_buf = obj_buf "\n" $0
+      if ($0 ~ /^[[:space:]]*\}[[:space:]]*,?[[:space:]]*$/) {
+        in_obj = 0
+        sub(/,[[:space:]]*$/, "", obj_buf)
+        if (index(obj_buf, "\"name\": " target_name) > 0 || index(obj_buf, "\"name\":" target_name) > 0) {
+          objs[++obj_count] = replacement
+          replaced = 1
+        } else {
+          objs[++obj_count] = obj_buf
+        }
+        obj_buf = ""
+      }
+      next
+    }
+    END {
+      if (!replaced) {
+        objs[++obj_count] = replacement
+      }
+      printf "[\n"
+      for (i = 1; i <= obj_count; i++) {
+        printf "%s%s\n", objs[i], (i < obj_count ? "," : "")
+      }
+      printf "]\n"
+    }
+  ' <<EOF > "$tmp_file"
+$clean_content
+EOF
+  printf '\xEF\xBB\xBF' > "$reg_file"
+  cat "$tmp_file" >> "$reg_file"
+  rm -f "$tmp_file"
+}
+
 clibm_register_global_plugin() {
   local name="$1"
   local description="$2"
   local hooks_csv="$3"
   local executable="$4"
   local version="${5:-0.1.0}"
-  local plugins_dir="${HOME}/.clibm/plugins"
-  local reg_file="${plugins_dir}/registry.json"
-  mkdir -p "$plugins_dir"
+  local scope="${6:-global}"
+  local project_dir="${7:-}"
+  local install_dir="${8:-}"
+  local home_dir="${CLIBM_HOME:-${HOME}}"
+  local global_reg="${home_dir%/}/.clibm/plugins/registry.json"
 
   local hooks_json=""
   local IFS=','
   local h
   for h in $hooks_csv; do
+    h="${h#"${h%%[![:space:]]*}"}"
+    h="${h%"${h##*[![:space:]]}"}"
     [ -z "$h" ] && continue
     if [ -z "$hooks_json" ]; then
       hooks_json="\"${h}\""
@@ -586,14 +730,124 @@ clibm_register_global_plugin() {
   new_obj=$(printf '{\n    "name": "%s",\n    "version": "%s",\n    "description": "%s",\n    "enabled": true,\n    "hooks": [%s],\n    "executable": "%s"\n  }' \
     "$name" "$version" "$description" "$hooks_json" "$executable")
 
-  if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
-    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
-  elif ! grep -Fq "\"name\": \"${name}\"" "$reg_file" 2>/dev/null; then
-    local bom=$'\xef\xbb\xbf'
-    local body
-    body=$(tr -d '\r' < "$reg_file" | sed "1s/^${bom}//" | sed '$d')
-    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+  local target_regs=""
+  if [ "$scope" != "project-only" ]; then
+    target_regs="${global_reg}"$'\n'
   fi
+
+  local proj_dirs
+  proj_dirs=$(clibm_find_project_plugin_dirs "$project_dir" "$install_dir" || true)
+  local pdir
+  if [ -n "$proj_dirs" ]; then
+    while IFS= read -r pdir; do
+      [ -z "$pdir" ] && continue
+      target_regs="${target_regs}${pdir}/registry.json"$'\n'
+    done <<EOF
+$proj_dirs
+EOF
+  elif [ "$scope" = "project-only" ]; then
+    local base_proj="${project_dir:-$(pwd)}"
+    target_regs="${target_regs}${base_proj%/}/.clibm/plugins/registry.json"$'\n'
+    target_regs="${target_regs}${global_reg}"$'\n'
+  fi
+
+  local bin_dir="${install_dir:-$(dirname "$executable")}"
+  if [ -n "$bin_dir" ]; then
+    target_regs="${target_regs}${bin_dir%/}/registry.json"$'\n'
+  fi
+
+  local rfile
+  while IFS= read -r rfile; do
+    [ -z "$rfile" ] && continue
+    clibm_update_registry_file "$rfile" "$name" "$new_obj"
+    echo "==> Registered ${name} in plugin registry: ${rfile}"
+  done <<EOF
+$(printf '%s' "$target_regs" | awk 'NF && !seen[$0]++')
+EOF
+}
+
+clibm_unregister_plugin() {
+  local name="$1"
+  local project_dir="${2:-}"
+  shift $(( $# >= 2 ? 2 : $# ))
+  local home_dir="${CLIBM_HOME:-${HOME}}"
+  local candidate_regs="${home_dir%/}/.clibm/plugins/registry.json
+${home_dir%/}/.local/bin/registry.json
+${home_dir%/}/.clibm-bin/registry.json"
+
+  local proj_dirs
+  proj_dirs=$(clibm_find_project_plugin_dirs "$project_dir" "$@" || true)
+  local pdir
+  if [ -n "$proj_dirs" ]; then
+    while IFS= read -r pdir; do
+      [ -z "$pdir" ] && continue
+      candidate_regs="${candidate_regs}
+${pdir}/registry.json"
+    done <<EOF
+$proj_dirs
+EOF
+  fi
+  for extra_d in "$@"; do
+    [ -z "$extra_d" ] && continue
+    candidate_regs="${candidate_regs}
+${extra_d%/}/registry.json"
+  done
+
+  local rfile
+  local bom=$'\xef\xbb\xbf'
+  while IFS= read -r rfile; do
+    [ -z "$rfile" ] && continue
+    [ ! -f "$rfile" ] && continue
+    if ! grep -Fq "\"${name}\"" "$rfile" 2>/dev/null; then
+      continue
+    fi
+    local clean_content
+    clean_content=$(tr -d '\r' < "$rfile" | sed "1s/^${bom}//")
+    local tmp_file="${rfile}.tmp.$$"
+    awk -v target_name="\"${name}\"" '
+      BEGIN {
+        in_obj = 0
+        obj_buf = ""
+        obj_count = 0
+      }
+      /^[[:space:]]*\{/ {
+        in_obj = 1
+        obj_buf = $0
+        next
+      }
+      in_obj {
+        obj_buf = obj_buf "\n" $0
+        if ($0 ~ /^[[:space:]]*\}[[:space:]]*,?[[:space:]]*$/) {
+          in_obj = 0
+          sub(/,[[:space:]]*$/, "", obj_buf)
+          if (index(obj_buf, "\"name\": " target_name) == 0 && index(obj_buf, "\"name\":" target_name) == 0) {
+            objs[++obj_count] = obj_buf
+          }
+          obj_buf = ""
+        }
+        next
+      }
+      END {
+        if (obj_count == 0) {
+          printf "[]\n"
+        } else {
+          printf "[\n"
+          for (i = 1; i <= obj_count; i++) {
+            printf "%s%s\n", objs[i], (i < obj_count ? "," : "")
+          }
+          printf "]\n"
+        }
+      }
+    ' <<EOF > "$tmp_file"
+$clean_content
+EOF
+    printf '\xEF\xBB\xBF' > "$rfile"
+    cat "$tmp_file" >> "$rfile"
+    rm -f "$tmp_file"
+    echo "==> Removed ${name} from plugin registry: ${rfile}"
+  done <<EOF
+$(printf '%s\n' "$candidate_regs" | awk 'NF && !seen[$0]++')
+EOF
 }
 CLIBM_ENV_PATH_EOF
   fi
@@ -639,6 +893,7 @@ done <<EOF
 $SEARCH_DIRS
 EOF
 
+clibm_unregister_plugin "clibm-mcp" "$(pwd)"
 clibm_path_remove "clibm-mcp"
 if [ -n "$CLIBM_REMOVED_PATH_DIRS" ]; then
   while IFS= read -r rdir; do

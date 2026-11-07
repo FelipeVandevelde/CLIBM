@@ -58,21 +58,29 @@ $MarkerEnd   = '# <<< clibm-env-path (generated) <<<'
 $Ps1BlockLf = @(
     $MarkerStart
     'function Initialize-ClibmEnvPathHelper {'
-    '    $HomeDir = if ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath(''UserProfile'') }'
+    '    try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue } catch {}'
+    '    $HomeDir = if ($env:CLIBM_HOME) { $env:CLIBM_HOME } elseif ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath(''UserProfile'') }'
     '    $LibDir = Join-Path $HomeDir ''.clibm\lib'''
     '    $HelperFile = Join-Path $LibDir ''env-path.ps1'''
     "    `$EmbeddedVersion = $Ps1Ver"
     '    $EmbeddedContent = @'''
     $Ps1Clean
     '''@'
+    '    $script:ClibmEmbeddedHelperContent = $EmbeddedContent'
     '    $NeedsWrite = $true'
     '    if (Test-Path -LiteralPath $HelperFile) {'
     '        try {'
     '            $HeadLines = Get-Content -LiteralPath $HelperFile -TotalCount 5 -Encoding UTF8 -ErrorAction Stop'
     '            foreach ($Line in $HeadLines) {'
     '                if ($Line -match ''clibm-env-path-version:\s*(\d+)'') {'
-    '                    if ([int]$Matches[1] -ge $EmbeddedVersion) {'
+    '                    if ([int]$Matches[1] -gt $EmbeddedVersion) {'
     '                        $NeedsWrite = $false'
+    '                    } elseif ([int]$Matches[1] -eq $EmbeddedVersion) {'
+    '                        $ExistingClean = ([System.IO.File]::ReadAllText($HelperFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF) -replace "`r`n", "`n").TrimEnd("`n")'
+    '                        $TargetClean = ($EmbeddedContent -replace "`r`n", "`n").TrimEnd("`n")'
+    '                        if ($ExistingClean -ceq $TargetClean) {'
+    '                            $NeedsWrite = $false'
+    '                        }'
     '                    }'
     '                    break'
     '                }'
@@ -88,14 +96,15 @@ $Ps1BlockLf = @(
     '    }'
     '    return $HelperFile'
     '}'
-    '. (Initialize-ClibmEnvPathHelper)'
+    'try { . (Initialize-ClibmEnvPathHelper) } catch { Invoke-Expression $script:ClibmEmbeddedHelperContent }'
     $MarkerEnd
 ) -join "`n"
 
 $ShBlockLf = @(
     $MarkerStart
     'clibm_init_env_path_helper() {'
-    '  local lib_dir="${HOME}/.clibm/lib"'
+    '  local home_dir="${CLIBM_HOME:-${HOME}}"'
+    '  local lib_dir="${home_dir%/}/.clibm/lib"'
     '  local helper_file="${lib_dir}/env-path.sh"'
     "  local embedded_version=$ShVer"
     '  local needs_write=1'
@@ -105,7 +114,7 @@ $ShBlockLf = @(
     '    first_three=$(head -c 3 "$helper_file" 2>/dev/null || true)'
     '    local existing_ver'
     '    existing_ver=$(tr -d ''\r'' < "$helper_file" | sed "1s/^${bom}//" | sed -n ''1,5s/^# clibm-env-path-version:[[:space:]]*\([0-9][0-9]*\).*/\1/p'' | head -n1)'
-    '    if [ "$first_three" != "$bom" ] && [ -n "$existing_ver" ] && [ "$existing_ver" -ge "$embedded_version" ] 2>/dev/null; then'
+    '    if [ "$first_three" != "$bom" ] && [ -n "$existing_ver" ] && [ "$existing_ver" -gt "$embedded_version" ] 2>/dev/null; then'
     '      needs_write=0'
     '    fi'
     '  fi'

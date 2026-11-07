@@ -1411,8 +1411,22 @@ export function buildCustomPluginTemplateFiles(
     `# ${crateName} (v0.1.0)\n\n${cleanDesc}\n\n- **Contract:** \`CLIBM_PLUGIN_CONTRACT_V1\`\n- **Hooks:** \`${cleanHooks.join('`, `')}\`\n- **Encoding:** \`UTF-8 with BOM (EF BB BF)\`\n\n## 1. Build & Install (From This Plugin Folder)\n\n\`\`\`bash\ncd ${crateName}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n\`\`\`\n\n## 2. Run Inside Any Ongoing CLIBM Project\n\n\`\`\`bash\nclibm plugin run ${crateName}\n# Or invoke the binary directly:\n${crateName}\n\`\`\`\n\n## 3. Uninstall\n\n\`\`\`bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n\`\`\`\n`
   );
 
-  const customInstallSh = ensureUtf8Bom(tplInstallSh.replace(/clibm-plugin-template/g, crateName));
-  const customInstallPs1 = ensureUtf8Bom(tplInstallPs1.replace(/clibm-plugin-template/g, crateName));
+  const safeDesc = cleanDesc.replace(/"/g, "'");
+  const hooksCsv = cleanHooks.join(',');
+  const hooksPs1 = cleanHooks.map((h) => `"${h}"`).join(', ');
+
+  const customInstallSh = ensureUtf8Bom(
+    tplInstallSh
+      .replace(/clibm-plugin-template/g, crateName)
+      .replace('TPL_HOOKS="pre-commit,on-task-move"', `TPL_HOOKS="${hooksCsv}"`)
+      .replace('PLUGIN_DESC="Standalone CLIBM plugin (${BIN_NAME})"', `PLUGIN_DESC="${safeDesc}"`)
+  );
+  const customInstallPs1 = ensureUtf8Bom(
+    tplInstallPs1
+      .replace(/clibm-plugin-template/g, crateName)
+      .replace('"default-hooks" { @("pre-commit", "on-task-move") }', `"default-hooks" { @(${hooksPs1}) }`)
+      .replace('$PluginDesc = "Standalone CLIBM plugin ($BinName)"', `$PluginDesc = "${safeDesc}"`)
+  );
   const customUninstallSh = ensureUtf8Bom(tplUninstallSh.replace(/clibm-plugin-template/g, crateName));
   const customUninstallPs1 = ensureUtf8Bom(tplUninstallPs1.replace(/clibm-plugin-template/g, crateName));
 

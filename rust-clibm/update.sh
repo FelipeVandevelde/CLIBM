@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
 # CLIBM v0.1.0 — GitHub Update Script (Linux / macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
@@ -62,7 +62,11 @@ fi
 if [ "$UPDATE_PLUGINS" = true ] && [ -d "plugins" ]; then
   echo "-> Updating standalone plugins in ./plugins/..."
   for plugin_dir in plugins/*/; do
-    if [ -f "${plugin_dir}Cargo.toml" ]; then
+    case "$plugin_dir" in *plugin-template*) continue ;; esac
+    if [ -f "${plugin_dir}install.sh" ]; then
+      echo "   * Building, installing, and registering plugin from ${plugin_dir}..."
+      (cd "$plugin_dir" && ./install.sh -y)
+    elif [ -f "${plugin_dir}Cargo.toml" ]; then
       echo "   * Building and installing plugin from ${plugin_dir}..."
       (cd "$plugin_dir" && cargo install --path . --force)
     fi

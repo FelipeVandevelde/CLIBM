@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # CLIBM v0.1.0 — GitHub Update Script (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
@@ -47,8 +47,18 @@ if ((Test-Path ".git") -and (Test-Path "Cargo.toml")) {
 if ($Plugins -and (Test-Path "plugins")) {
     Write-Host "-> Updating standalone plugins in .\plugins\..."
     Get-ChildItem -Path "plugins" -Directory | ForEach-Object {
+        if ($_.Name -eq "plugin-template") { return }
         $CargoFile = Join-Path $_.FullName "Cargo.toml"
-        if (Test-Path $CargoFile) {
+        $PluginInstallPs1 = Join-Path $_.FullName "install.ps1"
+        if (Test-Path $PluginInstallPs1) {
+            Write-Host "   * Building, installing, and registering plugin from $($_.Name)..."
+            Push-Location $_.FullName
+            try {
+                & .\install.ps1 -Yes
+            } finally {
+                Pop-Location
+            }
+        } elseif (Test-Path $CargoFile) {
             Write-Host "   * Building and installing plugin from $($_.Name)..."
             Push-Location $_.FullName
             cargo install --path . --force

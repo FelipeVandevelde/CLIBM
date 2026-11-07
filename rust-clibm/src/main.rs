@@ -58,10 +58,18 @@ fn main() -> Result<()> {
             engine.cas.save_config(&cfg)?;
 
             if with_defaults {
-                let defaults = PluginManager::default_plugin_bundle(&install_path);
-                PluginManager::save_registry(&engine.cas, &defaults)?;
+                let mut merged = PluginManager::default_plugin_bundle(&install_path);
+                if let Ok(existing) = PluginManager::load_registry(&engine.cas) {
+                    for p in existing {
+                        if !merged.iter().any(|m| m.name == p.name) {
+                            merged.push(p);
+                        }
+                    }
+                }
+                PluginManager::save_registry(&engine.cas, &merged)?;
             } else {
-                PluginManager::save_registry(&engine.cas, &[])?;
+                let existing = PluginManager::load_registry(&engine.cas).unwrap_or_default();
+                PluginManager::save_registry(&engine.cas, &existing)?;
             }
 
             println!(

@@ -401,22 +401,41 @@ fn build_state_snapshot(cas: &ProjectCas) -> Result<Value> {
     }))
 }
 
+fn update_registry_file(reg_file: &Path, manifest: &PluginManifest) -> Result<()> {
+    if let Some(parent) = reg_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut list: Vec<PluginManifest> = if reg_file.exists() {
+        fs::read_to_string(reg_file)
+            .ok()
+            .and_then(|s| {
+                let clean = s.strip_prefix('\u{FEFF}').unwrap_or(&s);
+                serde_json::from_str(clean).ok()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    if let Some(existing) = list.iter_mut().find(|p| p.name == manifest.name) {
+        *existing = manifest.clone();
+    } else {
+        list.push(manifest.clone());
+    }
+
+    let json = format!("\u{FEFF}{}", serde_json::to_string_pretty(&list)?);
+    fs::write(reg_file, json)?;
+    Ok(())
+}
+
 fn register_plugin_globally(bin_path: Option<String>) -> Result<()> {
-    let home = env::var("HOME")
+    let home = env::var("CLIBM_HOME")
+        .or_else(|_| env::var("HOME"))
         .or_else(|_| env::var("USERPROFILE"))
         .context("Could not determine user home directory")?;
     let plugins_dir = PathBuf::from(home).join(".clibm").join("plugins");
     fs::create_dir_all(&plugins_dir)?;
     let reg_file = plugins_dir.join("registry.json");
-
-    let mut list: Vec<PluginManifest> = if reg_file.exists() {
-        fs::read_to_string(&reg_file)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
 
     let exe = bin_path.or_else(|| {
         env::current_exe()
@@ -432,16 +451,25 @@ fn register_plugin_globally(bin_path: Option<String>) -> Result<()> {
                 .to_string(),
         enabled: true,
         hooks: vec!["http-bridge".to_string(), "on-state-query".to_string()],
-        executable: exe,
+        executable: exe.clone(),
     };
 
-    if let Some(existing) = list.iter_mut().find(|p| p.name == "clibm-web") {
-        *existing = manifest;
-    } else {
-        list.push(manifest);
+    update_registry_file(&reg_file, &manifest)?;
+    if let Some(ref exe_str) = exe {
+        if let Some(bin_dir) = Path::new(exe_str).parent() {
+            if !bin_dir.as_os_str().is_empty() && bin_dir.exists() {
+                let _ = update_registry_file(&bin_dir.join("registry.json"), &manifest);
+            }
+        }
     }
-
-    fs::write(&reg_file, serde_json::to_string_pretty(&list)?)?;
+    if let Ok(cwd) = env::current_dir() {
+        if let Ok(cas) = ProjectCas::discover_ongoing(&cwd) {
+            let _ = update_registry_file(
+                &cas.clibm_dir.join("plugins").join("registry.json"),
+                &manifest,
+            );
+        }
+    }
     println!(
         "Registered plugin 'clibm-web' in global CLIBM registry ({})",
         reg_file.display()
