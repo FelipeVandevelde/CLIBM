@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # clibm-mcp — Standalone Plugin Installer with Interactive Choices (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================

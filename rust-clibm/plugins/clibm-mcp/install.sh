@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==============================================================================
 # clibm-mcp — Standalone Plugin Installer with Interactive Choices (Linux/macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility

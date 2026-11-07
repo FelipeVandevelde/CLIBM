@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==============================================================================
 # clibm-plugin-template — Standalone Plugin Installer (Linux / macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility

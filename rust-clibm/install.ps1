@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # CLIBM v0.1.0 — Interactive Core Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell 5.1 & 7+ compatibility
 # Supports BOTH:

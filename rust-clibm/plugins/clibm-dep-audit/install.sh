@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==============================================================================
 # clibm-dep-audit — Standalone Plugin Installer with Interactive Choices
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility

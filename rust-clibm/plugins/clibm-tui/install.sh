@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==============================================================================
 # clibm-tui — Standalone Ratatui Terminal UI Plugin Installer (Linux / macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
