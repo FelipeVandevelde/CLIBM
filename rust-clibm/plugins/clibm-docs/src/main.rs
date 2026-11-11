@@ -24,8 +24,22 @@ fn main() -> Result<()> {
         fs::write(project_root.join("AGENTS.md"), &guide)?;
         fs::write(project_root.join("CLAUDE.md"), &guide)?;
         fs::write(project_root.join(".cursorrules"), &guide)?;
+
+        let mcp_config = serde_json::json!({
+            "mcpServers": {
+                "clibm": {
+                    "command": "clibm",
+                    "args": ["plugin", "run", "mcp", "--", "--stdio"]
+                }
+            }
+        });
+        fs::write(
+            project_root.join(".mcp.json"),
+            serde_json::to_string_pretty(&mcp_config)? + "\n",
+        )?;
+
         println!(
-            "[clibm-docs] Generated AGENTS.md, CLAUDE.md, and .cursorrules in {}",
+            "[clibm-docs] Generated AGENTS.md, CLAUDE.md, .cursorrules, and .mcp.json in {}",
             project_root.display()
         );
     } else {
@@ -74,6 +88,20 @@ clibm config set auto_commit true|false
 
 ## 3. Using the Self-Hosted MCP Server (`clibm-mcp`)
 If MCP is enabled in your agent runtime, prefer invoking the structured MCP tools (`clibm_status`, `clibm_task_list`, `clibm_task_add`, `clibm_board_move`, `clibm_workspace_switch`) exposed by `clibm-mcp`.
+
+For the complete MCP configuration guide for Claude Desktop, Cursor, Windsurf, and agent pipelines, see:
+https://github.com/FelipeVandevelde/CLIBM/blob/main/rust-clibm/plugins/clibm-mcp/README.md#ai-agent-mcp-configuration-json
+
+```json
+{
+  "mcpServers": {
+    "clibm": {
+      "command": "clibm",
+      "args": ["plugin", "run", "mcp", "--", "--stdio"]
+    }
+  }
+}
+```
 "#
     .to_string()
 }

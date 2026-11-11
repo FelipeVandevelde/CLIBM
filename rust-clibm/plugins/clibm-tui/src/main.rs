@@ -488,13 +488,6 @@ fn register_plugin_globally(bin_path: Option<String>) -> Result<()> {
     };
 
     update_registry_file(&reg_file, &manifest)?;
-    if let Some(ref exe_str) = exe {
-        if let Some(bin_dir) = Path::new(exe_str).parent() {
-            if !bin_dir.as_os_str().is_empty() && bin_dir.exists() {
-                let _ = update_registry_file(&bin_dir.join("registry.json"), &manifest);
-            }
-        }
-    }
     if let Ok(cwd) = env::current_dir() {
         if let Ok(cas) = ProjectCas::discover_ongoing(&cwd) {
             let _ = update_registry_file(

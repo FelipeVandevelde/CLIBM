@@ -135,9 +135,10 @@ pub enum Commands {
         check: bool,
     },
 
-    /// Uninstall CLIBM binaries and plugins (preserves .clibm project data unless --purge is passed)
+    /// Uninstallation assistant: scans and displays all installed binary paths, configuration folders,
+    /// and user PATH entries with copy-pasteable removal commands so the user can easily remove them.
     Uninstall {
-        /// Also remove the local .clibm repository directory and global plugin registry cache
+        /// Also delete the local .clibm repository directory in the current working directory
         #[arg(long)]
         purge: bool,
         /// Skip interactive confirmation prompt
@@ -284,6 +285,11 @@ pub enum PluginCommands {
     Enable { name: String },
     /// Disable a plugin
     Disable { name: String },
+    /// Display uninstallation guidance and paths to remove an installed plugin
+    Uninstall {
+        /// Plugin name (e.g. 'clibm-mcp', 'mcp', 'clibm-docs', 'docs', 'clibm-tui', etc.)
+        name: String,
+    },
     /// Execute an installed standalone plugin inside the current ongoing project
     Run {
         /// Plugin name (e.g. 'clibm-mcp', 'mcp', 'clibm-docs', 'docs', 'clibm-tui', 'clibm-web', 'clibm-dep-audit')

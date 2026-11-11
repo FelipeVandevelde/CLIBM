@@ -7,18 +7,35 @@ Standalone Rust plugin that teaches AI agents and coding assistants (Claude Code
 1. **Stdout AI Context Manual**: Prints a structured, token-efficient instruction manual covering CLIBM's BLAKE3 CAS architecture, automatic commit rules, multi-workspace coordination, and exact CLI grammar.
 2. **Project Instruction File Generator (`--write`)**: Automatically generates `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, and `.mcp.json` tailored to your active `.clibm` repository.
 
-## 1. Build & Install (Direct from GitHub or Local Folder)
+## Quick Install
 
-```powershell
-# Windows PowerShell — Quick install directly from GitHub:
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1 | iex
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.sh | bash
 ```
 
-```bash
-# Linux / macOS — Quick install directly from GitHub:
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.sh | bash
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1)
+```
 
-# Or from local plugin folder:
+## Quick Uninstall
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/uninstall.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/uninstall.ps1)
+```
+
+---
+
+## 1. Local Build & Install (From Plugin Folder)
+
+```bash
 cd plugins/clibm-docs
 ./install.sh
 # Windows PowerShell (local):

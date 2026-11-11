@@ -2,6 +2,32 @@
 
 Official starter template for creating standalone **CLIBM v0.1.0** plugins in Rust.
 
+## Quick Install
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.ps1)
+```
+
+## Quick Uninstall
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/uninstall.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/uninstall.ps1)
+```
+
+---
+
 ## Key Capabilities
 
 1. **Folder-Scoped Standalone Compilation**: Compiles strictly from within its own plugin folder without modifying the core `clibm` Cargo manifest.
@@ -53,6 +79,19 @@ clibm-plugin-template
 
 ## Uninstalling the Plugin
 
+### Quick Uninstall One-Liner (Remote):
+```powershell
+# Windows PowerShell:
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/uninstall.ps1)
+```
+```bash
+# Linux / macOS:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/uninstall.sh | bash
+```
+
+### From Local Plugin Folder:
 ```bash
 ./uninstall.sh
+# Or on Windows PowerShell:
+.\uninstall.ps1
 ```

@@ -4,21 +4,31 @@
 
 ---
 
-## 1. Build & Installation (Direct from GitHub or Local Folder)
+## 1. Quick Lifecycle (Direct from GitHub)
 
-`clibm-tui` supports both direct installation via its raw GitHub script and local folder-scoped installation:
-
-### Quick Install (Direct from GitHub)
+### Quick Install
 ```powershell
 # Windows PowerShell:
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1 | iex
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1)
 ```
 ```bash
-# Linux / macOS:
+# Linux / macOS / WSL2:
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.sh | bash
 ```
 
-### Local Installation (Linux / macOS)
+### Quick Uninstall
+```powershell
+# Windows PowerShell:
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/uninstall.ps1)
+```
+```bash
+# Linux / macOS / WSL2:
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/uninstall.sh | bash
+```
+
+---
+
+## 2. Local Installation & Build (From Plugin Folder)
 ```bash
 cd plugins/clibm-tui   # (or cd clibm-tui if extracted from clibm-tui-v0.1.0.zip)
 ./install.sh

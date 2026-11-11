@@ -73,14 +73,22 @@ fn inspect_project(clibm_dir: &PathBuf, req: Option<&PluginInvocationRequest>) -
         .unwrap_or(0);
 
     match req {
-        Some(r) => format!(
-            "[clibm-plugin-template] Contract={} | Event={} | Tree={} | HEAD={} | CAS Objects={}",
-            r.contract,
-            r.event,
-            &r.tree_hash[..12.min(r.tree_hash.len())],
-            head_ref,
-            object_count
-        ),
+        Some(r) => {
+            let args_info = if r.args.is_empty() {
+                String::new()
+            } else {
+                format!(" | Args={:?}", r.args)
+            };
+            format!(
+                "[clibm-plugin-template] Contract={} | Event={} | Tree={} | HEAD={} | CAS Objects={}{}",
+                r.contract,
+                r.event,
+                &r.tree_hash[..12.min(r.tree_hash.len())],
+                head_ref,
+                object_count,
+                args_info
+            )
+        }
         None => format!(
             "[clibm-plugin-template] Active Project: {} | HEAD: {} | CAS Objects: {}",
             clibm_dir.display(),

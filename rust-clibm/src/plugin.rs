@@ -145,6 +145,8 @@ pub struct PluginManifest {
     pub hooks: Vec<String>,
     /// Path or binary name of the installed standalone plugin executable on Linux/Windows.
     pub executable: Option<String>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +185,25 @@ impl PluginManager {
                 enabled: true,
                 hooks: vec!["pre-commit".to_string(), "on-task-depend".to_string()],
                 executable: Some(format!("{}/clibm-dep-audit", base)),
+                extra: {
+                    let mut m = std::collections::BTreeMap::new();
+                    m.insert(
+                        "tools".to_string(),
+                        serde_json::json!([
+                            {
+                                "name": "audit_dependencies",
+                                "description": "Audit task dependency DAG in computed index to detect circular chains and blockers",
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {}
+                                },
+                                "is_mutating": false,
+                                "execution_ref": "audit"
+                            }
+                        ]),
+                    );
+                    m
+                },
             },
             PluginManifest {
                 name: "clibm-export-md".to_string(),
@@ -192,6 +213,25 @@ impl PluginManager {
                 enabled: true,
                 hooks: vec!["on-export".to_string()],
                 executable: Some(format!("{}/clibm-export-md", base)),
+                extra: {
+                    let mut m = std::collections::BTreeMap::new();
+                    m.insert(
+                        "tools".to_string(),
+                        serde_json::json!([
+                            {
+                                "name": "export_project",
+                                "description": "Generate portable Markdown sprint report from CAS object snapshot",
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {}
+                                },
+                                "is_mutating": false,
+                                "execution_ref": "export"
+                            }
+                        ]),
+                    );
+                    m
+                },
             },
             PluginManifest {
                 name: "clibm-workflow-lint".to_string(),
@@ -201,6 +241,25 @@ impl PluginManager {
                 enabled: true,
                 hooks: vec!["pre-move".to_string(), "pre-commit".to_string()],
                 executable: Some(format!("{}/clibm-workflow-lint", base)),
+                extra: {
+                    let mut m = std::collections::BTreeMap::new();
+                    m.insert(
+                        "tools".to_string(),
+                        serde_json::json!([
+                            {
+                                "name": "lint_workflow",
+                                "description": "Validate Kanban column WIP limits and required assignees",
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {}
+                                },
+                                "is_mutating": false,
+                                "execution_ref": "lint"
+                            }
+                        ]),
+                    );
+                    m
+                },
             },
         ]
     }
@@ -442,7 +501,30 @@ impl PluginManager {
             .unwrap_or(raw_target);
         let norm = Self::normalize_plugin_name(leaf);
         match norm.as_str() {
-            "clibm-mcp" => Some(("clibm-mcp", "plugins/clibm-mcp", vec!["Cargo.toml", "src/main.rs"])),
+            "clibm-mcp" => Some((
+                "clibm-mcp",
+                "plugins/clibm-mcp",
+                vec![
+                    "Cargo.toml",
+                    "src/main.rs",
+                    "src/config.rs",
+                    "src/error.rs",
+                    "src/protocol/mod.rs",
+                    "src/protocol/types.rs",
+                    "src/protocol/schema.rs",
+                    "src/backend/mod.rs",
+                    "src/backend/bridge.rs",
+                    "src/adapter/mod.rs",
+                    "src/adapter/dispatcher.rs",
+                    "src/adapter/permissions.rs",
+                    "src/adapter/tools.rs",
+                    "src/adapter/resources.rs",
+                    "src/adapter/prompts.rs",
+                    "src/transport/mod.rs",
+                    "src/transport/stdio.rs",
+                    "src/transport/http.rs",
+                ],
+            )),
             "clibm-docs" => Some(("clibm-docs", "plugins/clibm-docs", vec!["Cargo.toml", "src/main.rs"])),
             "clibm-dep-audit" => Some(("clibm-dep-audit", "plugins/clibm-dep-audit", vec!["Cargo.toml", "src/main.rs"])),
             "clibm-export-md" => Some(("clibm-export-md", "plugins/clibm-export-md", vec!["Cargo.toml", "src/main.rs"])),
@@ -570,8 +652,27 @@ impl PluginManager {
             .unwrap_or_else(|| format!("Installed CLIBM standalone plugin ({})", name));
 
         println!("==> Building plugin '{}' in {}...", name, resolved_dir.display());
+        let mut cargo_args = vec!["build", "--release"];
+        if name == "clibm-mcp" {
+            match mcp_transport.unwrap_or("both") {
+                "stdio" => {
+                    cargo_args.push("--no-default-features");
+                    cargo_args.push("--features");
+                    cargo_args.push("transport-stdio");
+                }
+                "http" => {
+                    cargo_args.push("--no-default-features");
+                    cargo_args.push("--features");
+                    cargo_args.push("transport-http");
+                }
+                _ => {
+                    cargo_args.push("--features");
+                    cargo_args.push("transport-stdio,transport-http");
+                }
+            }
+        }
         let status = Command::new("cargo")
-            .args(["build", "--release"])
+            .args(&cargo_args)
             .current_dir(&resolved_dir)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -600,13 +701,32 @@ impl PluginManager {
         } else {
             name.clone()
         };
-        let built_bin = resolved_dir.join("target").join("release").join(&bin_filename);
-        if !built_bin.exists() {
-            if let Some(tmp) = &temp_cleanup_dir {
-                let _ = fs::remove_dir_all(tmp);
+        let candidates = [
+            resolved_dir.join("target").join("release").join(&bin_filename),
+            resolved_dir
+                .join("..")
+                .join("..")
+                .join("target")
+                .join("release")
+                .join(&bin_filename),
+            env::current_dir()
+                .unwrap_or_default()
+                .join("target")
+                .join("release")
+                .join(&bin_filename),
+        ];
+        let built_bin = match candidates.into_iter().find(|p| p.exists()) {
+            Some(p) => p,
+            None => {
+                if let Some(tmp) = &temp_cleanup_dir {
+                    let _ = fs::remove_dir_all(tmp);
+                }
+                bail!(
+                    "Expected release binary '{}' not found in local or workspace target/release directories",
+                    bin_filename
+                );
             }
-            bail!("Expected release binary not found at {}", built_bin.display());
-        }
+        };
 
         let cfg = cas.load_config().unwrap_or_default();
         let home = env::var("HOME")
@@ -626,6 +746,21 @@ impl PluginManager {
 
         if let Some(tmp) = temp_cleanup_dir {
             let _ = fs::remove_dir_all(tmp);
+        } else {
+            // Post-install space optimization: clean build artifacts to save disk space
+            let local_target = resolved_dir.join("target");
+            if local_target.exists() && local_target.is_dir() {
+                let _ = fs::remove_dir_all(&local_target);
+                println!(
+                    "==> [Space Optimization] Cleaned intermediate build artifacts in {}",
+                    local_target.display()
+                );
+            } else {
+                let _ = Command::new("cargo")
+                    .args(&["clean", "-p", &name, "--release"])
+                    .current_dir(&resolved_dir)
+                    .status();
+            }
         }
 
         if !Self::is_dir_on_env_path(&install_dir) {
@@ -668,27 +803,28 @@ impl PluginManager {
             vec!["manual-run".to_string()]
         };
 
-        let manifest = PluginManifest {
+        let mut manifest = PluginManifest {
             name: name.clone(),
             version: "0.1.0".to_string(),
             description,
             enabled: true,
             hooks,
             executable: Some(installed_bin.to_string_lossy().to_string()),
+            extra: std::collections::BTreeMap::new(),
         };
-
-        Self::save_global_manifest(manifest.clone())?;
-        let _ = Self::save_manifest_to_file(&install_dir.join("registry.json"), &manifest);
 
         if cas.is_initialized() {
             let mut project_plugins = Self::load_registry(cas)?;
             if let Some(existing) = project_plugins.iter_mut().find(|p| p.name == name) {
+                manifest.extra = existing.extra.clone();
                 *existing = manifest.clone();
             } else {
                 project_plugins.push(manifest.clone());
             }
             Self::save_registry(cas, &project_plugins)?;
         }
+
+        Self::save_global_manifest(manifest.clone())?;
 
         Ok(manifest)
     }
@@ -760,7 +896,7 @@ fn main() -> Result<()> {{
         write_utf8_bom_file(&src_dir.join("main.rs"), &main_rs)?;
 
         let readme = format!(
-            "# {crate_name}\n\n{description}\n\n- **Encoding:** UTF-8 with BOM (`EF BB BF`)\n\n## Build & Install (From This Folder)\n\n```bash\ncd plugins/{crate_name}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n```\n\n## Run in Any Ongoing CLIBM Project\n\n```bash\nclibm plugin run {crate_name}\n```\n\n## Uninstall\n\n```bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n```\n"
+            "# {crate_name}\n\n{description}\n\n- **Encoding:** UTF-8 with BOM (`EF BB BF`)\n\n## Quick Install\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.ps1)\n```\n\n## Quick Uninstall\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.ps1)\n```\n\n## Local Build & Install (From This Folder)\n\n```bash\ncd plugins/{crate_name}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n```\n\n## Run in Any Ongoing CLIBM Project\n\n```bash\nclibm plugin run {crate_name}\n```\n\n## Local Uninstall\n\n```bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n```\n"
         );
         write_utf8_bom_file(&plugin_dir.join("README.md"), &readme)?;
 
@@ -1000,6 +1136,7 @@ Write-Host \"Uninstalled {crate_name}.exe\"\n"
                 hooks
             },
             executable: Some(format!("~/.local/bin/{}", crate_name)),
+            extra: std::collections::BTreeMap::new(),
         };
 
         let _ = Self::save_global_manifest(manifest.clone());

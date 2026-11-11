@@ -10,6 +10,7 @@ use clibm_core::engine::ClibmEngine;
 use clibm_core::models::*;
 use clibm_core::plugin::PluginManager;
 use clibm_core::versioning::VersioningEngine;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -25,6 +26,29 @@ fn parse_bool(val: &str) -> Result<bool> {
 fn print_auto_commit_notice(auto_commit_hash: Option<String>) {
     if let Some(chash) = auto_commit_hash {
         println!("  [auto-commit {}] Change recorded to branch history.", &chash[..12]);
+    }
+}
+
+fn record_binary(
+    path: PathBuf,
+    is_core: bool,
+    core_list: &mut Vec<PathBuf>,
+    plugin_list: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+) {
+    if path.exists() && path.is_file() {
+        let key = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.clone())
+            .to_string_lossy()
+            .to_lowercase();
+        if seen.insert(key) {
+            if is_core {
+                core_list.push(path);
+            } else {
+                plugin_list.push(path);
+            }
+        }
     }
 }
 
@@ -631,6 +655,75 @@ fn main() -> Result<()> {
                 PluginManager::set_plugin_enabled(&engine.cas, &name, false)?;
                 println!("Disabled plugin '{}'", name);
             }
+            PluginCommands::Uninstall { name } => {
+                let canonical = PluginManager::normalize_plugin_name(&name);
+                println!("====================================================================");
+                println!(" CLIBM Plugin Uninstallation Guide: {}", canonical);
+                println!("====================================================================");
+                println!("This assistant indicates where '{}' is located so you can remove it.\n", canonical);
+
+                let bin_path = PluginManager::find_installed_binary(&canonical);
+                let plugins = PluginManager::load_registry(&engine.cas).unwrap_or_default();
+                let manifest = plugins.iter().find(|p| p.name == canonical);
+
+                println!("[1] Plugin Executable Binary:");
+                if let Some(ref bp) = bin_path {
+                    println!("    • Path: {}", bp.display());
+                } else {
+                    println!("    • (Binary not found in standard PATH or candidate folders)");
+                }
+
+                println!("\n[2] Plugin Registration Status:");
+                if let Some(m) = manifest {
+                    println!("    • Status     : {}", if m.enabled { "ENABLED" } else { "DISABLED" });
+                    println!("    • Version    : {}", m.version);
+                    println!("    • Description: {}", m.description);
+                } else {
+                    println!("    • (Plugin '{}' is not registered in active project)", canonical);
+                }
+
+                let home = env::var("CLIBM_HOME")
+                    .or_else(|_| env::var("HOME"))
+                    .or_else(|_| env::var("USERPROFILE"))
+                    .ok();
+                let global_clibm = home.as_ref().map(|h| PathBuf::from(h).join(".clibm"));
+
+                if canonical == "clibm-mcp" {
+                    if let Some(ref g) = global_clibm {
+                        let mcp_cfg = g.join("mcp-config.json");
+                        if mcp_cfg.exists() {
+                            println!("\n[3] Dedicated Plugin Configuration:");
+                            println!("    • Configuration file: {}", mcp_cfg.display());
+                        }
+                    }
+                }
+
+                println!("\n--------------------------------------------------------------------");
+                println!("Manual Removal Commands:");
+                println!("--------------------------------------------------------------------");
+                if cfg!(windows) {
+                    if let Some(ref bp) = bin_path {
+                        println!("To delete the plugin binary in PowerShell:");
+                        println!("  Remove-Item -Force \"{}\"", bp.display());
+                    }
+                    println!("\nQuick Automatic Plugin Uninstall (Recommended):");
+                    println!("  iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{}/uninstall.ps1)", canonical);
+                    println!("  (Or locally if cloned: cd plugins/{} ; .\\uninstall.ps1 -Yes)", canonical);
+                    println!("\nTo disable/deregister plugin in the active project:");
+                    println!("  clibm plugin disable {}", canonical);
+                } else {
+                    if let Some(ref bp) = bin_path {
+                        println!("To delete the plugin binary in Bash:");
+                        println!("  rm -f \"{}\"", bp.display());
+                    }
+                    println!("\nQuick Automatic Plugin Uninstall (Recommended):");
+                    println!("  curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{}/uninstall.sh | bash", canonical);
+                    println!("  (Or locally if cloned: cd plugins/{} && ./uninstall.sh -y)", canonical);
+                    println!("\nTo disable/deregister plugin in the active project:");
+                    println!("  clibm plugin disable {}", canonical);
+                }
+                println!("====================================================================");
+            }
             PluginCommands::Run { name, args } => {
                 let (tree_hash, tree) = engine.load_working_tree()?;
                 let res =
@@ -690,34 +783,285 @@ fn main() -> Result<()> {
         }
 
         Commands::Uninstall { purge, yes: _ } => {
-            println!("==> CLIBM Uninstallation Procedure");
-            if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
-                let home_path = PathBuf::from(home);
-                let dirs = [
-                    home_path.join(".cargo").join("bin"),
-                    home_path.join(".local").join("bin"),
-                    home_path.join(".clibm-bin"),
-                ];
-                for d in dirs {
-                    if d.exists() {
-                        println!("    Scanning binary directory: {}", d.display());
+            println!("====================================================================");
+            println!(" CLIBM Uninstallation Guide & Removal Assistant");
+            println!("====================================================================");
+            println!("This guide inspects your system and indicates all folders, binaries,");
+            println!("and configuration entries so you can easily review and remove them.\n");
+
+            let home = env::var("CLIBM_HOME")
+                .or_else(|_| env::var("HOME"))
+                .or_else(|_| env::var("USERPROFILE"))
+                .ok();
+            let global_clibm = home.as_ref().map(|h| PathBuf::from(h).join(".clibm"));
+
+            let mut configured_install_dir: Option<PathBuf> = None;
+            let mut path_entry_added = false;
+            if let Some(ref g) = global_clibm {
+                let cfg_path = g.join("install-config.json");
+                if cfg_path.exists() {
+                    if let Ok(raw) = fs::read_to_string(&cfg_path) {
+                        let clean = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(clean) {
+                            if let Some(p) = val.get("install_path").and_then(|v| v.as_str()) {
+                                let expanded = if p == "~" {
+                                    home.as_ref().map(PathBuf::from)
+                                } else if p.starts_with("~/") || p.starts_with("~\\") {
+                                    home.as_ref().map(|h| PathBuf::from(h).join(&p[2..]))
+                                } else {
+                                    Some(PathBuf::from(p))
+                                };
+                                configured_install_dir = expanded;
+                            }
+                            if let Some(b) = val.get("path_entry_added").and_then(|v| v.as_bool()) {
+                                path_entry_added = b;
+                            }
+                        }
                     }
                 }
             }
-            if purge {
-                if engine.cas.clibm_dir().exists() {
-                    fs::remove_dir_all(engine.cas.clibm_dir())?;
-                    println!(
-                        "    [--purge] Removed local repository directory: {}",
-                        engine.cas.clibm_dir().display()
-                    );
+
+            let mut ledger_dirs: Vec<PathBuf> = Vec::new();
+            if let Some(ref g) = global_clibm {
+                let ledger_path = g.join("path-ledger");
+                if ledger_path.exists() {
+                    if let Ok(content) = fs::read_to_string(&ledger_path) {
+                        for line in content.lines() {
+                            let parts: Vec<&str> = line.split('\t').collect();
+                            if parts.len() >= 2 {
+                                let dir = PathBuf::from(parts[1].trim());
+                                if !ledger_dirs.contains(&dir) {
+                                    ledger_dirs.push(dir);
+                                }
+                            }
+                        }
+                    }
                 }
-            } else {
-                println!(
-                    "    Preserved local .clibm/ repository data (pass --purge to delete data)."
+            }
+
+            let mut candidate_dirs: Vec<PathBuf> = Vec::new();
+            if let Ok(cur_exe) = env::current_exe() {
+                if let Some(parent) = cur_exe.parent() {
+                    let parent_pb = parent.to_path_buf();
+                    if !candidate_dirs.contains(&parent_pb) {
+                        candidate_dirs.push(parent_pb);
+                    }
+                }
+            }
+            if let Some(ref c) = configured_install_dir {
+                if !candidate_dirs.contains(c) {
+                    candidate_dirs.push(c.clone());
+                }
+            }
+            for ld in &ledger_dirs {
+                if !candidate_dirs.contains(ld) {
+                    candidate_dirs.push(ld.clone());
+                }
+            }
+            if let Some(ref h) = home {
+                let h_path = PathBuf::from(h);
+                let defaults = [
+                    h_path.join(".clibm-bin"),
+                    h_path.join(".local").join("bin"),
+                    h_path.join(".cargo").join("bin"),
+                ];
+                for d in defaults {
+                    if !candidate_dirs.contains(&d) {
+                        candidate_dirs.push(d);
+                    }
+                }
+            }
+
+            let mut found_core_binaries: Vec<PathBuf> = Vec::new();
+            let mut found_plugin_binaries: Vec<PathBuf> = Vec::new();
+            let mut seen_canonical: HashSet<String> = HashSet::new();
+
+            if let Ok(cur) = env::current_exe() {
+                record_binary(
+                    cur,
+                    true,
+                    &mut found_core_binaries,
+                    &mut found_plugin_binaries,
+                    &mut seen_canonical,
                 );
             }
-            println!("==> Uninstallation complete.");
+
+            for dir in &candidate_dirs {
+                if dir.is_dir() {
+                    let core_names = if cfg!(windows) { &["clibm.exe"][..] } else { &["clibm"][..] };
+                    for name in core_names {
+                        let p = dir.join(name);
+                        record_binary(
+                            p,
+                            true,
+                            &mut found_core_binaries,
+                            &mut found_plugin_binaries,
+                            &mut seen_canonical,
+                        );
+                    }
+
+                    if let Ok(entries) = fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                                let is_plugin = if cfg!(windows) {
+                                    file_name.starts_with("clibm-") && file_name.ends_with(".exe")
+                                } else {
+                                    file_name.starts_with("clibm-") && !file_name.contains('.')
+                                };
+                                if is_plugin {
+                                    record_binary(
+                                        path,
+                                        false,
+                                        &mut found_core_binaries,
+                                        &mut found_plugin_binaries,
+                                        &mut seen_canonical,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Ok(plugins) = PluginManager::load_registry(&engine.cas) {
+                for p in &plugins {
+                    if let Some(bp) = PluginManager::find_installed_binary(&p.name) {
+                        record_binary(
+                            bp,
+                            false,
+                            &mut found_core_binaries,
+                            &mut found_plugin_binaries,
+                            &mut seen_canonical,
+                        );
+                    }
+                }
+            }
+
+            println!("[1] Executable Binaries to Remove:");
+            if found_core_binaries.is_empty() && found_plugin_binaries.is_empty() {
+                println!("    (No installed binaries detected in standard candidate directories)");
+            } else {
+                if !found_core_binaries.is_empty() {
+                    println!("    Core Executable(s):");
+                    for b in &found_core_binaries {
+                        println!("      • {}", b.display());
+                    }
+                }
+                if !found_plugin_binaries.is_empty() {
+                    println!("    Plugin Executable(s):");
+                    for b in &found_plugin_binaries {
+                        println!("      • {}", b.display());
+                    }
+                }
+            }
+
+            println!("\n[2] Global Configuration & State Folder:");
+            if let Some(ref g) = global_clibm {
+                if g.exists() {
+                    println!("    • Path: {}", g.display());
+                    println!("      (Contains install-config.json, path-ledger, plugins/ registry, lib/)");
+                } else {
+                    println!("    • Path: {} (Not present)", g.display());
+                }
+            }
+
+            let local_clibm = engine.cas.clibm_dir();
+            let local_clibm_exists = local_clibm.exists();
+
+            println!("\n[3] Local Project CAS Repository Data:");
+            if local_clibm_exists {
+                println!("    • Path: {}", local_clibm.display());
+                println!("      -> Note: Contains your project tasks, branches, and version history.");
+                println!("         Preserve this folder if you want to keep your project data intact.");
+            } else {
+                println!("    • (No .clibm repository in current directory: {})", cwd.display());
+            }
+
+            println!("\n[4] User PATH Entries to Remove:");
+            let mut path_entries_to_report: Vec<PathBuf> = Vec::new();
+            for ld in &ledger_dirs {
+                if !path_entries_to_report.contains(ld) {
+                    path_entries_to_report.push(ld.clone());
+                }
+            }
+            if path_entry_added {
+                if let Some(ref c) = configured_install_dir {
+                    if !path_entries_to_report.contains(c) {
+                        path_entries_to_report.push(c.clone());
+                    }
+                }
+            }
+            if path_entries_to_report.is_empty() {
+                println!("    (No CLIBM-managed entries found in path-ledger)");
+            } else {
+                for pe in &path_entries_to_report {
+                    println!("    • Directory: {}", pe.display());
+                }
+                if cfg!(windows) {
+                    println!("      -> Windows: System Properties > Environment Variables > User variables > Path");
+                } else {
+                    println!("      -> Linux/macOS: Check ~/.bashrc, ~/.zshrc, or ~/.profile for '# >>> clibm PATH'");
+                }
+            }
+
+            if purge {
+                println!("\n[5] Purge Option Flag Active (--purge):");
+                if local_clibm_exists {
+                    fs::remove_dir_all(&local_clibm)?;
+                    println!("    [OK] Deleted local repository directory: {}", local_clibm.display());
+                } else {
+                    println!("    (No local .clibm repository found to delete)");
+                }
+            }
+
+            println!("\n--------------------------------------------------------------------");
+            println!("Manual Removal Commands:");
+            println!("--------------------------------------------------------------------");
+            if cfg!(windows) {
+                println!("Run the following in PowerShell to remove the files:");
+                for b in &found_core_binaries {
+                    println!("  Remove-Item -Force \"{}\"", b.display());
+                }
+                for b in &found_plugin_binaries {
+                    println!("  Remove-Item -Force \"{}\"", b.display());
+                }
+                if let Some(ref g) = global_clibm {
+                    if g.exists() {
+                        println!("  Remove-Item -Recurse -Force \"{}\"", g.display());
+                    }
+                }
+                if !purge && local_clibm_exists {
+                    println!("  # Optional: Delete project tasks & CAS history:");
+                    println!("  # Remove-Item -Recurse -Force \"{}\"", local_clibm.display());
+                }
+            } else {
+                println!("Run the following in Bash to remove the files:");
+                for b in &found_core_binaries {
+                    println!("  rm -f \"{}\"", b.display());
+                }
+                for b in &found_plugin_binaries {
+                    println!("  rm -f \"{}\"", b.display());
+                }
+                if let Some(ref g) = global_clibm {
+                    if g.exists() {
+                        println!("  rm -rf \"{}\"", g.display());
+                    }
+                }
+                if !purge && local_clibm_exists {
+                    println!("  # Optional: Delete project tasks & CAS history:");
+                    println!("  # rm -rf \"{}\"", local_clibm.display());
+                }
+            }
+            println!("\nQuick Automatic Uninstall (Recommended):");
+            if cfg!(windows) {
+                println!("  iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)");
+                println!("  (Or locally if repository is cloned: .\\uninstall.ps1 -Yes)");
+            } else {
+                println!("  curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.sh | bash");
+                println!("  (Or locally if repository is cloned: ./uninstall.sh -y)");
+            }
+            println!("====================================================================");
         }
 
         Commands::Export { output } => {
