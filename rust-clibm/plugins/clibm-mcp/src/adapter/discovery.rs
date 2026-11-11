@@ -1,0 +1,280 @@
+//! Registry-based dynamic discovery for plugin MCP tools.
+
+use crate::adapter::tools::{ToolDefinition, ToolHandler};
+use crate::adapter::validator::SchemaValidator;
+use crate::backend::ClibmBridge;
+use crate::protocol::{McpToolInfo, PluginRegistryEntry};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::UNIX_EPOCH;
+
+pub struct PluginToolDiscovery;
+
+impl PluginToolDiscovery {
+    /// Returns the list of registry files to inspect, in order of priority.
+    pub fn candidate_registry_files(project_root: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+
+        // 1. Local project registry
+        let local_reg = project_root.join(".clibm").join("plugins").join("registry.json");
+        files.push(local_reg);
+
+        // 2. User-level global registry
+        if let Ok(home) = env::var("CLIBM_HOME")
+            .or_else(|_| env::var("HOME"))
+            .or_else(|_| env::var("USERPROFILE"))
+        {
+            let home_path = PathBuf::from(home);
+            files.push(home_path.join(".clibm").join("plugins").join("registry.json"));
+            files.push(home_path.join(".clibm-bin").join("registry.json"));
+            files.push(home_path.join(".local").join("bin").join("registry.json"));
+        }
+
+        files
+    }
+
+    /// Computes a composite fingerprint (mtime + size) for active registry files.
+    pub fn compute_fingerprint(files: &[PathBuf]) -> u64 {
+        let mut hash: u64 = 14695981039346656037; // FNV-1a 64-bit basis
+        for path in files {
+            if let Ok(meta) = fs::metadata(path) {
+                let len = meta.len();
+                let mtime_sec = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let mtime_nsec = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.subsec_nanos() as u64)
+                    .unwrap_or(0);
+
+                // Mix file metrics
+                for byte in len
+                    .to_le_bytes()
+                    .iter()
+                    .chain(mtime_sec.to_le_bytes().iter())
+                    .chain(mtime_nsec.to_le_bytes().iter())
+                {
+                    hash ^= *byte as u64;
+                    hash = hash.wrapping_mul(1099511628211);
+                }
+            }
+        }
+        hash
+    }
+
+    /// Reads registry files, validates plugin tool declarations, and builds MCP ToolDefinitions.
+    #[allow(dead_code)]
+    pub fn discover_tools(project_root: &Path) -> (Vec<ToolDefinition>, u64) {
+        let files = Self::candidate_registry_files(project_root);
+        Self::discover_tools_from_files(&files, project_root)
+    }
+
+    /// Discovers tools from explicit candidate registry files.
+    pub fn discover_tools_from_files(
+        files: &[PathBuf],
+        _project_root: &Path,
+    ) -> (Vec<ToolDefinition>, u64) {
+        let fingerprint = Self::compute_fingerprint(files);
+        let mut plugins_by_name: HashMap<String, PluginRegistryEntry> = HashMap::new();
+
+        // 1. Load and merge plugins across candidate files (earlier files take precedence)
+        for path in files {
+            if !path.exists() {
+                continue;
+            }
+            if let Ok(raw) = fs::read_to_string(path) {
+                let clean = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+                if let Ok(entries) = serde_json::from_str::<Vec<PluginRegistryEntry>>(clean) {
+                    for entry in entries {
+                        plugins_by_name.entry(entry.name.clone()).or_insert(entry);
+                    }
+                }
+            }
+        }
+
+        // 2. Identify native tool names to prevent conflicts
+        let native_tool_names: HashSet<&'static str> = [
+            "clibm_status",
+            "clibm_task_list",
+            "clibm_task_add",
+            "clibm_board_move",
+            "clibm_workspace_switch",
+        ]
+        .into_iter()
+        .collect();
+
+        let mut discovered = Vec::new();
+        let mut registered_names: HashSet<String> = HashSet::new();
+
+        // 3. Process eligible plugins
+        for (plugin_name, manifest) in plugins_by_name {
+            // Must be enabled and installed (has executable)
+            if !manifest.enabled || manifest.executable.is_none() {
+                continue;
+            }
+
+            // Collect tools from both direct `tools` array and `mcp.tools`
+            let mut raw_tools = manifest.tools.clone();
+            if let Some(mcp) = manifest.mcp {
+                raw_tools.extend(mcp.tools);
+            }
+
+            if raw_tools.is_empty() {
+                continue;
+            }
+
+            let plugin_prefix = Self::clean_plugin_prefix(&plugin_name);
+
+            for tool_decl in raw_tools {
+                if tool_decl.name.trim().is_empty() {
+                    continue;
+                }
+
+                // Deterministic namespacing
+                let qualified_name = if tool_decl.name.contains('.') {
+                    tool_decl.name.trim().to_string()
+                } else {
+                    format!("{}.{}", plugin_prefix, tool_decl.name.trim())
+                };
+
+                // Conflict check 1: Native tools cannot be overwritten
+                if native_tool_names.contains(qualified_name.as_str())
+                    || native_tool_names.contains(tool_decl.name.as_str())
+                {
+                    eprintln!(
+                        "[clibm-mcp] Warning: Plugin '{}' attempted to overwrite native tool '{}'; skipping.",
+                        plugin_name, qualified_name
+                    );
+                    continue;
+                }
+
+                // Conflict check 2: Prevent cross-plugin duplicate registrations
+                if registered_names.contains(&qualified_name) {
+                    eprintln!(
+                        "[clibm-mcp] Warning: Duplicate tool name '{}' declared by plugin '{}'; skipping.",
+                        qualified_name, plugin_name
+                    );
+                    continue;
+                }
+
+                registered_names.insert(qualified_name.clone());
+
+                let description = tool_decl
+                    .description
+                    .unwrap_or_else(|| {
+                        format!("Tool '{}' provided by plugin '{}'", qualified_name, plugin_name)
+                    });
+
+                let tool_def = Self::build_tool_definition(
+                    qualified_name,
+                    description,
+                    tool_decl.input_schema,
+                    tool_decl.is_mutating,
+                    plugin_name.clone(),
+                    tool_decl.execution_ref,
+                );
+
+                discovered.push(tool_def);
+            }
+        }
+
+        // Sort discovered tools deterministically
+        discovered.sort_by(|a, b| a.info.name.cmp(&b.info.name));
+
+        (discovered, fingerprint)
+    }
+
+    /// Normalizes a plugin package name into a clean prefix (e.g. `clibm-dep-audit` -> `dep_audit`).
+    pub fn clean_plugin_prefix(name: &str) -> String {
+        let trimmed = name.trim();
+        let stripped = trimmed.strip_prefix("clibm-").unwrap_or(trimmed);
+        stripped.replace('-', "_")
+    }
+
+    /// Builds a ToolDefinition with the dispatch closure.
+    fn build_tool_definition(
+        name: String,
+        description: String,
+        input_schema: Value,
+        is_mutating: bool,
+        plugin_name: String,
+        execution_ref: Option<String>,
+    ) -> ToolDefinition {
+        let schema_for_handler = input_schema.clone();
+        let plugin_for_handler = plugin_name.clone();
+        let exec_ref_for_handler = execution_ref.clone();
+
+        let handler: ToolHandler = Arc::new(move |args: &Value, bridge: &ClibmBridge| {
+            // 1. Validate input against declared schema
+            SchemaValidator::validate(args, &schema_for_handler)?;
+
+            // 2. Prepare CLI arguments for `clibm plugin run <plugin_name> -- [args]`
+            let mut cmd_args: Vec<String> = vec!["plugin".to_string(), "run".to_string(), plugin_for_handler.clone()];
+
+            let mut pass_args: Vec<String> = Vec::new();
+            if let Some(ref eref) = exec_ref_for_handler {
+                if !eref.is_empty() && eref != "run" {
+                    pass_args.push(eref.clone());
+                }
+            }
+
+            // Convert JSON arguments to CLI flags
+            if let Value::Object(map) = args {
+                for (key, val) in map {
+                    let flag = format!("--{}", key.replace('_', "-"));
+                    match val {
+                        Value::Bool(b) => {
+                            if *b {
+                                pass_args.push(flag);
+                            }
+                        }
+                        Value::String(s) => {
+                            pass_args.push(flag);
+                            pass_args.push(s.clone());
+                        }
+                        Value::Number(n) => {
+                            pass_args.push(flag);
+                            pass_args.push(n.to_string());
+                        }
+                        Value::Array(arr) => {
+                            for item in arr {
+                                if let Value::String(s) = item {
+                                    pass_args.push(flag.clone());
+                                    pass_args.push(s.clone());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if !pass_args.is_empty() {
+                cmd_args.push("--".to_string());
+                cmd_args.extend(pass_args);
+            }
+
+            let cmd_slices: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+            bridge.execute(&cmd_slices)
+        });
+
+        ToolDefinition {
+            info: McpToolInfo {
+                name,
+                description,
+                input_schema,
+            },
+            is_mutating,
+            handler,
+        }
+    }
+}
