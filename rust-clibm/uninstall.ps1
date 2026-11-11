@@ -20,12 +20,16 @@ Write-Host " CLIBM v0.1.0 Uninstaller (Windows PowerShell · UTF-8-BOM)"
 Write-Host "============================================================"
 
 if (-not $Purge -and -not $Keep -and -not $Yes) {
-    Write-Host ""
-    Write-Host "Select Uninstallation Mode:"
-    Write-Host "  1) Standard Uninstall — Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
-    Write-Host "  2) Full Purge (-Purge) — Remove binaries AND delete .clibm repository data"
-    $u = Read-Host "Select option [1-2, default: 1]"
-    if ($u -eq "2" -or $u -eq "purge") { $Purge = $true }
+    try {
+        Write-Host ""
+        Write-Host "Select Uninstallation Mode:"
+        Write-Host "  1) Standard Uninstall — Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
+        Write-Host "  2) Full Purge (-Purge) — Remove binaries AND delete .clibm repository data"
+        $u = Read-Host "Select option [1-2, default: 1]"
+        if ($u -eq "2" -or $u -eq "purge") { $Purge = $true }
+    } catch {
+        $Purge = $false
+    }
 }
 
 $GlobalCfgDir = Join-Path $HOME ".clibm"

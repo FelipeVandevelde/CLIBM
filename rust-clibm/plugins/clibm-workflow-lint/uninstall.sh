@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==============================================================================
 # clibm-workflow-lint — Uninstallation Script (Linux / macOS)
 # Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
@@ -10,7 +10,7 @@ clibm_init_env_path_helper() {
   local home_dir="${CLIBM_HOME:-${HOME}}"
   local lib_dir="${home_dir%/}/.clibm/lib"
   local helper_file="${lib_dir}/env-path.sh"
-  local embedded_version=3
+  local embedded_version=5
   local needs_write=1
   local bom=$'\xef\xbb\xbf'
   if [ -f "$helper_file" ]; then
@@ -25,7 +25,7 @@ clibm_init_env_path_helper() {
   if [ "$needs_write" -eq 1 ]; then
     mkdir -p "$lib_dir"
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
-# clibm-env-path-version: 3
+# clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
 # Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
@@ -506,8 +506,22 @@ clibm_build_and_stage() {
   local local_dir=""
   if local_dir=$(clibm_resolve_local_source_dir "$crate_name" "$remote_subpath" "$local_candidate_dir"); then
     echo "==> [Local Mode] Building ${crate_name} from local source (${local_dir})..."
-    (cd "$local_dir" && cargo build --release)
-    cp "${local_dir}/target/release/${crate_name}" "$dest_binary"
+    # shellcheck disable=SC2086
+    (cd "$local_dir" && cargo build --release ${CARGO_BUILD_FEATURES:-})
+    local candidate_bin=""
+    for cand in "${local_dir}/target/release/${crate_name}" \
+                "${local_dir}/../../target/release/${crate_name}" \
+                "${local_dir}/../target/release/${crate_name}"; do
+      if [ -f "$cand" ]; then
+        candidate_bin="$cand"
+        break
+      fi
+    done
+    if [ -z "$candidate_bin" ]; then
+      echo "Error: Compiled binary not found for ${crate_name}" >&2
+      return 1
+    fi
+    cp "$candidate_bin" "$dest_binary"
     chmod +x "$dest_binary"
     return 0
   fi
@@ -538,7 +552,8 @@ clibm_build_and_stage() {
   done
 
   echo "==> Building ${crate_name} (Release Mode)..."
-  if ! (cd "$tmp_build_dir" && cargo build --release); then
+  # shellcheck disable=SC2086
+  if ! (cd "$tmp_build_dir" && cargo build --release ${CARGO_BUILD_FEATURES:-}); then
     rm -rf "$tmp_build_dir"
     return 1
   fi
@@ -741,11 +756,6 @@ EOF
     target_regs="${target_regs}${global_reg}"$'\n'
   fi
 
-  local bin_dir="${install_dir:-$(dirname "$executable")}"
-  if [ -n "$bin_dir" ]; then
-    target_regs="${target_regs}${bin_dir%/}/registry.json"$'\n'
-  fi
-
   local rfile
   while IFS= read -r rfile; do
     [ -z "$rfile" ] && continue
@@ -761,9 +771,7 @@ clibm_unregister_plugin() {
   local project_dir="${2:-}"
   shift $(( $# >= 2 ? 2 : $# ))
   local home_dir="${CLIBM_HOME:-${HOME}}"
-  local candidate_regs="${home_dir%/}/.clibm/plugins/registry.json
-${home_dir%/}/.local/bin/registry.json
-${home_dir%/}/.clibm-bin/registry.json"
+  local candidate_regs="${home_dir%/}/.clibm/plugins/registry.json"
 
   local proj_dirs
   proj_dirs=$(clibm_find_project_plugin_dirs "$project_dir" "$@" || true)

@@ -2,18 +2,35 @@
 
 Standalone Rust plugin extracted from the pure CLIBM core. Validates Kanban column WIP limits, unblocked dependencies, and assignee rules.
 
-## 1. Build & Install (Direct from GitHub or Local Folder)
+## Quick Install
 
-```powershell
-# Windows PowerShell — Quick install directly from GitHub:
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1 | iex
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.sh | bash
 ```
 
-```bash
-# Linux / macOS — Quick install directly from GitHub:
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.sh | bash
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1)
+```
 
-# Or from local plugin folder:
+## Quick Uninstall
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/uninstall.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/uninstall.ps1)
+```
+
+---
+
+## 1. Local Build & Install (From Plugin Folder)
+
+```bash
 cd plugins/clibm-workflow-lint
 ./install.sh
 # Windows PowerShell (local):
@@ -26,3 +43,10 @@ cd plugins/clibm-workflow-lint
 cd ~/my-clibm-project
 clibm plugin run workflow-lint
 ```
+
+## 3. Model Context Protocol (MCP) Integration
+
+When `clibm-mcp` is running, this plugin's tool is automatically discovered from `registry.json` and exposed to AI agents as:
+- **Tool Identifier**: `workflow_lint.lint_workflow`
+- **Description**: Validates Kanban WIP limits, unblocked dependencies, and assignee constraints.
+- **Execution Mode**: Read-only (`is_mutating: false`).

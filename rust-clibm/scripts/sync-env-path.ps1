@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # CLIBM Shared PATH Helper Synchronizer (Windows PowerShell 5.1 & 7+)
 # Encoding: UTF-8 with BOM (EF BB BF)
 # Syncs rust-clibm/scripts/env-path.{ps1,sh} into the embedded marker blocks of

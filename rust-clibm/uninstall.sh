@@ -34,16 +34,28 @@ echo "============================================================"
 if [ -z "$PURGE" ]; then
   if [ "$NON_INTERACTIVE" = true ]; then
     PURGE="false"
-  else
+  elif [ -t 0 ]; then
     echo ""
     echo "Select Uninstallation Mode:"
     echo "  1) Standard Uninstall — Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
     echo "  2) Full Purge (--purge) — Remove binaries AND delete .clibm repository data"
-    read -r -p "Select option [1-2, default: 1]: " choice_uninstall
+    read -r -p "Select option [1-2, default: 1]: " choice_uninstall || true
     case "${choice_uninstall:-1}" in
       2|purge) PURGE="true" ;;
       *) PURGE="false" ;;
     esac
+  elif [ -e /dev/tty ] && [ -r /dev/tty ]; then
+    echo ""
+    echo "Select Uninstallation Mode:"
+    echo "  1) Standard Uninstall — Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
+    echo "  2) Full Purge (--purge) — Remove binaries AND delete .clibm repository data"
+    read -r -p "Select option [1-2, default: 1]: " choice_uninstall < /dev/tty || true
+    case "${choice_uninstall:-1}" in
+      2|purge) PURGE="true" ;;
+      *) PURGE="false" ;;
+    esac
+  else
+    PURGE="false"
   fi
 fi
 

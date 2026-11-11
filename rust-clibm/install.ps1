@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # CLIBM v0.1.0 — Interactive Core Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell 5.1 & 7+ compatibility
 # Supports BOTH:
@@ -38,9 +38,9 @@ function Initialize-ClibmEnvPathHelper {
     $HomeDir = if ($env:CLIBM_HOME) { $env:CLIBM_HOME } elseif ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
     $LibDir = Join-Path $HomeDir '.clibm\lib'
     $HelperFile = Join-Path $LibDir 'env-path.ps1'
-    $EmbeddedVersion = 3
+    $EmbeddedVersion = 5
     $EmbeddedContent = @'
-# clibm-env-path-version: 3
+# clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
 # Encoding: UTF-8 with BOM (EF BB BF)
@@ -524,7 +524,8 @@ function Invoke-ClibmBuildAndStage {
         [Parameter(Mandatory = $true)][string[]]$SourceFiles,
         [Parameter(Mandatory = $true)][string]$DestinationBinary,
         [string]$LocalCandidateDir = '',
-        [string]$RawBaseUrl = ''
+        [string]$RawBaseUrl = '',
+        [AllowEmptyCollection()][string[]]$CargoFeatures = @()
     )
     $DestDir = Split-Path -Parent $DestinationBinary
     if ($DestDir -and -not (Test-Path -LiteralPath $DestDir)) {
@@ -536,13 +537,60 @@ function Invoke-ClibmBuildAndStage {
         Write-Host "==> [Local Mode] Building $CrateName from local source ($LocalDir)..."
         Push-Location -LiteralPath $LocalDir
         try {
-            cargo build --release
+            if ($env:OS -like "*Windows*" -or $IsWindows) {
+                Get-Process -Name $CrateName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                $PreBuildBins = @(
+                    (Join-Path $LocalDir "target\release\$CrateName.exe"),
+                    (Join-Path (Join-Path (Join-Path $LocalDir "..") "..") "target\release\$CrateName.exe"),
+                    (Join-Path (Join-Path $LocalDir "..") "target\release\$CrateName.exe")
+                )
+                foreach ($PBin in $PreBuildBins) {
+                    if (Test-Path -LiteralPath $PBin) {
+                        try {
+                            Remove-Item -LiteralPath $PBin -Force -ErrorAction Stop
+                        } catch {
+                            $Rotated = "$PBin.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)
+                            try { Move-Item -LiteralPath $PBin -Destination $Rotated -Force -ErrorAction SilentlyContinue } catch {}
+                        }
+                    }
+                }
+            }
+            $CargoCmd = @("build", "--release")
+            if ($CargoFeatures -and $CargoFeatures.Count -gt 0) {
+                $CargoCmd += $CargoFeatures
+            }
+            & cargo @CargoCmd
             if ($LASTEXITCODE -ne 0) {
                 throw "cargo build --release failed for $CrateName (exit code $LASTEXITCODE)"
             }
-            $BuiltBin = Join-Path $LocalDir "target\release\$CrateName.exe"
-            if (-not (Test-Path -LiteralPath $BuiltBin)) {
-                throw "Compiled binary not found at $BuiltBin"
+            $Candidates = @(
+                (Join-Path $LocalDir "target\release\$CrateName.exe"),
+                (Join-Path (Join-Path (Join-Path $LocalDir "..") "..") "target\release\$CrateName.exe"),
+                (Join-Path (Join-Path $LocalDir "..") "target\release\$CrateName.exe"),
+                (Join-Path (Get-Location).ProviderPath "target\release\$CrateName.exe")
+            )
+            $BuiltBin = $Candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            if (-not $BuiltBin) {
+                try {
+                    $Meta = cargo metadata --no-deps --format-version 1 2>$null | ConvertFrom-Json
+                    if ($Meta.target_directory) {
+                        $MetaBin = Join-Path $Meta.target_directory "release\$CrateName.exe"
+                        if (Test-Path -LiteralPath $MetaBin) {
+                            $BuiltBin = $MetaBin
+                        }
+                    }
+                } catch {}
+            }
+            if (-not $BuiltBin) {
+                throw "Compiled binary not found at $(Join-Path $LocalDir "target\release\$CrateName.exe")"
+            }
+            if (Test-Path -LiteralPath $DestinationBinary) {
+                try {
+                    Remove-Item -LiteralPath $DestinationBinary -Force -ErrorAction Stop
+                } catch {
+                    $RotatedDest = "$DestinationBinary.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)
+                    try { Move-Item -LiteralPath $DestinationBinary -Destination $RotatedDest -Force -ErrorAction SilentlyContinue } catch {}
+                }
             }
             Copy-Item -LiteralPath $BuiltBin -Destination $DestinationBinary -Force
         } finally {
@@ -581,13 +629,25 @@ function Invoke-ClibmBuildAndStage {
         Write-Host "==> Building $CrateName (Release Mode)..."
         Push-Location -LiteralPath $TempBuildDir
         try {
-            cargo build --release
+            $CargoCmd = @("build", "--release")
+            if ($CargoFeatures -and $CargoFeatures.Count -gt 0) {
+                $CargoCmd += $CargoFeatures
+            }
+            & cargo @CargoCmd
             if ($LASTEXITCODE -ne 0) {
                 throw "cargo build --release failed for $CrateName (exit code $LASTEXITCODE)"
             }
             $BuiltBin = Join-Path $TempBuildDir "target\release\$CrateName.exe"
             if (-not (Test-Path -LiteralPath $BuiltBin)) {
                 throw "Compiled binary not found at $BuiltBin"
+            }
+            if (Test-Path -LiteralPath $DestinationBinary) {
+                try {
+                    Remove-Item -LiteralPath $DestinationBinary -Force -ErrorAction Stop
+                } catch {
+                    $RotatedDest = "$DestinationBinary.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)
+                    try { Move-Item -LiteralPath $DestinationBinary -Destination $RotatedDest -Force -ErrorAction SilentlyContinue } catch {}
+                }
             }
             Copy-Item -LiteralPath $BuiltBin -Destination $DestinationBinary -Force
         } finally {
@@ -798,15 +858,6 @@ function Register-ClibmGlobalPlugin {
         $CandidateRegFiles += $GlobalRegFile
     }
 
-    $BinDir = if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
-        $InstallDir
-    } else {
-        Split-Path -Parent $Executable
-    }
-    if (-not [string]::IsNullOrWhiteSpace($BinDir)) {
-        $CandidateRegFiles += (Join-Path $BinDir 'registry.json')
-    }
-
     $SeenReg = @{}
     foreach ($RegFile in $CandidateRegFiles) {
         if ([string]::IsNullOrWhiteSpace($RegFile)) { continue }
@@ -826,9 +877,7 @@ function Unregister-ClibmPlugin {
     )
     $HomeDir = Get-ClibmHomeDirectory
     $CandidateFiles = @(
-        (Join-Path (Join-Path (Join-Path $HomeDir '.clibm') 'plugins') 'registry.json'),
-        (Join-Path (Join-Path $HomeDir '.clibm-bin') 'registry.json'),
-        (Join-Path (Join-Path $HomeDir '.local\bin') 'registry.json')
+        (Join-Path (Join-Path (Join-Path $HomeDir '.clibm') 'plugins') 'registry.json')
     )
     foreach ($PDir in @(Find-ClibmProjectPluginDirs -SearchRoots (@($ProjectDir) + $ExtraDirs))) {
         $CandidateFiles += (Join-Path $PDir 'registry.json')
@@ -1095,10 +1144,6 @@ if ($Profile -eq "with-defaults") {
     $GlobalRegFile = Join-Path $GlobalPluginsDir "registry.json"
     if (-not (Test-Path -LiteralPath $GlobalRegFile)) {
         [System.IO.File]::WriteAllText($GlobalRegFile, "[]", $Utf8BomEncoding)
-    }
-    $InstallDirRegFile = Join-Path $InstallDir "registry.json"
-    if (-not (Test-Path -LiteralPath $InstallDirRegFile)) {
-        [System.IO.File]::WriteAllText($InstallDirRegFile, "[]", $Utf8BomEncoding)
     }
     Write-Host "==> Pure Core active (0 pre-installed plugins)."
 }
