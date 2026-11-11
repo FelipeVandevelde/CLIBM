@@ -17,6 +17,32 @@ A lightweight, high-performance, local-first CLI project management system writt
 
 ---
 
+## Quick Install
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1)
+```
+
+## Quick Uninstall
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
+```
+
+---
+
 ## Building & Installing Core CLI (Linux & Windows)
 
 ### Prerequisites
@@ -130,6 +156,13 @@ clibm-tui
 clibm plugin run clibm-web -- --port 7878   # (or shorthand: clibm plugin run web)
 # Or invoke the installed binary directly:
 clibm-web --port 7878
+
+# Launch the Model Context Protocol (MCP) server for AI agents (Claude Desktop, Cursor, Windsurf):
+clibm plugin run clibm-mcp -- --stdio      # (or shorthand: clibm plugin run mcp -- --stdio)
+# Or invoke the installed binary directly:
+clibm-mcp --stdio
+# See plugins/clibm-mcp/README.md for the complete AI Agent MCP Configuration JSON guide:
+# https://github.com/FelipeVandevelde/CLIBM/blob/main/rust-clibm/plugins/clibm-mcp/README.md#ai-agent-mcp-configuration-json
 ```
 
 ### 3. Create a New Custom Plugin from the Official Template
@@ -170,19 +203,25 @@ clibm update --plugins
 
 ## Uninstalling CLIBM
 
-By default, uninstalling removes the `clibm` core binary and all installed `clibm-*` plugin binaries (including custom `install_path` directories recorded in `~/.clibm/install-config.json` and `~/.clibm/path-ledger`), cleans up any user `PATH` entries added by CLIBM alongside `~/.clibm/lib/`, and **preserves** your `.clibm/` project repositories. Pass `--purge` (`-Purge` on PowerShell) to also delete local `.clibm/` repository data and `~/.clibm/install-config.json`:
+To completely remove CLIBM, use the **Quick Uninstall** one-liners (no manual folder deletion required):
 
-```bash
-# Safe uninstall (keeps .clibm/ repository data):
-clibm uninstall
-# Or via script:
-./uninstall.sh
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
+# Or from cloned repository:
 .\uninstall.ps1
-
-# Full uninstall + delete local .clibm/ repository data:
-clibm uninstall --purge
-# Or via script:
-./uninstall.sh --purge
+# To also purge local .clibm/ repository data:
 .\uninstall.ps1 -Purge
 ```
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.sh | bash
+# Or from cloned repository:
+./uninstall.sh
+# To also purge local .clibm/ repository data:
+./uninstall.sh --purge
+```
+
+Running `clibm uninstall` from inside the CLI also inspects your installed components and presents these exact commands.
 

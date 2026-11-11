@@ -33,7 +33,26 @@ import syncEnvPathPs1 from '../../rust-clibm/scripts/sync-env-path.ps1?raw';
 
 // Standalone Plugins in `plugins/`
 import mcpCargoToml from '../../rust-clibm/plugins/clibm-mcp/Cargo.toml?raw';
+import mcpLibRs from '../../rust-clibm/plugins/clibm-mcp/src/lib.rs?raw';
 import mcpMainRs from '../../rust-clibm/plugins/clibm-mcp/src/main.rs?raw';
+import mcpConfigRs from '../../rust-clibm/plugins/clibm-mcp/src/config.rs?raw';
+import mcpErrorRs from '../../rust-clibm/plugins/clibm-mcp/src/error.rs?raw';
+import mcpProtocolModRs from '../../rust-clibm/plugins/clibm-mcp/src/protocol/mod.rs?raw';
+import mcpProtocolTypesRs from '../../rust-clibm/plugins/clibm-mcp/src/protocol/types.rs?raw';
+import mcpProtocolSchemaRs from '../../rust-clibm/plugins/clibm-mcp/src/protocol/schema.rs?raw';
+import mcpBackendModRs from '../../rust-clibm/plugins/clibm-mcp/src/backend/mod.rs?raw';
+import mcpBackendBridgeRs from '../../rust-clibm/plugins/clibm-mcp/src/backend/bridge.rs?raw';
+import mcpAdapterModRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/mod.rs?raw';
+import mcpAdapterDiscoveryRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/discovery.rs?raw';
+import mcpAdapterDispatcherRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/dispatcher.rs?raw';
+import mcpAdapterPermissionsRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/permissions.rs?raw';
+import mcpAdapterToolsRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/tools.rs?raw';
+import mcpAdapterValidatorRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/validator.rs?raw';
+import mcpAdapterResourcesRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/resources.rs?raw';
+import mcpAdapterPromptsRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/prompts.rs?raw';
+import mcpTransportModRs from '../../rust-clibm/plugins/clibm-mcp/src/transport/mod.rs?raw';
+import mcpTransportStdioRs from '../../rust-clibm/plugins/clibm-mcp/src/transport/stdio.rs?raw';
+import mcpTransportHttpRs from '../../rust-clibm/plugins/clibm-mcp/src/transport/http.rs?raw';
 import mcpReadmeMd from '../../rust-clibm/plugins/clibm-mcp/README.md?raw';
 import mcpInstallSh from '../../rust-clibm/plugins/clibm-mcp/install.sh?raw';
 import mcpInstallPs1 from '../../rust-clibm/plugins/clibm-mcp/install.ps1?raw';
@@ -403,14 +422,204 @@ export const RUST_PROJECT_FILES: RustProjectFile[] = [
     isCoreOnly: false,
   },
   {
+    relativePath: 'plugins/clibm-mcp/src/lib.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/lib.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Library entry point exposing McpAdapter and protocol interfaces for unified embedding.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpLibRs),
+    lines: countLines(mcpLibRs),
+    isCoreOnly: false,
+  },
+  {
     relativePath: 'plugins/clibm-mcp/src/main.rs',
     zipPath: 'clibm/plugins/clibm-mcp/src/main.rs',
     category: 'Plugins (TUI & Web)',
     description:
-      'Dual-transport self-hosted MCP server supporting stdio JSON-RPC 2.0 and local HTTP SSE (127.0.0.1:7879).',
+      'Modular MCP entry point with compile-time transport selection and dual-transport runtime.',
     language: 'rust',
     content: ensureUtf8Bom(mcpMainRs),
     lines: countLines(mcpMainRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/config.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/config.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Configuration loader and CLI parser for clibm-mcp.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpConfigRs),
+    lines: countLines(mcpConfigRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/error.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/error.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Standard JSON-RPC 2.0 and MCP error definitions.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpErrorRs),
+    lines: countLines(mcpErrorRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/protocol/mod.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/protocol/mod.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'MCP protocol module declaration.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpProtocolModRs),
+    lines: countLines(mcpProtocolModRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/protocol/types.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/protocol/types.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'JSON-RPC request, response, and protocol version definitions.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpProtocolTypesRs),
+    lines: countLines(mcpProtocolTypesRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/protocol/schema.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/protocol/schema.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'MCP schema data models for tools, resources, and prompts.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpProtocolSchemaRs),
+    lines: countLines(mcpProtocolSchemaRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/backend/mod.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/backend/mod.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'CLIBM backend bridge module declaration.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpBackendModRs),
+    lines: countLines(mcpBackendModRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/backend/bridge.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/backend/bridge.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Bridge to the local CLIBM CLI and CAS repository.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpBackendBridgeRs),
+    lines: countLines(mcpBackendBridgeRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/mod.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/mod.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Shared MCP adapter orchestrating registries and request handling.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterModRs),
+    lines: countLines(mcpAdapterModRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/discovery.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/discovery.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Dynamic plugin tool discovery from registry.json and live reloading monitor.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterDiscoveryRs),
+    lines: countLines(mcpAdapterDiscoveryRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/dispatcher.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/dispatcher.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Request dispatcher routing JSON-RPC methods to registries.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterDispatcherRs),
+    lines: countLines(mcpAdapterDispatcherRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/permissions.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/permissions.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Permission and sandbox policy manager for tools and resources.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterPermissionsRs),
+    lines: countLines(mcpAdapterPermissionsRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/tools.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/tools.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'MCP tool registry with clibm_status, task_list, task_add, board_move, workspace_switch.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterToolsRs),
+    lines: countLines(mcpAdapterToolsRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/validator.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/validator.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'JSON Schema validator for MCP dynamic plugin tools.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterValidatorRs),
+    lines: countLines(mcpAdapterValidatorRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/resources.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/resources.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'MCP resource registry for staged trees, repo config, and Kanban boards.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterResourcesRs),
+    lines: countLines(mcpAdapterResourcesRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/adapter/prompts.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/prompts.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'MCP prompt registry providing guided planning and commit summary templates.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpAdapterPromptsRs),
+    lines: countLines(mcpAdapterPromptsRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/transport/mod.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/transport/mod.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Pluggable transport trait and declarations.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpTransportModRs),
+    lines: countLines(mcpTransportModRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/transport/stdio.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/transport/stdio.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Zero-overhead STDIO JSON-RPC 2.0 transport for IDEs and CLI agents.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpTransportStdioRs),
+    lines: countLines(mcpTransportStdioRs),
+    isCoreOnly: false,
+  },
+  {
+    relativePath: 'plugins/clibm-mcp/src/transport/http.rs',
+    zipPath: 'clibm/plugins/clibm-mcp/src/transport/http.rs',
+    category: 'Plugins (TUI & Web)',
+    description: 'Local HTTP JSON-RPC 2.0 server transport using tiny_http.',
+    language: 'rust',
+    content: ensureUtf8Bom(mcpTransportHttpRs),
+    lines: countLines(mcpTransportHttpRs),
     isCoreOnly: false,
   },
   {
@@ -982,18 +1191,18 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     id: 'clibm-mcp',
     name: 'CLIBM Self-Hosted MCP Server for AI',
     crateName: 'clibm-mcp',
-    version: '0.1.0',
+    version: '0.2.0',
     category: 'AI & MCP',
     summary:
-      'Self-hosted Model Context Protocol (MCP) server for AI agents. During installation, choose whether to enable both stdio JSON-RPC 2.0 + HTTP SSE (default) or only one transport.',
+      'Self-hosted Model Context Protocol (MCP) server for AI agents with modular STDIO and HTTP transports and shared adapter architecture.',
     architectureNotes:
-      'Standalone crate in plugins/clibm-mcp. Exposes tools (task_list, task_add, board_move, workspace_switch, dag_audit) and live CAS resources (clibm://tree/staged, clibm://config, clibm://board/active). All install/uninstall scripts are UTF-8-BOM encoded.',
-    stack: 'Rust 2021 · MCP 2024-11-05 · stdio JSON-RPC 2.0 + tiny_http SSE · UTF-8-BOM',
+      'Modular crate in plugins/clibm-mcp. Features compile-time transport gating (transport-stdio, transport-http) with a decoupled Shared Adapter (ToolRegistry, ResourceRegistry, PromptRegistry, PermissionManager, RequestDispatcher). All install/uninstall scripts are UTF-8-BOM encoded.',
+    stack: 'Rust 2021 · MCP 2024-11-05 · Modular Transports (stdio / tiny_http) · UTF-8-BOM',
     hooks: ['mcp-stdio', 'mcp-http-sse', 'on-ai-tool-call'],
     installCommand: 'cd plugins/clibm-mcp && ./install.sh --transport both',
     cliCommand: 'clibm plugin run mcp',
     binaryInvoke: 'clibm-mcp',
-    zipFilename: 'clibm-mcp-v0.1.0.zip',
+    zipFilename: 'clibm-mcp-v0.2.0.zip',
     installPrompt: {
       flagName: '--transport',
       ps1ParamName: '-Transport',
@@ -1010,12 +1219,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
         {
           value: 'stdio',
           label: '2) stdio JSON-RPC 2.0 Only',
-          detail: 'Enable only stdio transport for Claude Desktop, Cursor & Windsurf',
+          detail: 'Enable only stdio transport (zero network/HTTP dependencies)',
         },
         {
           value: 'http',
-          label: '3) Local HTTP SSE Only',
-          detail: 'Enable only Local HTTP + SSE Server on 127.0.0.1:7879',
+          label: '3) Local HTTP Server Only',
+          detail: 'Enable only Local HTTP JSON-RPC 2.0 Server on 127.0.0.1:7879',
         },
       ],
     },
@@ -1026,7 +1235,26 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
       { path: 'clibm-mcp/install.ps1', content: ensureUtf8Bom(mcpInstallPs1) },
       { path: 'clibm-mcp/uninstall.sh', content: ensureUtf8Bom(mcpUninstallSh) },
       { path: 'clibm-mcp/uninstall.ps1', content: ensureUtf8Bom(mcpUninstallPs1) },
+      { path: 'clibm-mcp/src/lib.rs', content: ensureUtf8Bom(mcpLibRs) },
       { path: 'clibm-mcp/src/main.rs', content: ensureUtf8Bom(mcpMainRs) },
+      { path: 'clibm-mcp/src/config.rs', content: ensureUtf8Bom(mcpConfigRs) },
+      { path: 'clibm-mcp/src/error.rs', content: ensureUtf8Bom(mcpErrorRs) },
+      { path: 'clibm-mcp/src/protocol/mod.rs', content: ensureUtf8Bom(mcpProtocolModRs) },
+      { path: 'clibm-mcp/src/protocol/types.rs', content: ensureUtf8Bom(mcpProtocolTypesRs) },
+      { path: 'clibm-mcp/src/protocol/schema.rs', content: ensureUtf8Bom(mcpProtocolSchemaRs) },
+      { path: 'clibm-mcp/src/backend/mod.rs', content: ensureUtf8Bom(mcpBackendModRs) },
+      { path: 'clibm-mcp/src/backend/bridge.rs', content: ensureUtf8Bom(mcpBackendBridgeRs) },
+      { path: 'clibm-mcp/src/adapter/mod.rs', content: ensureUtf8Bom(mcpAdapterModRs) },
+      { path: 'clibm-mcp/src/adapter/discovery.rs', content: ensureUtf8Bom(mcpAdapterDiscoveryRs) },
+      { path: 'clibm-mcp/src/adapter/dispatcher.rs', content: ensureUtf8Bom(mcpAdapterDispatcherRs) },
+      { path: 'clibm-mcp/src/adapter/permissions.rs', content: ensureUtf8Bom(mcpAdapterPermissionsRs) },
+      { path: 'clibm-mcp/src/adapter/tools.rs', content: ensureUtf8Bom(mcpAdapterToolsRs) },
+      { path: 'clibm-mcp/src/adapter/validator.rs', content: ensureUtf8Bom(mcpAdapterValidatorRs) },
+      { path: 'clibm-mcp/src/adapter/resources.rs', content: ensureUtf8Bom(mcpAdapterResourcesRs) },
+      { path: 'clibm-mcp/src/adapter/prompts.rs', content: ensureUtf8Bom(mcpAdapterPromptsRs) },
+      { path: 'clibm-mcp/src/transport/mod.rs', content: ensureUtf8Bom(mcpTransportModRs) },
+      { path: 'clibm-mcp/src/transport/stdio.rs', content: ensureUtf8Bom(mcpTransportStdioRs) },
+      { path: 'clibm-mcp/src/transport/http.rs', content: ensureUtf8Bom(mcpTransportHttpRs) },
     ],
   },
   {
@@ -1036,7 +1264,7 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     version: '0.1.0',
     category: 'AI & MCP',
     summary:
-      'Teaches AI agents (Claude Code, Cursor, Windsurf, Copilot) how to operate CLIBM by outputting structured AI context to stdout and generating AGENTS.md, CLAUDE.md, and .cursorrules.',
+      'Teaches AI agents (Claude Code, Cursor, Windsurf, Copilot) how to operate CLIBM by outputting structured AI context to stdout and generating AGENTS.md, CLAUDE.md, .cursorrules, and .mcp.json.',
     architectureNotes:
       'Standalone crate in plugins/clibm-docs. Inspects the live .clibm/ repository state, active workspace, and installed plugins to synthesize accurate AI instructions. All install/uninstall scripts are UTF-8-BOM encoded.',
     stack: 'Rust 2021 · AGENTS.md / CLAUDE.md / .cursorrules Generator · UTF-8-BOM',
@@ -1408,7 +1636,7 @@ export function buildCustomPluginTemplateFiles(
   );
 
   const customReadme = ensureUtf8Bom(
-    `# ${crateName} (v0.1.0)\n\n${cleanDesc}\n\n- **Contract:** \`CLIBM_PLUGIN_CONTRACT_V1\`\n- **Hooks:** \`${cleanHooks.join('`, `')}\`\n- **Encoding:** \`UTF-8 with BOM (EF BB BF)\`\n\n## 1. Build & Install (From This Plugin Folder)\n\n\`\`\`bash\ncd ${crateName}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n\`\`\`\n\n## 2. Run Inside Any Ongoing CLIBM Project\n\n\`\`\`bash\nclibm plugin run ${crateName}\n# Or invoke the binary directly:\n${crateName}\n\`\`\`\n\n## 3. Uninstall\n\n\`\`\`bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n\`\`\`\n`
+    `# ${crateName} (v0.1.0)\n\n${cleanDesc}\n\n- **Contract:** \`CLIBM_PLUGIN_CONTRACT_V1\`\n- **Hooks:** \`${cleanHooks.join('`, `')}\`\n- **Encoding:** \`UTF-8 with BOM (EF BB BF)\`\n\n## Quick Install\n\n### Linux, macOS, WSL2\n\`\`\`bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/${crateName}/install.sh | bash\n\`\`\`\n\n### Windows (native, PowerShell)\n\`\`\`powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/${crateName}/install.ps1)\n\`\`\`\n\n## Quick Uninstall\n\n### Linux, macOS, WSL2\n\`\`\`bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/${crateName}/uninstall.sh | bash\n\`\`\`\n\n### Windows (native, PowerShell)\n\`\`\`powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/${crateName}/uninstall.ps1)\n\`\`\`\n\n## 1. Local Build & Install (From This Plugin Folder)\n\n\`\`\`bash\ncd ${crateName}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n\`\`\`\n\n## 2. Run Inside Any Ongoing CLIBM Project\n\n\`\`\`bash\nclibm plugin run ${crateName}\n# Or invoke the binary directly:\n${crateName}\n\`\`\`\n\n## 3. Local Uninstall\n\n\`\`\`bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n\`\`\`\n`
   );
 
   const safeDesc = cleanDesc.replace(/"/g, "'");

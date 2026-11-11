@@ -187,6 +187,32 @@ CLIBM/
 
 ---
 
+## Quick Install
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1)
+```
+
+## Quick Uninstall
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.sh | bash
+```
+
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
+```
+
+---
+
 ## Quick Start — Native Rust CLI
 
 ### Prerequisites
@@ -583,22 +609,27 @@ clibm update --plugins
 
 ## Uninstalling CLIBM
 
-CLIBM includes safe uninstall routines that protect your project repositories by default:
+To completely remove CLIBM, use the **Quick Uninstall** one-liners (no manual folder deletion required):
 
-```bash
-# Safe uninstall: removes binary and plugin binaries, cleans PATH ledger,
-# but preserves your .clibm/ repository data
-clibm uninstall
-
-# Or via standalone scripts:
-./uninstall.sh
+### Windows (native, PowerShell)
+```powershell
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
+# Or from cloned repository:
 .\uninstall.ps1
-
-# Full purge: removes binaries AND local .clibm/ data
-clibm uninstall --purge
-./uninstall.sh --purge
+# To also purge local .clibm/ repository data:
 .\uninstall.ps1 -Purge
 ```
+
+### Linux, macOS, WSL2
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.sh | bash
+# Or from cloned repository:
+./uninstall.sh
+# To also purge local .clibm/ repository data:
+./uninstall.sh --purge
+```
+
+Running `clibm uninstall` from inside the CLI also inspects your installed components and presents these exact commands.
 
 ---
 

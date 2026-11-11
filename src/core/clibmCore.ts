@@ -2595,6 +2595,52 @@ export function executeCliCommand(
         };
       }
 
+      if (action === 'uninstall' || action === 'remove') {
+        const rawName = (args[2] || '').toLowerCase();
+        if (!rawName) {
+          throw new Error('Usage: clibm plugin uninstall <plugin-name>');
+        }
+        const name = normalizeCrateName(rawName);
+        const p = state.plugins.find((x) => x.name === name);
+        const binPath = `${installDir}/${name}`;
+
+        return {
+          nextState: state,
+          status: 'info',
+          output: [
+            `====================================================================`,
+            `CLIBM Plugin Uninstallation Guide: ${name}`,
+            `====================================================================`,
+            `This assistant indicates where '${name}' is located so you can remove it.`,
+            ``,
+            `[1] Plugin Executable Binary:`,
+            `    • Path: ${binPath}`,
+            ``,
+            `[2] Plugin Registration Status:`,
+            `    • Registered: ${p ? (p.enabled ? 'ENABLED' : 'DISABLED') : '(not registered in active project)'}`,
+            ``,
+            `Quick Automatic Plugin Uninstall (Recommended):`,
+            `  # Windows PowerShell:`,
+            `  iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/${name}/uninstall.ps1)`,
+            `  # Linux / macOS / WSL2:`,
+            `  curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/${name}/uninstall.sh | bash`,
+            ``,
+            `Manual Removal Commands:`,
+            `  # Remove binary:`,
+            `  rm -f ${binPath}`,
+            `  # Or on Windows PowerShell:`,
+            `  Remove-Item -Force "${binPath.replace(/\//g, '\\')}.exe"`,
+            ``,
+            `  # To deregister/disable from active project:`,
+            `  clibm plugin disable ${name}`,
+            ``,
+            `  # Or run the plugin's dedicated script (if cloned):`,
+            `  cd plugins/${name} && ./uninstall.sh`,
+            `====================================================================`,
+          ].join('\n'),
+        };
+      }
+
       if (action === 'run') {
         const rawName = (args[2] || '').toLowerCase();
         if (!rawName) {
@@ -2915,19 +2961,27 @@ export function executeCliCommand(
           status: 'info',
           output: [
             `====================================================================`,
-            `CLIBM Uninstallation Procedure (--purge enabled)`,
+            `CLIBM Uninstallation Guide & Removal Assistant (--purge)`,
             `====================================================================`,
-            `-> Removed core binary: ${installDir}/clibm`,
-            `-> Removed installed plugin binaries: ${
-              externalBins.length > 0 ? externalBins.join(', ') : '(none installed)'
-            }`,
-            `-> [--purge] Deleted local .clibm/ CAS repository directory and global plugin registry.`,
-            `-> (Workbench simulator reset to clean Pure Core initial state.)`,
+            `[1] Executable Binaries to Remove:`,
+            `    Core Executable : ${installDir}/clibm`,
+            `    Plugin Binaries : ${externalBins.length > 0 ? externalBins.map(b => `${installDir}/${b}`).join(', ') : '(none)'}`,
+            ``,
+            `[2] Global Configuration Folder:`,
+            `    ~/.clibm (install-config.json, path-ledger, plugins/ registry)`,
+            ``,
+            `[3] Local Project CAS Repository Data:`,
+            `    [OK] Reset local .clibm/ repository data to clean Pure Core state.`,
+            ``,
+            `Manual Removal Commands:`,
+            `  rm -f ${installDir}/clibm ${externalBins.map(b => `${installDir}/${b}`).join(' ')}`,
+            `  rm -rf ~/.clibm`,
+            `====================================================================`,
           ].join('\n'),
         };
       }
 
-      // Without --purge: remove all installed plugin binaries from registry while preserving .clibm CAS data
+      // Without --purge: indicate folders and preserve .clibm CAS data
       state.plugins = [];
       state.config.install_profile = 'pure';
       saveRepository(state);
@@ -2936,16 +2990,27 @@ export function executeCliCommand(
         status: 'ok',
         output: [
           `====================================================================`,
-          `CLIBM Uninstallation Procedure (Safe Mode — Data Preserved)`,
+          `CLIBM Uninstallation Guide & Removal Assistant (Safe Mode)`,
           `====================================================================`,
-          `-> Removed core binary: ${installDir}/clibm`,
-          `-> Removed plugin binaries from ${installDir}: ${
-            externalBins.length > 0 ? externalBins.join(', ') : '(none installed)'
-          }`,
-          `-> Preserved local .clibm/ repository data (${
-            Object.keys(state.objects).length
-          } BLAKE3 CAS objects untouched).`,
-          `-> Tip: Pass 'clibm uninstall --purge' or './uninstall.sh --purge' to also delete .clibm/ data.`,
+          `[1] Executable Binaries to Remove:`,
+          `    Core Executable : ${installDir}/clibm`,
+          `    Plugin Binaries : ${externalBins.length > 0 ? externalBins.map(b => `${installDir}/${b}`).join(', ') : '(none installed)'}`,
+          ``,
+          `[2] Global Configuration Folder:`,
+          `    ~/.clibm (install-config.json, path-ledger, plugins/ registry, lib/)`,
+          ``,
+          `[3] Local Project CAS Repository Data:`,
+          `    Preserved local .clibm/ repository (${Object.keys(state.objects).length} CAS objects).`,
+          `    (Keep this folder to preserve your project version history)`,
+          ``,
+          `Manual Removal Commands:`,
+          `  # PowerShell:`,
+          `  Remove-Item -Force "${installDir}\\clibm*.exe"`,
+          `  Remove-Item -Recurse -Force "$HOME\\.clibm"`,
+          `  # Bash:`,
+          `  rm -f ${installDir}/clibm*`,
+          `  rm -rf ~/.clibm`,
+          `====================================================================`,
         ].join('\n'),
       };
     }
