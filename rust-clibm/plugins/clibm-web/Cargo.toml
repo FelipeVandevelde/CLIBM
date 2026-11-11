@@ -18,9 +18,8 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tiny_http = "0.12"
+clibm-mcp = { path = "../clibm-mcp", optional = true }
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
+[features]
+default = ["mcp"]
+mcp = ["dep:clibm-mcp"]

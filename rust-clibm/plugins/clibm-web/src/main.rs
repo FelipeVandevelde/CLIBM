@@ -15,6 +15,8 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
 };
+#[cfg(feature = "mcp")]
+use std::sync::Arc;
 use tiny_http::{Header, Method, Response, Server};
 
 const FORMAT_VERSION: &str = "0.1.0";
@@ -368,6 +370,28 @@ fn html_header() -> Header {
     Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap()
 }
 
+fn cors_headers() -> Vec<Header> {
+    vec![
+        Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap(),
+        Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"GET, POST, OPTIONS"[..]).unwrap(),
+        Header::from_bytes(
+            &b"Access-Control-Allow-Headers"[..],
+            &b"Content-Type, X-MCP-Transport, Authorization"[..],
+        )
+        .unwrap(),
+    ]
+}
+
+fn respond_json(request: tiny_http::Request, body: String, status: u16) {
+    let mut resp = Response::from_string(body)
+        .with_status_code(status)
+        .with_header(json_header());
+    for h in cors_headers() {
+        resp.add_header(h);
+    }
+    let _ = request.respond(resp);
+}
+
 fn build_state_snapshot(cas: &ProjectCas) -> Result<Value> {
     let (tree_hash, tree) = cas.load_working_tree()?;
     let branch = cas.current_branch().unwrap_or_else(|| "detached".to_string());
@@ -455,13 +479,6 @@ fn register_plugin_globally(bin_path: Option<String>) -> Result<()> {
     };
 
     update_registry_file(&reg_file, &manifest)?;
-    if let Some(ref exe_str) = exe {
-        if let Some(bin_dir) = Path::new(exe_str).parent() {
-            if !bin_dir.as_os_str().is_empty() && bin_dir.exists() {
-                let _ = update_registry_file(&bin_dir.join("registry.json"), &manifest);
-            }
-        }
-    }
     if let Ok(cwd) = env::current_dir() {
         if let Ok(cas) = ProjectCas::discover_ongoing(&cwd) {
             let _ = update_registry_file(
@@ -498,44 +515,125 @@ fn main() -> Result<()> {
         .map(|s| s.as_str())
         .unwrap_or("7878");
 
+    let disable_mcp = args.iter().any(|a| a == "--no-mcp");
+
     let bind_addr = format!("127.0.0.1:{}", port);
     let cwd = env::current_dir()?;
     let cas = ProjectCas::discover_ongoing(&cwd)?;
+
+    #[cfg(feature = "mcp")]
+    let mcp_adapter = if !disable_mcp {
+        let mut mcp_cfg = clibm_mcp::McpConfig::default();
+        mcp_cfg.project_root = cas.project_root.clone();
+        Some(Arc::new(clibm_mcp::McpAdapter::new(mcp_cfg)))
+    } else {
+        None
+    };
+    #[cfg(not(feature = "mcp"))]
+    let _ = disable_mcp;
 
     let server = Server::http(&bind_addr)
         .map_err(|e| anyhow!("Failed to bind local HTTP server on {}: {}", bind_addr, e))?;
 
     println!("====================================================================");
-    println!("CLIBM-WEB v0.1.0 — Local-First Self-Hosted Web Server");
+    println!("CLIBM-WEB v0.1.0 — Unified Local Web Dashboard & AI MCP Server");
     println!("Ongoing Project: {}", cas.project_root.display());
     println!("CAS Repository:  {}", cas.clibm_dir.display());
     println!("Listening:       http://{}", bind_addr);
+    println!("  • Web Dashboard : http://{}/", bind_addr);
+    #[cfg(feature = "mcp")]
+    if mcp_adapter.is_some() {
+        println!("  • AI Agent MCP  : http://{}/mcp (JSON-RPC 2.0 & Capabilities)", bind_addr);
+    }
     println!("====================================================================");
 
     for mut request in server.incoming_requests() {
         let url = request.url().to_string();
         let method = request.method().clone();
 
-        if method == Method::Get && (url == "/" || url == "/index.html") {
-            let _ =
-                request.respond(Response::from_string(EMBEDDED_UI_HTML).with_header(html_header()));
+        // Support CORS preflight
+        if method == Method::Options {
+            let mut resp = Response::empty(200);
+            for h in cors_headers() {
+                resp.add_header(h);
+            }
+            let _ = request.respond(resp);
             continue;
+        }
+
+        // Handle MCP endpoint (/mcp or /sse)
+        #[cfg(feature = "mcp")]
+        if let Some(ref adapter) = mcp_adapter {
+            if url == "/mcp" || url == "/sse" {
+                if method == Method::Get {
+                    let caps = serde_json::to_string(&adapter.capabilities())?;
+                    respond_json(request, caps, 200);
+                    continue;
+                } else if method == Method::Post {
+                    let mut body = String::new();
+                    let _ = request.as_reader().read_to_string(&mut body);
+                    let rpc_resp = match serde_json::from_str::<clibm_mcp::JsonRpcRequest>(&body) {
+                        Ok(req) => adapter.handle_request(req),
+                        Err(e) => clibm_mcp::JsonRpcResponse::error(
+                            Value::Null,
+                            clibm_mcp::JsonRpcError::parse_error(format!("Malformed JSON: {}", e)),
+                        ),
+                    };
+                    let resp_json = serde_json::to_string(&rpc_resp)?;
+                    respond_json(request, resp_json, 200);
+                    continue;
+                }
+            }
+        }
+
+        // Handle root / and /index.html
+        if url == "/" || url == "/index.html" {
+            if method == Method::Get {
+                #[cfg(feature = "mcp")]
+                let prefers_json = request.headers().iter().any(|h| {
+                    h.field.equiv("accept")
+                        && h.value.as_str().contains("application/json")
+                        && !h.value.as_str().contains("text/html")
+                });
+                #[cfg(not(feature = "mcp"))]
+                let prefers_json = false;
+
+                #[cfg(feature = "mcp")]
+                if prefers_json {
+                    if let Some(ref adapter) = mcp_adapter {
+                        let caps = serde_json::to_string(&adapter.capabilities())?;
+                        respond_json(request, caps, 200);
+                        continue;
+                    }
+                }
+
+                let _ = request.respond(Response::from_string(EMBEDDED_UI_HTML).with_header(html_header()));
+                continue;
+            }
+
+            // Support direct JSON-RPC POST to root /
+            #[cfg(feature = "mcp")]
+            if method == Method::Post {
+                if let Some(ref adapter) = mcp_adapter {
+                    let mut body = String::new();
+                    let _ = request.as_reader().read_to_string(&mut body);
+                    if let Ok(req) = serde_json::from_str::<clibm_mcp::JsonRpcRequest>(&body) {
+                        let rpc_resp = adapter.handle_request(req);
+                        let resp_json = serde_json::to_string(&rpc_resp)?;
+                        respond_json(request, resp_json, 200);
+                        continue;
+                    }
+                }
+            }
         }
 
         if method == Method::Get && url == "/api/state" {
             match build_state_snapshot(&cas) {
                 Ok(val) => {
-                    let _ = request.respond(
-                        Response::from_string(serde_json::to_string(&val)?)
-                            .with_header(json_header()),
-                    );
+                    respond_json(request, serde_json::to_string(&val)?, 200);
                 }
                 Err(e) => {
-                    let _ = request.respond(
-                        Response::from_string(json!({ "error": e.to_string() }).to_string())
-                            .with_status_code(400)
-                            .with_header(json_header()),
-                    );
+                    respond_json(request, json!({ "error": e.to_string() }).to_string(), 400);
                 }
             }
             continue;
@@ -553,11 +651,10 @@ fn main() -> Result<()> {
                             if let Ok(new_hash) = cas.put_object(OBJ_TASK, &task) {
                                 tree.tasks.insert(req.task_id, new_hash.clone());
                                 let _ = cas.save_working_tree(&tree);
-                                let _ = request.respond(
-                                    Response::from_string(
-                                        json!({ "ok": true, "hash": new_hash }).to_string(),
-                                    )
-                                    .with_header(json_header()),
+                                respond_json(
+                                    request,
+                                    json!({ "ok": true, "hash": new_hash }).to_string(),
+                                    200,
                                 );
                                 continue;
                             }
@@ -565,10 +662,10 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            let _ = request.respond(
-                Response::from_string(json!({ "ok": false, "error": "Move failed" }).to_string())
-                    .with_status_code(400)
-                    .with_header(json_header()),
+            respond_json(
+                request,
+                json!({ "ok": false, "error": "Move failed" }).to_string(),
+                400,
             );
             continue;
         }
@@ -617,9 +714,7 @@ fn main() -> Result<()> {
                 }
             }
             let snap = build_state_snapshot(&cas)?;
-            let _ = request.respond(
-                Response::from_string(serde_json::to_string(&snap)?).with_header(json_header()),
-            );
+            respond_json(request, serde_json::to_string(&snap)?, 200);
             continue;
         }
 
@@ -648,9 +743,7 @@ fn main() -> Result<()> {
                 }
             }
             let snap = build_state_snapshot(&cas)?;
-            let _ = request.respond(
-                Response::from_string(serde_json::to_string(&snap)?).with_header(json_header()),
-            );
+            respond_json(request, serde_json::to_string(&snap)?, 200);
             continue;
         }
 
@@ -658,4 +751,36 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "mcp")]
+    fn test_unified_web_mcp_integration() {
+        let mut cfg = clibm_mcp::McpConfig::default();
+        cfg.read_only = false;
+        let adapter = clibm_mcp::McpAdapter::new(cfg);
+
+        let caps = adapter.capabilities();
+        assert!(caps["capabilities"]["tools"].is_object());
+
+        let req = clibm_mcp::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "tools/list".to_string(),
+            params: json!({}),
+        };
+        let resp = adapter.handle_request(req);
+        assert_eq!(resp.id, json!(1));
+        assert!(resp.result.is_some());
+    }
+
+    #[test]
+    fn test_cors_headers_structure() {
+        let headers = cors_headers();
+        assert_eq!(headers.len(), 3);
+    }
 }
