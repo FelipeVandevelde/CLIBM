@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # clibm-plugin-template — Standalone Plugin Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
@@ -7,14 +7,12 @@
 #   [2/3] Registration Scope (global vs project-only)
 #   [3/3] Installation Target Directory (default: ~\.clibm-bin)
 
-param (
-    [string]$Hooks = "",
-    [string]$Scope = "",
-    [string]$InstallDir = "",
-    [string]$RawBaseUrl = "",
-    [switch]$NoModifyPath = $false,
-    [switch]$Yes = $false
-)
+$Hooks = ""
+$Scope = ""
+$InstallDir = ""
+$RawBaseUrl = ""
+$NoModifyPath = $false
+$Yes = $false
 
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath

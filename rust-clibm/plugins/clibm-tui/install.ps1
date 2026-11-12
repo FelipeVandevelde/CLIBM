@@ -1,14 +1,12 @@
-﻿# ==============================================================================
+# ==============================================================================
 # clibm-tui — Standalone Ratatui Terminal UI Plugin Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
-param (
-    [string]$Keymap = "",
-    [string]$InstallDir = "",
-    [string]$RawBaseUrl = "",
-    [switch]$NoModifyPath = $false,
-    [switch]$Yes = $false
-)
+$Keymap = ""
+$InstallDir = ""
+$RawBaseUrl = ""
+$NoModifyPath = $false
+$Yes = $false
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { $CallerDir }

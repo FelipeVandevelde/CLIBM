@@ -999,14 +999,12 @@ echo \"Installed {crate_name} to $INSTALL_DIR/{crate_name} (hooks: $HOOK_MODE, s
 
         let install_ps1 = format!(
             "# Encoding: UTF-8 with BOM (EF BB BF)\n\
-param(\n\
-    [string]$Hooks = \"\",\n\
-    [string]$Scope = \"\",\n\
-    [string]$InstallDir = \"\",\n\
-    [string]$RawBaseUrl = \"\",\n\
-    [switch]$NoModifyPath = $false,\n\
-    [switch]$Yes = $false\n\
-)\n\
+$Hooks = \"\"\n\
+$Scope = \"\"\n\
+$InstallDir = \"\"\n\
+$RawBaseUrl = \"\"\n\
+$NoModifyPath = $false\n\
+$Yes = $false\n\
 $ErrorActionPreference = \"Stop\"\n\
 $CallerDir = (Get-Location).ProviderPath\n\
 $ScriptDir = if ($PSScriptRoot) {{ $PSScriptRoot }} else {{ $CallerDir }}\n\

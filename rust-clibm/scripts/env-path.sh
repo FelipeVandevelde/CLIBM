@@ -1,4 +1,4 @@
-# clibm-env-path-version: 5
+﻿# clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
 # Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced

@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # clibm-docs — Standalone AI Context & DOCS Plugin Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
@@ -7,14 +7,12 @@
 #   [2/3] Auto-Sync on Init / Post-Commit Hook: true (default) or false
 #   [3/3] Installation Target Directory (default: ~\.clibm-bin)
 
-param (
-    [string]$Format = "",
-    [string]$AutoSync = "",
-    [string]$InstallDir = "",
-    [string]$RawBaseUrl = "",
-    [switch]$NoModifyPath = $false,
-    [switch]$Yes = $false
-)
+$Format = ""
+$AutoSync = ""
+$InstallDir = ""
+$RawBaseUrl = ""
+$NoModifyPath = $false
+$Yes = $false
 
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath

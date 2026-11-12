@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # CLIBM v0.1.0 — Interactive Core Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell 5.1 & 7+ compatibility
 # Supports BOTH:
@@ -15,15 +15,13 @@
 #   4. Machine Storage / Install Location: custom path (default: ~\.clibm-bin)
 #   5. User PATH Registration: add install directory to user PATH (or -NoModifyPath)
 
-param (
-    [string]$Profile = "",
-    [string]$Language = "",
-    [string]$AutoCommit = "",
-    [string]$InstallDir = "",
-    [string]$RawBaseUrl = "",
-    [switch]$NoModifyPath = $false,
-    [switch]$Yes = $false
-)
+$Profile = ""
+$Language = ""
+$AutoCommit = ""
+$InstallDir = ""
+$RawBaseUrl = ""
+$NoModifyPath = $false
+$Yes = $false
 
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath

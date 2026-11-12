@@ -1,15 +1,13 @@
-﻿# ==============================================================================
+# ==============================================================================
 # clibm-web — Standalone Self-Hosted Web Server Plugin Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
-param (
-    [int]$Port = 0,
-    [string]$InstallDir = "",
-    [string]$RawBaseUrl = "",
-    [switch]$NoModifyPath = $false,
-    [switch]$KeepArtifacts = $false,
-    [switch]$Yes = $false
-)
+$Port = 0
+$InstallDir = ""
+$RawBaseUrl = ""
+$NoModifyPath = $false
+$KeepArtifacts = $false
+$Yes = $false
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { $CallerDir }

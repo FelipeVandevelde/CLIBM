@@ -1,14 +1,12 @@
-﻿# ==============================================================================
+# ==============================================================================
 # clibm-dep-audit — Standalone Plugin Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
-param (
-    [string]$Hooks = "",
-    [string]$InstallDir = "",
-    [string]$RawBaseUrl = "",
-    [switch]$NoModifyPath = $false,
-    [switch]$Yes = $false
-)
+$Hooks = ""
+$InstallDir = ""
+$RawBaseUrl = ""
+$NoModifyPath = $false
+$Yes = $false
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { $CallerDir }

@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # clibm-mcp — Standalone Plugin Installer with Interactive Choices (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
@@ -10,15 +10,13 @@
 #   [2/3] HTTP SSE Server Port (default: 7879)
 #   [3/3] Installation Target Directory (default: ~\.clibm-bin)
 
-param (
-    [string]$Transport = "",
-    [int]$Port = 0,
-    [string]$InstallDir = "",
-    [string]$RawBaseUrl = "",
-    [switch]$NoModifyPath = $false,
-    [switch]$KeepArtifacts = $false,
-    [switch]$Yes = $false
-)
+$Transport = ""
+$Port = 0
+$InstallDir = ""
+$RawBaseUrl = ""
+$NoModifyPath = $false
+$KeepArtifacts = $false
+$Yes = $false
 
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath
