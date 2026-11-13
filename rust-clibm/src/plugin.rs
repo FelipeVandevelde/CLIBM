@@ -1005,6 +1005,16 @@ $InstallDir = \"\"\n\
 $RawBaseUrl = \"\"\n\
 $NoModifyPath = $false\n\
 $Yes = $false\n\
+for ($i = 0; $i -lt $args.Count; $i++) {{\n\
+  switch -Regex ($args[$i]) {{\n\
+    '^-+(?i)Hooks$'        {{ $Hooks = $args[++$i] }}\n\
+    '^-+(?i)Scope$'        {{ $Scope = $args[++$i] }}\n\
+    '^-+(?i)InstallDir$'   {{ $InstallDir = $args[++$i] }}\n\
+    '^-+(?i)RawBaseUrl$'   {{ $RawBaseUrl = $args[++$i] }}\n\
+    '^-+(?i)NoModifyPath$' {{ $NoModifyPath = $true }}\n\
+    '^-+(?i)Yes$'          {{ $Yes = $true }}\n\
+  }}\n\
+}}\n\
 $ErrorActionPreference = \"Stop\"\n\
 $CallerDir = (Get-Location).ProviderPath\n\
 $ScriptDir = if ($PSScriptRoot) {{ $PSScriptRoot }} else {{ $CallerDir }}\n\

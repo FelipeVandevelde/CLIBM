@@ -33,7 +33,6 @@ import syncEnvPathPs1 from '../../rust-clibm/scripts/sync-env-path.ps1?raw';
 
 // Standalone Plugins in `plugins/`
 import mcpCargoToml from '../../rust-clibm/plugins/clibm-mcp/Cargo.toml?raw';
-import mcpLibRs from '../../rust-clibm/plugins/clibm-mcp/src/lib.rs?raw';
 import mcpMainRs from '../../rust-clibm/plugins/clibm-mcp/src/main.rs?raw';
 import mcpConfigRs from '../../rust-clibm/plugins/clibm-mcp/src/config.rs?raw';
 import mcpErrorRs from '../../rust-clibm/plugins/clibm-mcp/src/error.rs?raw';
@@ -419,16 +418,6 @@ export const RUST_PROJECT_FILES: RustProjectFile[] = [
     language: 'toml',
     content: ensureUtf8Bom(mcpCargoToml),
     lines: countLines(mcpCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-mcp/src/lib.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/lib.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Library entry point exposing McpAdapter and protocol interfaces for unified embedding.',
-    language: 'rust',
-    content: ensureUtf8Bom(mcpLibRs),
-    lines: countLines(mcpLibRs),
     isCoreOnly: false,
   },
   {
@@ -1235,7 +1224,6 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
       { path: 'clibm-mcp/install.ps1', content: ensureUtf8Bom(mcpInstallPs1) },
       { path: 'clibm-mcp/uninstall.sh', content: ensureUtf8Bom(mcpUninstallSh) },
       { path: 'clibm-mcp/uninstall.ps1', content: ensureUtf8Bom(mcpUninstallPs1) },
-      { path: 'clibm-mcp/src/lib.rs', content: ensureUtf8Bom(mcpLibRs) },
       { path: 'clibm-mcp/src/main.rs', content: ensureUtf8Bom(mcpMainRs) },
       { path: 'clibm-mcp/src/config.rs', content: ensureUtf8Bom(mcpConfigRs) },
       { path: 'clibm-mcp/src/error.rs', content: ensureUtf8Bom(mcpErrorRs) },

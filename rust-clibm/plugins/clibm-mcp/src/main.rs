@@ -13,10 +13,16 @@ compile_error!(
      Use: --features transport-stdio, or --features transport-http, or default features."
 );
 
+mod adapter;
+mod backend;
+mod config;
+mod error;
+mod protocol;
+mod transport;
+
+use adapter::McpAdapter;
 use anyhow::{bail, Result};
-use clibm_mcp::adapter::McpAdapter;
-use clibm_mcp::config::{McpConfig, TransportMode};
-use clibm_mcp::transport;
+use config::{McpConfig, TransportMode};
 use std::env;
 #[cfg(all(feature = "transport-stdio", feature = "transport-http"))]
 use std::sync::atomic::{AtomicBool, Ordering};

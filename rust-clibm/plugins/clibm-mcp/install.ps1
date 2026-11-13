@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # clibm-mcp — Standalone Plugin Installer with Interactive Choices (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
 # ==============================================================================
@@ -17,6 +17,18 @@ $RawBaseUrl = ""
 $NoModifyPath = $false
 $KeepArtifacts = $false
 $Yes = $false
+
+for ($i = 0; $i -lt $args.Count; $i++) {
+    switch -Regex ($args[$i]) {
+        '^-+(?i)Transport$'     { $Transport = $args[++$i] }
+        '^-+(?i)Port$'          { $Port = [int]$args[++$i] }
+        '^-+(?i)InstallDir$'    { $InstallDir = $args[++$i] }
+        '^-+(?i)RawBaseUrl$'    { $RawBaseUrl = $args[++$i] }
+        '^-+(?i)NoModifyPath$'  { $NoModifyPath = $true }
+        '^-+(?i)KeepArtifacts$' { $KeepArtifacts = $true }
+        '^-+(?i)Yes$'           { $Yes = $true }
+    }
+}
 
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath
@@ -1030,11 +1042,13 @@ $McpSourceFiles = @(
     "src/backend/mod.rs",
     "src/backend/bridge.rs",
     "src/adapter/mod.rs",
+    "src/adapter/discovery.rs",
     "src/adapter/dispatcher.rs",
     "src/adapter/permissions.rs",
-    "src/adapter/tools.rs",
-    "src/adapter/resources.rs",
     "src/adapter/prompts.rs",
+    "src/adapter/resources.rs",
+    "src/adapter/tools.rs",
+    "src/adapter/validator.rs",
     "src/transport/mod.rs",
     "src/transport/stdio.rs",
     "src/transport/http.rs"

@@ -983,11 +983,13 @@ clibm_build_and_stage \
   "src/backend/mod.rs" \
   "src/backend/bridge.rs" \
   "src/adapter/mod.rs" \
+  "src/adapter/discovery.rs" \
   "src/adapter/dispatcher.rs" \
   "src/adapter/permissions.rs" \
-  "src/adapter/tools.rs" \
-  "src/adapter/resources.rs" \
   "src/adapter/prompts.rs" \
+  "src/adapter/resources.rs" \
+  "src/adapter/tools.rs" \
+  "src/adapter/validator.rs" \
   "src/transport/mod.rs" \
   "src/transport/stdio.rs" \
   "src/transport/http.rs"

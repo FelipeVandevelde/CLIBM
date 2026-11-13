@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # CLIBM v0.1.0 — Interactive Core Installer (Windows PowerShell)
 # Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell 5.1 & 7+ compatibility
 # Supports BOTH:
@@ -22,6 +22,18 @@ $InstallDir = ""
 $RawBaseUrl = ""
 $NoModifyPath = $false
 $Yes = $false
+
+for ($i = 0; $i -lt $args.Count; $i++) {
+    switch -Regex ($args[$i]) {
+        '^-+(?i)Profile$'      { $Profile = $args[++$i] }
+        '^-+(?i)Language$'     { $Language = $args[++$i] }
+        '^-+(?i)AutoCommit$'   { $AutoCommit = $args[++$i] }
+        '^-+(?i)InstallDir$'   { $InstallDir = $args[++$i] }
+        '^-+(?i)RawBaseUrl$'   { $RawBaseUrl = $args[++$i] }
+        '^-+(?i)NoModifyPath$' { $NoModifyPath = $true }
+        '^-+(?i)Yes$'          { $Yes = $true }
+    }
+}
 
 $ErrorActionPreference = "Stop"
 $CallerDir = (Get-Location).ProviderPath
