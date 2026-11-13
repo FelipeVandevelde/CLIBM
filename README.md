@@ -176,7 +176,6 @@ CLIBM/
     │   └── versioning.rs      # Commits, branching, checkout, tree diff, merge
     └── plugins/               # Official standalone plugin crates
         ├── clibm-dep-audit/   # DAG critical path & cycle auditor
-        ├── clibm-docs/        # AI documentation & context teacher
         ├── clibm-export-md/   # Markdown sprint report exporter
         ├── clibm-mcp/         # Model Context Protocol (MCP) server for AI
         ├── clibm-tui/         # Ratatui + Crossterm interactive terminal UI
@@ -371,7 +370,6 @@ CLIBM provides a folder-scoped, contract-driven plugin architecture. Plugins are
 | **`clibm-tui`** | `plugins/clibm-tui` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1) | Interactive terminal UI powered by **Ratatui + Crossterm** with split-pane Kanban, CAS inspector, and commit creator. |
 | **`clibm-web`** | `plugins/clibm-web` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1) | Self-hosted single-binary HTTP server (`tiny_http`) with an embedded monochromatic workbench (`ui.html`). |
 | **`clibm-dep-audit`**| `plugins/clibm-dep-audit` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/install.ps1) | Analyzes task dependency DAGs, flags cycle risks, and highlights critical-path blockers. |
-| **`clibm-docs`** | `plugins/clibm-docs` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1) | Context generator that teaches AI agents and developers how to interact with CLIBM repositories. |
 | **`clibm-export-md`**| `plugins/clibm-export-md` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-export-md/install.ps1) | Exports current project/sprint trees into portable, publication-ready Markdown tables. |
 | **`clibm-workflow-lint`**| `plugins/clibm-workflow-lint` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1) | Validates Kanban WIP column limits, unblocked dependencies, and workflow policies. |
 | **`plugin-template`**| `plugins/plugin-template` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.ps1) | Reference starter template for building custom CLIBM plugins in Rust. |
@@ -387,7 +385,6 @@ Every standalone plugin supports **both** direct installation from its raw GitHu
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1 | iex
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1 | iex
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1 | iex
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1 | iex
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/install.ps1 | iex
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-export-md/install.ps1 | iex
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1 | iex

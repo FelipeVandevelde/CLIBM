@@ -287,12 +287,12 @@ pub enum PluginCommands {
     Disable { name: String },
     /// Display uninstallation guidance and paths to remove an installed plugin
     Uninstall {
-        /// Plugin name (e.g. 'clibm-mcp', 'mcp', 'clibm-docs', 'docs', 'clibm-tui', etc.)
+        /// Plugin name (e.g. 'clibm-mcp', 'mcp', 'clibm-tui', 'tui', etc.)
         name: String,
     },
     /// Execute an installed standalone plugin inside the current ongoing project
     Run {
-        /// Plugin name (e.g. 'clibm-mcp', 'mcp', 'clibm-docs', 'docs', 'clibm-tui', 'clibm-web', 'clibm-dep-audit')
+        /// Plugin name (e.g. 'clibm-mcp', 'mcp', 'clibm-tui', 'clibm-web', 'clibm-dep-audit')
         name: String,
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,

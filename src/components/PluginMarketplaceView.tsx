@@ -23,7 +23,6 @@ import {
   DownloadablePluginPackage,
 } from '../rust/rustSourceRegistry';
 import { ClibmRepositoryState } from '../core/types';
-import { generateAiTeachingDocs } from '../core/clibmCore';
 import {
   stripUtf8BomForDisplay,
   triggerUtf8BomFileDownload,
@@ -156,18 +155,6 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
     return match ? match.content : installingPlugin.files[0]?.content || '';
   }, [installingPlugin, installScriptTab]);
 
-  // Live AI doc preview when clibm-docs is opened in the Install Wizard
-  const liveAiDocPreview = useMemo(() => {
-    if (!installingPlugin || installingPlugin.id !== 'clibm-docs') return '';
-    const tabMap: Record<string, 'agents' | 'claude' | 'cursorrules' | 'mcp-json'> = {
-      all: 'agents',
-      agents: 'agents',
-      claude: 'claude',
-      cursorrules: 'cursorrules',
-    };
-    return generateAiTeachingDocs(repoState, tabMap[installChoiceValue] || 'agents');
-  }, [installingPlugin, installChoiceValue, repoState]);
-
   return (
     <div className="space-y-6">
       {/* Top Header: 100% Pure Core Status + Standalone Plugins Folder */}
@@ -190,7 +177,6 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
               The <strong className="text-white">clibm_core</strong> engine starts with{' '}
               <strong className="text-white">0 built-in plugins</strong>. All plugins—including{' '}
               <code className="font-mono text-zinc-200">clibm-mcp</code>,{' '}
-              <code className="font-mono text-zinc-200">clibm-docs</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-dep-audit</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-export-md</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-workflow-lint</code>,{' '}
@@ -271,7 +257,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
         </div>
       </div>
 
-      {/* Uniform Plugin Cards Grid (All 8 Plugins Including clibm-mcp & clibm-docs Use Identical Card Layout) */}
+      {/* Uniform Plugin Cards Grid (all standalone plugins use the same card layout) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredPlugins.map((pkg) => {
           const isInspected = inspectedPlugin.id === pkg.id;
@@ -511,37 +497,6 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                   </div>
                 </div>
               </div>
-
-              {/* Optional Live AI Teaching Docs Preview when installing clibm-docs */}
-              {installingPlugin.id === 'clibm-docs' && liveAiDocPreview && (
-                <div className="border border-zinc-800 bg-zinc-900/50 rounded-lg p-3.5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-semibold text-white">
-                      Preview Generated AI Context Output ({installChoiceValue}) · UTF-8-BOM
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        triggerUtf8BomFileDownload(
-                          liveAiDocPreview,
-                          installChoiceValue === 'claude'
-                            ? 'CLAUDE.md'
-                            : installChoiceValue === 'cursorrules'
-                            ? '.cursorrules'
-                            : 'AGENTS.md'
-                        )
-                      }
-                      className="px-2.5 py-1 text-[11px] font-mono bg-zinc-100 hover:bg-white text-zinc-950 font-semibold rounded flex items-center gap-1 cursor-pointer"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>Download AI Doc (UTF-8-BOM)</span>
-                    </button>
-                  </div>
-                  <pre className="p-2.5 bg-zinc-950 border border-zinc-800 rounded text-[11px] font-mono text-zinc-300 max-h-36 overflow-y-auto">
-                    {liveAiDocPreview}
-                  </pre>
-                </div>
-              )}
 
               {/* Live UTF-8-BOM Install / Uninstall Script File Inspector */}
               <div className="border border-zinc-800 bg-zinc-900/60 rounded-lg overflow-hidden">

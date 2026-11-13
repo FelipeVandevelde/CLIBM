@@ -2,7 +2,6 @@
 members = [
     ".",
     "plugins/clibm-dep-audit",
-    "plugins/clibm-docs",
     "plugins/clibm-export-md",
     "plugins/clibm-mcp",
     "plugins/clibm-tui",

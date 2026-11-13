@@ -374,8 +374,7 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
               </span>
             </div>
             <p className="text-xs text-zinc-400">
-              Select the language used for CLI setup prompts, status summaries, and generated AI
-              teaching manuals (<code className="font-mono">clibm-docs</code>).
+              Select the language used for CLI setup prompts and status summaries.
             </p>
             <div className="grid grid-cols-3 gap-2 pt-1">
               {(

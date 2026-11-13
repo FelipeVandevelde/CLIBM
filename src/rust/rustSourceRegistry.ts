@@ -2,7 +2,7 @@
  * Registry of all Rust source files in `/rust-clibm/` (100% Pure Core + CLI + Standalone Plugins in `plugins/*`)
  * imported as raw strings so users can inspect, copy, or download:
  * 1. Pure Core-Only Package (`clibm-core-v0.1.0.zip`) — strictly `clibm_core` + `clibm` CLI with 0 plugins
- * 2. Individual Standalone Plugin Packages (`clibm-mcp-v0.1.0.zip`, `clibm-docs-v0.1.0.zip`, `clibm-dep-audit-v0.1.0.zip`, `clibm-export-md-v0.1.0.zip`, `clibm-workflow-lint-v0.1.0.zip`, `clibm-tui-v0.1.0.zip`, `clibm-web-v0.1.0.zip`, `clibm-plugin-template-v0.1.0.zip`)
+ * 2. Individual Standalone Plugin Packages (`clibm-mcp-v0.1.0.zip`, `clibm-dep-audit-v0.1.0.zip`, `clibm-export-md-v0.1.0.zip`, `clibm-workflow-lint-v0.1.0.zip`, `clibm-tui-v0.1.0.zip`, `clibm-web-v0.1.0.zip`, `clibm-plugin-template-v0.1.0.zip`)
  * 3. Complete Bundle (`clibm-v0.1.0-workspace.zip`) — Pure Core CLI + all standalone plugin folders in `plugins/`
  *
  * All installation, update, and uninstallation files (`install.sh`, `install.ps1`, `update.sh`, `update.ps1`,
@@ -57,14 +57,6 @@ import mcpInstallSh from '../../rust-clibm/plugins/clibm-mcp/install.sh?raw';
 import mcpInstallPs1 from '../../rust-clibm/plugins/clibm-mcp/install.ps1?raw';
 import mcpUninstallSh from '../../rust-clibm/plugins/clibm-mcp/uninstall.sh?raw';
 import mcpUninstallPs1 from '../../rust-clibm/plugins/clibm-mcp/uninstall.ps1?raw';
-
-import docsCargoToml from '../../rust-clibm/plugins/clibm-docs/Cargo.toml?raw';
-import docsMainRs from '../../rust-clibm/plugins/clibm-docs/src/main.rs?raw';
-import docsReadmeMd from '../../rust-clibm/plugins/clibm-docs/README.md?raw';
-import docsInstallSh from '../../rust-clibm/plugins/clibm-docs/install.sh?raw';
-import docsInstallPs1 from '../../rust-clibm/plugins/clibm-docs/install.ps1?raw';
-import docsUninstallSh from '../../rust-clibm/plugins/clibm-docs/uninstall.sh?raw';
-import docsUninstallPs1 from '../../rust-clibm/plugins/clibm-docs/uninstall.ps1?raw';
 
 import depAuditCargoToml from '../../rust-clibm/plugins/clibm-dep-audit/Cargo.toml?raw';
 import depAuditMainRs from '../../rust-clibm/plugins/clibm-dep-audit/src/main.rs?raw';
@@ -662,77 +654,6 @@ export const RUST_PROJECT_FILES: RustProjectFile[] = [
     isCoreOnly: false,
   },
 
-  // Standalone AI DOCS Plugin (plugins/clibm-docs)
-  {
-    relativePath: 'plugins/clibm-docs/Cargo.toml',
-    zipPath: 'clibm/plugins/clibm-docs/Cargo.toml',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Cargo manifest for the AI Documentation & Context Teacher plugin (clibm-docs).',
-    language: 'toml',
-    content: ensureUtf8Bom(docsCargoToml),
-    lines: countLines(docsCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-docs/src/main.rs',
-    zipPath: 'clibm/plugins/clibm-docs/src/main.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Generates AGENTS.md, CLAUDE.md, .cursorrules, and stdout context manuals to teach AI agents to use CLIBM.',
-    language: 'rust',
-    content: ensureUtf8Bom(docsMainRs),
-    lines: countLines(docsMainRs),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-docs/README.md',
-    zipPath: 'clibm/plugins/clibm-docs/README.md',
-    category: 'Plugins (TUI & Web)',
-    description: 'Documentation for building and running clibm-docs in ongoing projects.',
-    language: 'markdown',
-    content: ensureUtf8Bom(docsReadmeMd),
-    lines: countLines(docsReadmeMd),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-docs/install.sh',
-    zipPath: 'clibm/plugins/clibm-docs/install.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8-BOM interactive Linux installer for clibm-docs with AI doc format and auto-sync choices.',
-    language: 'bash',
-    content: ensureUtf8Bom(docsInstallSh),
-    lines: countLines(docsInstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-docs/install.ps1',
-    zipPath: 'clibm/plugins/clibm-docs/install.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8-BOM interactive Windows PowerShell installer for clibm-docs.',
-    language: 'powershell',
-    content: ensureUtf8Bom(docsInstallPs1),
-    lines: countLines(docsInstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-docs/uninstall.sh',
-    zipPath: 'clibm/plugins/clibm-docs/uninstall.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8-BOM Linux uninstaller for clibm-docs.',
-    language: 'bash',
-    content: ensureUtf8Bom(docsUninstallSh),
-    lines: countLines(docsUninstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-docs/uninstall.ps1',
-    zipPath: 'clibm/plugins/clibm-docs/uninstall.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8-BOM Windows PowerShell uninstaller for clibm-docs.',
-    language: 'powershell',
-    content: ensureUtf8Bom(docsUninstallPs1),
-    lines: countLines(docsUninstallPs1),
-    isCoreOnly: false,
-  },
 
   // Extracted Default Plugin 1: plugins/clibm-dep-audit
   {
@@ -1243,62 +1164,6 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
       { path: 'clibm-mcp/src/transport/mod.rs', content: ensureUtf8Bom(mcpTransportModRs) },
       { path: 'clibm-mcp/src/transport/stdio.rs', content: ensureUtf8Bom(mcpTransportStdioRs) },
       { path: 'clibm-mcp/src/transport/http.rs', content: ensureUtf8Bom(mcpTransportHttpRs) },
-    ],
-  },
-  {
-    id: 'clibm-docs',
-    name: 'CLIBM AI Context & DOCS Teacher',
-    crateName: 'clibm-docs',
-    version: '0.1.0',
-    category: 'AI & MCP',
-    summary:
-      'Teaches AI agents (Claude Code, Cursor, Windsurf, Copilot) how to operate CLIBM by outputting structured AI context to stdout and generating AGENTS.md, CLAUDE.md, .cursorrules, and .mcp.json.',
-    architectureNotes:
-      'Standalone crate in plugins/clibm-docs. Inspects the live .clibm/ repository state, active workspace, and installed plugins to synthesize accurate AI instructions. All install/uninstall scripts are UTF-8-BOM encoded.',
-    stack: 'Rust 2021 · AGENTS.md / CLAUDE.md / .cursorrules Generator · UTF-8-BOM',
-    hooks: ['ai-docs-generator', 'on-init'],
-    installCommand: 'cd plugins/clibm-docs && ./install.sh --format all',
-    cliCommand: 'clibm plugin run docs -- --all',
-    binaryInvoke: 'clibm-docs --all',
-    zipFilename: 'clibm-docs-v0.1.0.zip',
-    installPrompt: {
-      flagName: '--format',
-      ps1ParamName: '-Format',
-      promptTitle: 'Select AI Context Document Format (install.sh / install.ps1)',
-      promptDescription:
-        'When installing clibm-docs, the installer prompts you to select which AI instruction files to generate:',
-      defaultValue: 'all',
-      options: [
-        {
-          value: 'all',
-          label: '1) All AI Context Files (Default)',
-          detail: 'Generate AGENTS.md, CLAUDE.md, .cursorrules, and .mcp.json',
-        },
-        {
-          value: 'agents',
-          label: '2) AGENTS.md Only',
-          detail: 'Universal AI agent instruction manual for the repository',
-        },
-        {
-          value: 'claude',
-          label: '3) CLAUDE.md Only',
-          detail: 'Claude Code & Anthropic agent workflow guide',
-        },
-        {
-          value: 'cursorrules',
-          label: '4) .cursorrules Only',
-          detail: 'Cursor & Windsurf IDE rules file',
-        },
-      ],
-    },
-    files: [
-      { path: 'clibm-docs/Cargo.toml', content: ensureUtf8Bom(docsCargoToml) },
-      { path: 'clibm-docs/README.md', content: ensureUtf8Bom(docsReadmeMd) },
-      { path: 'clibm-docs/install.sh', content: ensureUtf8Bom(docsInstallSh) },
-      { path: 'clibm-docs/install.ps1', content: ensureUtf8Bom(docsInstallPs1) },
-      { path: 'clibm-docs/uninstall.sh', content: ensureUtf8Bom(docsUninstallSh) },
-      { path: 'clibm-docs/uninstall.ps1', content: ensureUtf8Bom(docsUninstallPs1) },
-      { path: 'clibm-docs/src/main.rs', content: ensureUtf8Bom(docsMainRs) },
     ],
   },
   {

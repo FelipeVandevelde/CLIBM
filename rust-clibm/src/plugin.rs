@@ -2,7 +2,7 @@
 //!
 //! `clibm_core` is 100% pure and contains zero built-in plugins.
 //! All plugins (`clibm-dep-audit`, `clibm-export-md`, `clibm-workflow-lint`,
-//! `clibm-mcp`, `clibm-docs`, `clibm-tui`, `clibm-web`) live as standalone
+//! `clibm-mcp`, `clibm-tui`, `clibm-web`) live as standalone
 //! Cargo crates in `plugins/` and communicate via `CLIBM_PLUGIN_CONTRACT_V1`.
 
 use crate::cas::CasStore;
@@ -313,6 +313,7 @@ impl PluginManager {
             "tui" => "clibm-tui".to_string(),
             "web" => "clibm-web".to_string(),
             "mcp" => "clibm-mcp".to_string(),
+            // Legacy alias: lets `clibm plugin uninstall docs` remove copies of the retired clibm-docs plugin.
             "docs" => "clibm-docs".to_string(),
             "dep-audit" => "clibm-dep-audit".to_string(),
             "export-md" => "clibm-export-md".to_string(),
@@ -524,7 +525,6 @@ impl PluginManager {
                     "src/transport/http.rs",
                 ],
             )),
-            "clibm-docs" => Some(("clibm-docs", "plugins/clibm-docs", vec!["Cargo.toml", "src/main.rs"])),
             "clibm-dep-audit" => Some(("clibm-dep-audit", "plugins/clibm-dep-audit", vec!["Cargo.toml", "src/main.rs"])),
             "clibm-export-md" => Some(("clibm-export-md", "plugins/clibm-export-md", vec!["Cargo.toml", "src/main.rs"])),
             "clibm-workflow-lint" => Some(("clibm-workflow-lint", "plugins/clibm-workflow-lint", vec!["Cargo.toml", "src/main.rs"])),
@@ -790,8 +790,6 @@ impl PluginManager {
                     "on-ai-tool-call".to_string(),
                 ],
             }
-        } else if name.contains("docs") {
-            vec!["ai-docs-generator".to_string(), "on-init".to_string()]
         } else if name.contains("dep-audit") {
             vec!["pre-commit".to_string(), "on-task-depend".to_string()]
         } else if name.contains("export-md") {
