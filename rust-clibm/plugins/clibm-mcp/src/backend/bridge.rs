@@ -97,9 +97,14 @@ mod tests {
     #[test]
     fn paths_outside_the_project_are_refused() {
         let bridge = ClibmBridge::new(std::env::temp_dir());
-        for bad in ["../secret.txt", "a/../../b", "/etc/passwd", "C:\\Windows\\win.ini", "\\\\server\\share\\x"] {
-            let err = bridge.read_repo_file(bad).unwrap_err();
-            assert_eq!(err.code, -32003, "{}", bad);
+        let mut bad = vec!["../secret.txt", "a/../../b", "/etc/passwd"];
+        if cfg!(windows) {
+            // Only absolute on Windows; on Unix these are plain (odd) file names.
+            bad.extend(["C:\\Windows\\win.ini", "\\\\server\\share\\x", "..\\secret.txt"]);
+        }
+        for path in bad {
+            let err = bridge.read_repo_file(path).unwrap_err();
+            assert_eq!(err.code, -32003, "{}", path);
         }
         // A normal missing file is "not found", not "denied".
         assert_eq!(bridge.read_repo_file("definitely-missing.json").unwrap_err().code, -32002);

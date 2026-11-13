@@ -69,6 +69,10 @@ if (-not $Clibm) {
     return
 }
 
+# git and cargo print progress on stderr; under "Stop", Windows PowerShell 5.1 would
+# abort on it when the output is redirected. Failures are detected via $LASTEXITCODE.
+$ErrorActionPreference = 'Continue'
+
 $UpdateArgs = @('update')
 $InClone = $ScriptDir -and (Test-Path -LiteralPath (Join-Path $ScriptDir 'Cargo.toml')) -and (Test-Path -LiteralPath (Join-Path $ScriptDir 'src\main.rs'))
 if ($InClone -and -not $Check -and -not $Repo -and -not $Branch) {

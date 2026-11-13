@@ -542,6 +542,25 @@ function Copy-ClibmBinary {
     }
 }
 
+# Runs a native program (cargo, git, a plugin) so that its stderr can never abort the
+# script: Windows PowerShell 5.1 turns redirected stderr lines (cargo's "Compiling ..."
+# progress, git warnings) into error records, which $ErrorActionPreference = 'Stop'
+# makes fatal. With -Show, stdout and stderr are printed; otherwise stdout is returned
+# and stderr is dropped. Callers check $LASTEXITCODE as usual.
+function Invoke-ClibmNative {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [AllowEmptyCollection()][string[]]$ArgumentList = @(),
+        [switch]$Show
+    )
+    $ErrorActionPreference = 'Continue'
+    if ($Show) {
+        & $FilePath @ArgumentList 2>&1 | ForEach-Object { Write-Host ([string]$_) }
+    } else {
+        & $FilePath @ArgumentList 2>$null
+    }
+}
+
 # Builds a CLIBM crate and installs its binary at DestinationBinary.
 # - Local mode (a clone of the repository is found): `cargo build --release -p <crate>`.
 # - Remote mode: `cargo install --git <CLIBM_GIT_URL> --branch <CLIBM_GIT_REF> --root <temp>`,
@@ -574,7 +593,7 @@ function Invoke-ClibmBuildAndStage {
         try {
             $TargetDir = ''
             try {
-                $Meta = (& cargo metadata --no-deps --format-version 1) | Out-String | ConvertFrom-Json
+                $Meta = (Invoke-ClibmNative -FilePath 'cargo' -ArgumentList @('metadata', '--no-deps', '--format-version', '1')) | Out-String | ConvertFrom-Json
                 $TargetDir = [string]$Meta.target_directory
             } catch {}
             if (-not $TargetDir) { $TargetDir = Join-Path $LocalDir 'target' }
@@ -586,7 +605,7 @@ function Invoke-ClibmBuildAndStage {
                 }
             }
             $CargoArgs = @('build', '--release', '-p', $CrateName) + $CargoFeatures
-            & cargo @CargoArgs | Out-Host
+            Invoke-ClibmNative -FilePath 'cargo' -ArgumentList $CargoArgs -Show
             if ($LASTEXITCODE -ne 0) {
                 throw "cargo build --release failed for $CrateName (exit code $LASTEXITCODE)"
             }
@@ -595,7 +614,7 @@ function Invoke-ClibmBuildAndStage {
             }
             Copy-ClibmBinary -Source $BuiltBin -Destination $DestinationBinary
             if (Get-Command git -ErrorAction SilentlyContinue) {
-                $Sha = (& git -C $LocalDir rev-parse HEAD 2>$null | Out-String).Trim()
+                $Sha = ((Invoke-ClibmNative -FilePath 'git' -ArgumentList @('-C', $LocalDir, 'rev-parse', 'HEAD')) | Out-String).Trim()
                 if ($Sha -match '^[0-9a-f]{40}$') { $script:ClibmLastBuildCommit = $Sha }
             }
         } finally {
@@ -609,10 +628,10 @@ function Invoke-ClibmBuildAndStage {
     Write-Host "==> [Remote Mode] Building $CrateName from $($Src.Url) (branch $($Src.Ref))..."
     try {
         $CargoArgs = @('install', '--git', $Src.Url, '--branch', $Src.Ref, '--root', $TempRoot, '--locked', '--force', $CrateName) + $CargoFeatures
-        # With <temp>in on PATH, cargo does not ask the user to add the temp folder to PATH.
+        # With <temp>\bin on PATH, cargo does not ask the user to add the temp folder to PATH.
         $SavedPath = $env:PATH
         $env:PATH = (Join-Path $TempRoot 'bin') + [System.IO.Path]::PathSeparator + $env:PATH
-        try { & cargo @CargoArgs | Out-Host } finally { $env:PATH = $SavedPath }
+        try { Invoke-ClibmNative -FilePath 'cargo' -ArgumentList $CargoArgs -Show } finally { $env:PATH = $SavedPath }
         if ($LASTEXITCODE -ne 0) {
             throw "cargo install failed for $CrateName (exit code $LASTEXITCODE)"
         }
@@ -756,7 +775,7 @@ function Get-ClibmPluginManifest {
     try {
         $ArgList = @('--manifest', '--executable', ($Executable -replace '\\', '/'))
         if (-not [string]::IsNullOrWhiteSpace($HooksCsv)) { $ArgList += @('--hooks', $HooksCsv) }
-        $Out = & $Executable @ArgList
+        $Out = Invoke-ClibmNative -FilePath $Executable -ArgumentList $ArgList
         if ($LASTEXITCODE -ne 0) { return $null }
         $Line = @($Out | Where-Object { ([string]$_).Trim().StartsWith('{') }) | Select-Object -First 1
         if (-not $Line) { return $null }
