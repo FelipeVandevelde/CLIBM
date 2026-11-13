@@ -1,6 +1,14 @@
-# CLIBM DAG Critical Path & Cycle Auditor (`clibm-dep-audit`)
+# clibm-dep-audit — dependency audit
 
-Standalone Rust plugin extracted from the pure CLIBM core. Audits `.clibm/index/computed.json` and task dependency graphs to detect circular dependencies and highlight critical-path blockers.
+Audits the task dependency graph of the **current** project state:
+
+- circular dependency chains;
+- dependencies on tasks that no longer exist;
+- **blockers**: open tasks that other open tasks are waiting on;
+- the **critical path**: the longest chain of open dependencies.
+
+It answers `ok: false` (exit code 1 when run by hand) when it finds a cycle or a missing
+dependency.
 
 ## Quick Install
 
@@ -14,6 +22,9 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/install.ps1)
 ```
 
+From a clone: `cd plugins/clibm-dep-audit && ./install.sh` (or `.\install.ps1`), or
+`clibm plugin install dep-audit`.
+
 ## Quick Uninstall
 
 ### Linux, macOS, WSL2
@@ -26,29 +37,26 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/uninstall.ps1)
 ```
 
----
+Or `clibm plugin uninstall dep-audit`.
 
-## 1. Local Build & Install (From Plugin Folder)
-
-```bash
-cd plugins/clibm-dep-audit
-./install.sh
-# Windows PowerShell (local):
-.\install.ps1
-```
-
-## 2. Run Inside Any Ongoing CLIBM Project
+## Usage
 
 ```bash
-cd ~/my-clibm-project
-clibm plugin run dep-audit
-# Or invoke the binary directly:
-clibm-dep-audit
+cd ~/my-project
+clibm plugin run dep-audit            # active project
+clibm plugin run dep-audit -- --all   # every project
+clibm-dep-audit --all                 # same, run directly
 ```
 
-## 3. Model Context Protocol (MCP) Integration
+Example:
 
-When `clibm-mcp` is running, this plugin's tool is automatically discovered from `registry.json` and exposed to AI agents as:
-- **Tool Identifier**: `dep_audit.audit_dependencies`
-- **Description**: Audits the task dependency DAG in `.clibm/index/computed.json` to detect circular chains and blockers.
-- **Execution Mode**: Read-only (`is_mutating: false`).
+```text
+[clibm-dep-audit] Dependency audit of App (APP): 4 task(s), tree 93c3181606fd
+  Cycles: none
+  Blockers (open tasks that others wait on):
+    APP-101 "Base" [todo] blocks 2: APP-102, APP-104
+  Critical path (3 open tasks): APP-101 -> APP-102 -> APP-103
+```
+
+**Hook:** `on-task-depend` (after `clibm task depend`), informational.
+**MCP tool:** `dep_audit__audit_dependencies` (read-only, optional `all`).

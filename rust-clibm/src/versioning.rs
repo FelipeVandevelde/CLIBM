@@ -4,11 +4,13 @@
 //! between any two commits/branches, individual task history lookup, and branch
 //! merges without duplicating unchanged objects.
 
-use crate::cas::CasStore;
+use crate::cas::{validate_ref_name, CasStore};
+use crate::index::ComputedIndex;
 use crate::models::*;
 use anyhow::{bail, Result};
 use chrono::Utc;
-use std::collections::{BTreeSet, VecDeque};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub struct VersioningEngine;
 
@@ -290,8 +292,167 @@ impl VersioningEngine {
         })
     }
 
-    /// Merges `source_branch` into the currently checked-out branch using structural CAS tree merging.
-    pub fn merge_branch(cas: &CasStore, source_branch: &str, author: &str) -> Result<String> {
+    /// All commits reachable from `start` (including `start`).
+    pub fn ancestors(cas: &CasStore, start: &str) -> Result<BTreeSet<String>> {
+        let mut seen = BTreeSet::new();
+        let mut queue = VecDeque::from([start.to_string()]);
+        while let Some(curr) = queue.pop_front() {
+            if !seen.insert(curr.clone()) {
+                continue;
+            }
+            let commit: CommitPayload = cas.get_typed_payload(&curr, OBJ_COMMIT)?;
+            queue.extend(commit.parent_hashes);
+        }
+        Ok(seen)
+    }
+
+    /// Nearest commit reachable from `source` that is also in `target_ancestors`.
+    fn merge_base(
+        cas: &CasStore,
+        target_ancestors: &BTreeSet<String>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        let mut seen = BTreeSet::new();
+        let mut queue = VecDeque::from([source.to_string()]);
+        while let Some(curr) = queue.pop_front() {
+            if !seen.insert(curr.clone()) {
+                continue;
+            }
+            if target_ancestors.contains(&curr) {
+                return Ok(Some(curr));
+            }
+            let commit: CommitPayload = cas.get_typed_payload(&curr, OBJ_COMMIT)?;
+            queue.extend(commit.parent_hashes);
+        }
+        Ok(None)
+    }
+
+    /// Three-way merge of one `id -> object hash` map.
+    fn merge_map(
+        entity_type: &str,
+        base: &BTreeMap<String, String>,
+        ours: &BTreeMap<String, String>,
+        theirs: &BTreeMap<String, String>,
+        strategy: MergeStrategy,
+        conflicts: &mut Vec<MergeConflict>,
+    ) -> BTreeMap<String, String> {
+        let keys: BTreeSet<&String> = base.keys().chain(ours.keys()).chain(theirs.keys()).collect();
+        let mut out = BTreeMap::new();
+        for key in keys {
+            let (b, o, t) = (base.get(key), ours.get(key), theirs.get(key));
+            let pick = if o == t {
+                o
+            } else if o == b {
+                t
+            } else if t == b {
+                o
+            } else {
+                let reason = match (b, o, t) {
+                    (None, Some(_), Some(_)) => "added on both branches with different content",
+                    (Some(_), None, Some(_)) => "deleted here but modified on the merged branch",
+                    (Some(_), Some(_), None) => "modified here but deleted on the merged branch",
+                    _ => "modified differently on both branches",
+                };
+                conflicts.push(MergeConflict {
+                    entity_type: entity_type.to_string(),
+                    entity_id: key.clone(),
+                    reason: reason.to_string(),
+                });
+                match strategy {
+                    MergeStrategy::Theirs => t,
+                    _ => o,
+                }
+            };
+            if let Some(h) = pick {
+                out.insert(key.clone(), h.clone());
+            }
+        }
+        out
+    }
+
+    /// Renumbers tasks that both branches added under the same ID with different content,
+    /// so neither is lost. The incoming task gets the next free number for its project
+    /// code, and `depends_on` references in the incoming side's new/changed tasks follow.
+    fn renumber_task_collisions(
+        cas: &CasStore,
+        base: &BTreeMap<String, String>,
+        ours: &BTreeMap<String, String>,
+        theirs: &BTreeMap<String, String>,
+        counters: &mut BTreeMap<String, u64>,
+    ) -> Result<(BTreeMap<String, String>, Vec<(String, String)>)> {
+        let mut theirs = theirs.clone();
+        let collisions: Vec<String> = ours
+            .iter()
+            .filter(|(k, h)| !base.contains_key(*k) && theirs.get(*k).map_or(false, |t| t != *h))
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        let mut renumbered: Vec<(String, String)> = Vec::new();
+        for old_id in collisions {
+            let hash = theirs.remove(&old_id).expect("collision key present");
+            let mut task: TaskPayload = cas.get_typed_payload(&hash, OBJ_TASK)?;
+            let code = split_entity_id(&old_id)
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_else(|| old_id.clone());
+            let taken: Vec<String> = base
+                .keys()
+                .chain(ours.keys())
+                .chain(theirs.keys())
+                .cloned()
+                .collect();
+            let issued = counters
+                .get(&code.to_uppercase())
+                .map(|n| n + 1)
+                .unwrap_or(FIRST_TASK_NUMBER);
+            let number = next_task_number_in(taken.iter(), &code).max(issued);
+            counters.insert(code.to_uppercase(), number);
+            let new_id = format!("{}-{}", code, number);
+            task.id = new_id.clone();
+            let new_hash = cas.put_object(OBJ_TASK, &task)?;
+            theirs.insert(new_id.clone(), new_hash);
+            renumbered.push((old_id, new_id));
+        }
+
+        if !renumbered.is_empty() {
+            let mapping: BTreeMap<&String, &String> =
+                renumbered.iter().map(|(o, n)| (o, n)).collect();
+            for (id, hash) in theirs.clone() {
+                if base.get(&id) == Some(&hash) {
+                    continue;
+                }
+                let mut task: TaskPayload = cas.get_typed_payload(&hash, OBJ_TASK)?;
+                let mut changed = false;
+                for dep in task.depends_on.iter_mut() {
+                    if let Some(new_id) = mapping.get(dep) {
+                        *dep = (*new_id).clone();
+                        changed = true;
+                    }
+                }
+                if changed {
+                    theirs.insert(id, cas.put_object(OBJ_TASK, &task)?);
+                }
+            }
+        }
+        Ok((theirs, renumbered))
+    }
+
+    /// Merges `source_branch` into HEAD with a three-way merge against the nearest common
+    /// ancestor:
+    /// - a change made on only one side (including deletions) is applied;
+    /// - a change made differently on both sides is a conflict: by default the merge stops
+    ///   and lists the conflicts; [`MergeStrategy::Ours`] / [`MergeStrategy::Theirs`]
+    ///   resolve them automatically;
+    /// - tasks added on both sides under the same ID are renumbered, not lost;
+    /// - when HEAD is an ancestor of the branch, the merge fast-forwards.
+    ///
+    /// Callers should refuse to merge over uncommitted changes (see `ClibmEngine::merge`).
+    pub fn merge_branch(
+        cas: &CasStore,
+        source_branch: &str,
+        author: &str,
+        strategy: MergeStrategy,
+    ) -> Result<MergeOutcome> {
+        validate_ref_name(source_branch)?;
         let target_commit_hash = cas
             .resolve_head_commit()?
             .ok_or_else(|| anyhow::anyhow!("Cannot merge into an unborn HEAD"))?;
@@ -299,35 +460,125 @@ impl VersioningEngine {
             .get_branch_commit(source_branch)?
             .ok_or_else(|| anyhow::anyhow!("Branch '{}' does not exist", source_branch))?;
 
+        let up_to_date = MergeOutcome {
+            kind: MergeKind::UpToDate,
+            commit: None,
+            renumbered: Vec::new(),
+            resolved_conflicts: Vec::new(),
+        };
         if target_commit_hash == source_commit_hash {
-            bail!("Branch '{}' is already up-to-date with HEAD", source_branch);
+            return Ok(up_to_date);
+        }
+        let target_ancestors = Self::ancestors(cas, &target_commit_hash)?;
+        if target_ancestors.contains(&source_commit_hash) {
+            return Ok(up_to_date);
         }
 
-        let target_commit: CommitPayload = cas.get_typed_payload(&target_commit_hash, OBJ_COMMIT)?;
         let source_commit: CommitPayload = cas.get_typed_payload(&source_commit_hash, OBJ_COMMIT)?;
-
-        let mut merged_tree: TreeSnapshotPayload =
-            cas.get_typed_payload(&target_commit.tree_hash, OBJ_TREE)?;
         let source_tree: TreeSnapshotPayload =
             cas.get_typed_payload(&source_commit.tree_hash, OBJ_TREE)?;
 
-        for (k, v) in source_tree.workspaces {
-            merged_tree.workspaces.insert(k, v);
-        }
-        for (k, v) in source_tree.projects {
-            merged_tree.projects.insert(k, v);
-        }
-        for (k, v) in source_tree.boards {
-            merged_tree.boards.insert(k, v);
-        }
-        for (k, v) in source_tree.tasks {
-            merged_tree.tasks.insert(k, v);
+        // Fast-forward: HEAD is an ancestor of the branch.
+        if Self::ancestors(cas, &source_commit_hash)?.contains(&target_commit_hash) {
+            match cas.current_branch()? {
+                Some(branch) => cas.set_branch_commit(&branch, &source_commit_hash)?,
+                None => cas.set_detached_head(&source_commit_hash)?,
+            }
+            cas.set_staged_tree_hash(&source_commit.tree_hash)?;
+            ComputedIndex::build_and_save(cas, &source_commit.tree_hash, &source_tree)?;
+            return Ok(MergeOutcome {
+                kind: MergeKind::FastForward,
+                commit: Some(source_commit_hash),
+                renumbered: Vec::new(),
+                resolved_conflicts: Vec::new(),
+            });
         }
 
-        let merged_tree_hash = cas.put_object(OBJ_TREE, &merged_tree)?;
+        let target_commit: CommitPayload = cas.get_typed_payload(&target_commit_hash, OBJ_COMMIT)?;
+        let target_tree: TreeSnapshotPayload =
+            cas.get_typed_payload(&target_commit.tree_hash, OBJ_TREE)?;
+        let base_tree: TreeSnapshotPayload =
+            match Self::merge_base(cas, &target_ancestors, &source_commit_hash)? {
+                Some(base_hash) => {
+                    let base_commit: CommitPayload = cas.get_typed_payload(&base_hash, OBJ_COMMIT)?;
+                    cas.get_typed_payload(&base_commit.tree_hash, OBJ_TREE)?
+                }
+                None => TreeSnapshotPayload::default(),
+            };
+
+        let mut conflicts = Vec::new();
+        let mut merged = target_tree.clone();
+        merged.workspaces = Self::merge_map(
+            OBJ_WORKSPACE,
+            &base_tree.workspaces,
+            &target_tree.workspaces,
+            &source_tree.workspaces,
+            strategy,
+            &mut conflicts,
+        );
+        merged.projects = Self::merge_map(
+            OBJ_PROJECT,
+            &base_tree.projects,
+            &target_tree.projects,
+            &source_tree.projects,
+            strategy,
+            &mut conflicts,
+        );
+        merged.boards = Self::merge_map(
+            OBJ_BOARD,
+            &base_tree.boards,
+            &target_tree.boards,
+            &source_tree.boards,
+            strategy,
+            &mut conflicts,
+        );
+        // Task counters only grow: keep the highest number issued on either side.
+        let mut counters = target_tree.task_counters.clone();
+        for (code, n) in base_tree.task_counters.iter().chain(source_tree.task_counters.iter()) {
+            let entry = counters.entry(code.clone()).or_insert(0);
+            *entry = (*entry).max(*n);
+        }
+        let (theirs_tasks, renumbered) = Self::renumber_task_collisions(
+            cas,
+            &base_tree.tasks,
+            &target_tree.tasks,
+            &source_tree.tasks,
+            &mut counters,
+        )?;
+        merged.task_counters = counters;
+        merged.tasks = Self::merge_map(
+            OBJ_TASK,
+            &base_tree.tasks,
+            &target_tree.tasks,
+            &theirs_tasks,
+            strategy,
+            &mut conflicts,
+        );
+
+        if !conflicts.is_empty() && strategy == MergeStrategy::Abort {
+            let list: Vec<String> = conflicts
+                .iter()
+                .map(|c| format!("  {} {}: {}", c.entity_type, c.entity_id, c.reason))
+                .collect();
+            bail!(
+                "Merge of '{}' stopped: {} conflict(s). Nothing was changed.\n{}\n\
+                 Re-run with --ours (keep this branch's version) or --theirs (take '{}') to resolve them.",
+                source_branch,
+                conflicts.len(),
+                list.join("\n"),
+                source_branch
+            );
+        }
+
+        let merged_tree_hash = cas.put_object(OBJ_TREE, &merged)?;
         cas.set_staged_tree_hash(&merged_tree_hash)?;
+        ComputedIndex::build_and_save(cas, &merged_tree_hash, &merged)?;
 
-        let msg = format!("Merge branch '{}'", source_branch);
+        let mut msg = format!("Merge branch '{}'", source_branch);
+        if !renumbered.is_empty() {
+            let pairs: Vec<String> = renumbered.iter().map(|(o, n)| format!("{} -> {}", o, n)).collect();
+            msg.push_str(&format!(" (renumbered: {})", pairs.join(", ")));
+        }
         let merge_commit_hash = Self::create_commit(
             cas,
             &merged_tree_hash,
@@ -336,6 +587,47 @@ impl VersioningEngine {
             Some(source_commit_hash),
         )?;
 
-        Ok(merge_commit_hash)
+        Ok(MergeOutcome {
+            kind: MergeKind::Merged,
+            commit: Some(merge_commit_hash),
+            renumbered,
+            resolved_conflicts: conflicts,
+        })
     }
+}
+
+/// How `clibm merge` handles entities changed differently on both branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeStrategy {
+    /// Stop and list the conflicts (default).
+    Abort,
+    /// Keep the current branch's version.
+    Ours,
+    /// Take the merged branch's version.
+    Theirs,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeConflict {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MergeKind {
+    UpToDate,
+    FastForward,
+    Merged,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeOutcome {
+    pub kind: MergeKind,
+    pub commit: Option<String>,
+    /// `(old_id, new_id)` for incoming tasks renumbered to avoid an ID collision.
+    pub renumbered: Vec<(String, String)>,
+    /// Conflicts resolved automatically by `--ours` / `--theirs`.
+    pub resolved_conflicts: Vec<MergeConflict>,
 }

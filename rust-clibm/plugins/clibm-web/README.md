@@ -1,96 +1,72 @@
-# clibm-web — Single-Binary Self-Hosted Web Server & Unified AI MCP Plugin (v0.1.0)
+# clibm-web — local web dashboard
 
-`clibm-web` is a standalone local HTTP server plugin for **CLIBM** written in Rust (`tiny_http`). It embeds a zero-dependency monochromatic web workbench (`src/ui.html`) directly into the compiled binary via `include_str!("ui.html")` and exposes both local REST JSON endpoints and a unified **Model Context Protocol (MCP)** server over any ongoing `.clibm/` Content-Addressable Storage (CAS) project.
+A single-binary local web server with an embedded Kanban dashboard for a CLIBM project.
+It reads and writes the project through the CLIBM core library, so the dashboard follows the
+same rules as the CLI: dependencies, WIP limits, plugin hooks and automatic commits.
 
-By unifying the Web Dashboard and the MCP HTTP server on a single port (`127.0.0.1:7878`), `clibm-web` cuts memory and socket usage in half while sharing a single compilation cache through the Cargo workspace.
+## Quick Install
 
----
-
-## 1. Quick Lifecycle (Direct from GitHub)
-
-### Quick Install
-```powershell
-# Windows PowerShell:
-iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1)
-```
+### Linux, macOS, WSL2
 ```bash
-# Linux / macOS / WSL2:
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.sh | bash
 ```
 
-### Quick Uninstall
+### Windows (native, PowerShell)
 ```powershell
-# Windows PowerShell:
-iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/uninstall.ps1)
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1)
 ```
+
+From a clone: `cd plugins/clibm-web && ./install.sh` (or `.\install.ps1`), or
+`clibm plugin install web`. The plugin is built from the whole Cargo workspace because it
+uses the core library.
+
+## Quick Uninstall
+
+### Linux, macOS, WSL2
 ```bash
-# Linux / macOS / WSL2:
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/uninstall.sh | bash
 ```
 
----
-
-## 2. Local Installation & Build (From Plugin Folder)
-```bash
-cd plugins/clibm-web   # (or cd clibm-web if extracted from clibm-web-v0.1.0.zip)
-./install.sh
-```
-
-### Local Installation (Windows PowerShell)
+### Windows (native, PowerShell)
 ```powershell
-cd plugins\clibm-web   # (or cd clibm-web if extracted from clibm-web-v0.1.0.zip)
-.\install.ps1
+iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/uninstall.ps1)
 ```
 
-### Or via the CLIBM CLI / Cargo inside this folder
+Or `clibm plugin uninstall web`.
+
+## Usage
+
 ```bash
-cd plugins/clibm-web
-clibm plugin install .
-# or manually:
-cargo build --release
-./target/release/clibm-web --register
+cd ~/my-project
+clibm plugin run web                   # http://127.0.0.1:7878
+clibm plugin run web -- --port 8080    # or: clibm-web --port 8080
 ```
 
-What installation does:
-1. Compiles the single-binary release executable with `ui.html` and the embedded MCP adapter inside the binary.
-2. Installs the lightweight (~1.3 MB) binary into `~/.local/bin/clibm-web` (Linux) or `%USERPROFILE%\.clibm-bin\clibm-web.exe` (Windows).
-3. **Space Optimization:** Automatically cleans intermediate build artifacts (`target/`) post-installation so only the small executable stays on disk.
-4. Registers `clibm-web` in your global CLIBM plugin registry (`~/.clibm/plugins/registry.json`) with hooks `http-bridge`, `on-state-query`, `mcp-http-sse`, and `on-ai-tool-call`.
+Open the printed address in your browser. The dashboard shows the active project's board,
+lets you add and move tasks, commit, and run `fsck`. A refused move shows CLIBM's reason.
 
----
+## Security
 
-## 2. Running Inside an Ongoing CLIBM Project
+The server is meant for your own browser only:
 
-Once installed, navigate to **any ongoing CLIBM project folder** (where `.clibm/` exists via `clibm init`) and launch the plugin using either method:
+- it listens on `127.0.0.1` and sends **no CORS headers**;
+- requests whose `Host` is not `127.0.0.1:<port>` / `localhost:<port>` are refused (stops
+  DNS-rebinding attacks), and so are requests with a foreign `Origin` (stops other websites);
+- every change needs the **session token** that is generated at each start and embedded in
+  the page (`X-Clibm-Token` header).
 
-### Method A: Via `clibm plugin run`
-```bash
-cd ~/my-ongoing-project
-clibm plugin run web
-# or with a custom port:
-clibm plugin run clibm-web -- --port 8080
-```
+## HTTP endpoints
 
-### Method B: Direct Binary Execution
-```bash
-cd ~/my-ongoing-project
-clibm-web --port 7878
-```
-
-- **Browser Dashboard:** Open **`http://127.0.0.1:7878`** in any browser to manage tasks, Kanban columns, and `BLAKE3` commits in real time.
-- **AI Agent MCP Server:** Point AI tools (Cursor, Claude Desktop, Antigravity) to **`http://127.0.0.1:7878/mcp`** (or POST `http://127.0.0.1:7878/`) to execute tools and query tasks over the unified port.
-
----
-
-## 3. Local HTTP Endpoints (`127.0.0.1:7878`)
-
-| Method | Endpoint | Description |
+| Method | Path | Description |
 |---|---|---|
-| `GET` | `/` | Serves the embedded monochromatic HTML/JS web dashboard (`src/ui.html`) |
-| `GET` | `/mcp` | Returns MCP server capabilities JSON (protocol version, tools, resources, prompts) |
-| `POST` | `/mcp` or `/` | Dispatches JSON-RPC 2.0 requests to the built-in CLIBM MCP adapter |
-| `OPTIONS` | `*` | Universal CORS preflight headers allowing browser extensions and IDE webviews |
-| `GET` | `/api/state` | Returns active branch, staged tree hash, Kanban columns, tasks, commit history, and `BLAKE3` `fsck` status |
-| `POST` | `/api/task` | Creates a new canonical task object in `.clibm/objects/*` and updates `STAGE_TREE` |
-| `POST` | `/api/move` | Moves a task card to a target Kanban column and writes a new immutable `BLAKE3` task & tree object |
-| `POST` | `/api/commit` | Commits the current `STAGE_TREE` snapshot to the active branch ref |
+| `GET` | `/` | The dashboard |
+| `GET` | `/api/state` | Branch, HEAD, uncommitted changes, active project, board and its tasks |
+| `GET` | `/api/fsck` | Integrity check of every stored object |
+| `POST` | `/api/task` | `{"title", "priority"?, "column_id"?}` — create a task |
+| `POST` | `/api/move` | `{"task_id", "column_id", "force"?}` — move a task (`task_id` accepts `101`, `APP-101` or a hash prefix) |
+| `POST` | `/api/commit` | `{"message"}` — commit the working tree |
+
+Refused writes answer `409` with `{"ok": false, "error": "..."}`; missing token or foreign
+origin answer `403`.
+
+For AI agents, use the MCP server (`clibm-mcp`) instead.

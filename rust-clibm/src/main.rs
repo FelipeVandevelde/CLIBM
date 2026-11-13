@@ -6,14 +6,55 @@ use clap::Parser;
 use clibm_core::cli::{
     BoardCommands, Cli, Commands, ConfigCommands, PluginCommands, TaskCommands, WorkspaceCommands,
 };
-use clibm_core::engine::ClibmEngine;
+use clibm_core::engine::{ClibmEngine, MutationResult, TaskEdit};
+use clibm_core::install::{clibm_home, InstallConfig};
 use clibm_core::models::*;
 use clibm_core::plugin::PluginManager;
-use clibm_core::versioning::VersioningEngine;
+use clibm_core::update::{self, normalize_repo_url, official_plugin_folder, UpdateSource};
+use clibm_core::versioning::{MergeKind, MergeStrategy, VersioningEngine};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
+
+fn print_json<T: Serialize + ?Sized>(value: &T) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn short(hash: &str) -> &str {
+    &hash[..hash.len().min(12)]
+}
+
+/// Prints the standard line for a task mutation, or a no-op notice.
+fn report_mutation(res: &MutationResult, done: &str, noop: &str, json: bool) -> Result<()> {
+    if json {
+        return print_json(res);
+    }
+    if res.changed {
+        println!("{} {} -> task object {}", done, res.id, short(&res.hash));
+        print_auto_commit_notice(res.commit.clone());
+    } else {
+        println!("{} {} (nothing changed)", noop, res.id);
+    }
+    Ok(())
+}
+
+/// Asks a yes/no question on the terminal. Returns `false` when stdin is not a terminal.
+fn confirm(prompt: &str) -> bool {
+    if !std::io::stdin().is_terminal() {
+        return false;
+    }
+    print!("{} ", prompt);
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    if std::io::stdin().lock().read_line(&mut line).is_err() {
+        return false;
+    }
+    matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
+}
 
 fn parse_bool(val: &str) -> Result<bool> {
     match val.trim().to_lowercase().as_str() {
@@ -25,7 +66,7 @@ fn parse_bool(val: &str) -> Result<bool> {
 
 fn print_auto_commit_notice(auto_commit_hash: Option<String>) {
     if let Some(chash) = auto_commit_hash {
-        println!("  [auto-commit {}] Change recorded to branch history.", &chash[..12]);
+        println!("  [auto-commit {}] Change recorded to branch history.", short(&chash));
     }
 }
 
@@ -55,7 +96,11 @@ fn record_binary(
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let cwd = env::current_dir()?;
-    let engine = ClibmEngine::open(&cwd);
+    let engine = if cli.no_hooks {
+        ClibmEngine::open(&cwd).without_hooks()
+    } else {
+        ClibmEngine::open(&cwd)
+    };
 
     match cli.command {
         Commands::Init {
@@ -67,6 +112,18 @@ fn main() -> Result<()> {
             auto_commit,
             install_path,
         } => {
+            // Always initialize in the current directory, never in a repository
+            // discovered in a parent folder.
+            let engine = ClibmEngine::open_exact(&cwd);
+            let machine = InstallConfig::load();
+            let lang = lang
+                .or_else(|| machine.language.clone())
+                .unwrap_or_else(|| "en".to_string());
+            let install_path = install_path
+                .or_else(|| machine.install_path.clone())
+                .unwrap_or_else(|| ClibmConfig::default().install_path);
+            let auto_commit = auto_commit.or(machine.auto_commit);
+
             let commit_hash = engine.init(&workspace, &code, &name)?;
             let mut cfg = engine.cas.load_config().unwrap_or_default();
             cfg.install_profile = if with_defaults {
@@ -81,20 +138,7 @@ fn main() -> Result<()> {
             cfg.install_path = install_path.clone();
             engine.cas.save_config(&cfg)?;
 
-            if with_defaults {
-                let mut merged = PluginManager::default_plugin_bundle(&install_path);
-                if let Ok(existing) = PluginManager::load_registry(&engine.cas) {
-                    for p in existing {
-                        if !merged.iter().any(|m| m.name == p.name) {
-                            merged.push(p);
-                        }
-                    }
-                }
-                PluginManager::save_registry(&engine.cas, &merged)?;
-            } else {
-                let existing = PluginManager::load_registry(&engine.cas).unwrap_or_default();
-                PluginManager::save_registry(&engine.cas, &existing)?;
-            }
+            let installed = PluginManager::load_registry(&engine.cas).unwrap_or_default();
 
             println!(
                 "Initialized CLIBM repository in {}",
@@ -102,13 +146,69 @@ fn main() -> Result<()> {
             );
             println!("Root commit (BLAKE3): {}", commit_hash);
             println!(
-                "Core Profile      : {} ({} pre-installed plugins)",
+                "Core Profile      : {} ({} plugin(s) installed on this machine)",
                 cfg.install_profile,
-                if with_defaults { 3 } else { 0 }
+                installed.len()
             );
+            if with_defaults {
+                for default in ["clibm-dep-audit", "clibm-export-md", "clibm-workflow-lint"] {
+                    if !installed.iter().any(|p| p.name == default) {
+                        println!(
+                            "  Default plugin '{}' is not installed yet: run `clibm plugin install {}`",
+                            default, default
+                        );
+                    }
+                }
+            }
             println!("Language          : {}", cfg.language);
             println!("Automatic commits : {}", cfg.auto_commit);
             println!("Storage location  : {}", cfg.install_path);
+        }
+
+        Commands::Status => {
+            let st = engine.status()?;
+            if cli.json {
+                return print_json(&st);
+            }
+            match (&st.branch, &st.head_commit) {
+                (Some(b), _) => println!("On branch {}", b),
+                (None, Some(h)) => println!("HEAD detached at {}", short(h)),
+                (None, None) => println!("No commits yet"),
+            }
+            println!("Repository : {}", st.repository);
+            println!(
+                "HEAD       : {}",
+                st.head_commit.as_deref().map(short).unwrap_or("(none)")
+            );
+            println!("Staged tree: {}", short(&st.staged_tree));
+            if st.dirty {
+                println!("Changes    : uncommitted changes (run `clibm commit -m <msg>`)");
+            } else {
+                println!("Changes    : working tree clean");
+            }
+            println!(
+                "Workspace  : {} ({})",
+                st.active_workspace_id, st.active_workspace_name
+            );
+            println!(
+                "Project    : {} {} ({})",
+                st.active_project_id, st.active_project_code, st.active_project_name
+            );
+            if let (Some(id), Some(name)) = (&st.board_id, &st.board_name) {
+                println!("Board      : {} ({})", id, name);
+            }
+            for c in &st.columns {
+                let limit = c.wip_limit.map(|l| format!("/{}", l)).unwrap_or_default();
+                println!("  {:<12} {}{}", c.id, c.tasks, limit);
+            }
+            println!(
+                "Tasks      : {} in active project, {} total",
+                st.project_tasks, st.total_tasks
+            );
+            println!(
+                "Repository : {} workspace(s), {} branch(es), {} objects, auto_commit = {}",
+                st.workspaces, st.branches, st.objects, st.auto_commit
+            );
         }
 
         Commands::Workspace { action } => match action {
@@ -126,6 +226,20 @@ fn main() -> Result<()> {
                         .cmp(&b.2.name.to_lowercase())
                         .then_with(|| a.0.cmp(&b.0))
                 });
+                if cli.json {
+                    let out: Vec<serde_json::Value> = rows
+                        .iter()
+                        .map(|(wid, whash, ws)| {
+                            serde_json::json!({
+                                "id": wid,
+                                "hash": whash,
+                                "active": wid == &tree.active_workspace_id,
+                                "workspace": ws,
+                            })
+                        })
+                        .collect();
+                    return print_json(&out);
+                }
                 println!(
                     "  {:<8} {:<10} {:<24} {:<10} DESCRIPTION",
                     "ID", "HASH", "NAME (A->Z)", "PROJECTS"
@@ -176,6 +290,9 @@ fn main() -> Result<()> {
         Commands::Config { action } => match action {
             ConfigCommands::Show => {
                 let cfg = engine.cas.load_config()?;
+                if cli.json {
+                    return print_json(&cfg);
+                }
                 println!("CLIBM Repository Configuration (.clibm/config.json):");
                 println!("{}", "-".repeat(56));
                 println!("  install_profile              = {}", cfg.install_profile);
@@ -183,6 +300,7 @@ fn main() -> Result<()> {
                 println!("  auto_commit                  = {}", cfg.auto_commit);
                 println!("  install_path                 = {}", cfg.install_path);
                 println!("  mcp_transport                = {}", cfg.mcp_transport);
+                println!("  hook_timeout_secs            = {}", cfg.hook_timeout_secs);
                 println!("  author_name                  = {}", cfg.author_name);
                 println!("  author_email                 = {}", cfg.author_email);
                 println!("  default_priority             = {}", cfg.default_priority);
@@ -203,6 +321,7 @@ fn main() -> Result<()> {
                     "auto_commit" => println!("{}", cfg.auto_commit),
                     "install_path" => println!("{}", cfg.install_path),
                     "mcp_transport" => println!("{}", cfg.mcp_transport),
+                    "hook_timeout_secs" => println!("{}", cfg.hook_timeout_secs),
                     "author_name" => println!("{}", cfg.author_name),
                     "author_email" => println!("{}", cfg.author_email),
                     "default_priority" => println!("{}", cfg.default_priority),
@@ -224,6 +343,14 @@ fn main() -> Result<()> {
                     "auto_commit" => cfg.auto_commit = parse_bool(&value)?,
                     "install_path" => cfg.install_path = value.clone(),
                     "mcp_transport" => cfg.mcp_transport = value.clone(),
+                    "hook_timeout_secs" => {
+                        cfg.hook_timeout_secs = value
+                            .trim()
+                            .parse::<u64>()
+                            .ok()
+                            .filter(|n| *n > 0)
+                            .ok_or_else(|| anyhow::anyhow!("hook_timeout_secs must be a positive number of seconds"))?
+                    }
                     "author_name" => cfg.author_name = value.clone(),
                     "author_email" => cfg.author_email = value.clone(),
                     "default_priority" => {
@@ -235,7 +362,13 @@ fn main() -> Result<()> {
                     "cross_workspace_dependencies" => {
                         cfg.cross_workspace_dependencies = parse_bool(&value)?
                     }
-                    "github_repo_url" => cfg.github_repo_url = value.clone(),
+                    "github_repo_url" => {
+                        let repo = normalize_repo_url(&value)?;
+                        cfg.github_repo_url = repo.clone_url.clone();
+                        if let Some(b) = repo.branch_hint {
+                            cfg.update_branch = b;
+                        }
+                    }
                     "update_branch" => cfg.update_branch = value.clone(),
                     other => bail!("Unknown config key '{}'", other),
                 }
@@ -316,8 +449,12 @@ fn main() -> Result<()> {
                 due,
                 tags,
                 depends_on,
+                force,
             } => {
-                let prio = TaskPriority::from_str_lossy(&priority);
+                let cfg = engine.cas.load_config()?;
+                let prio = TaskPriority::from_str_lossy(
+                    priority.as_deref().unwrap_or(&cfg.default_priority),
+                );
                 let (task, hash, auto_commit) = engine.create_task(
                     &title,
                     &description,
@@ -327,22 +464,26 @@ fn main() -> Result<()> {
                     due,
                     tags,
                     depends_on,
+                    force,
                 )?;
+                if cli.json {
+                    return print_json(&serde_json::json!({
+                        "id": task.id, "hash": hash, "commit": auto_commit, "task": task
+                    }));
+                }
                 println!(
                     "Created task {} ({}) -> object {}",
                     task.id,
                     task.title,
-                    &hash[..12]
+                    short(&hash)
                 );
                 print_auto_commit_notice(auto_commit);
             }
 
             TaskCommands::Show { id } => {
                 let (_, tree) = engine.load_working_tree()?;
-                let hash = tree
-                    .tasks
-                    .get(&id)
-                    .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+                let id = engine.resolve_task_ref(&tree, &id)?;
+                let hash = &tree.tasks[&id];
                 let task: TaskPayload = engine.cas.get_typed_payload(hash, OBJ_TASK)?;
                 if cli.json {
                     println!("{}", serde_json::to_string_pretty(&task)?);
@@ -369,24 +510,76 @@ fn main() -> Result<()> {
                 }
             }
 
+            TaskCommands::Edit {
+                id,
+                title,
+                description,
+                priority,
+                assignee,
+                due,
+                tags,
+                add_tag,
+                remove_tag,
+            } => {
+                let edit = TaskEdit {
+                    title,
+                    description,
+                    priority: priority.as_deref().map(TaskPriority::from_str_lossy),
+                    assignee: assignee.map(Some),
+                    due_date: due.map(Some),
+                    tags,
+                    add_tags: add_tag,
+                    remove_tags: remove_tag,
+                };
+                let res = engine.edit_task(&id, edit)?;
+                report_mutation(&res, "Updated", "Task", cli.json)?;
+            }
+
+            TaskCommands::Delete { id, force } => {
+                let res = engine.delete_task(&id, force)?;
+                if cli.json {
+                    return print_json(&res);
+                }
+                println!("Deleted task {} (it remains in earlier commits)", res.id);
+                if !res.unlinked_dependents.is_empty() {
+                    println!(
+                        "  Removed the dependency link from: {}",
+                        res.unlinked_dependents.join(", ")
+                    );
+                }
+                print_auto_commit_notice(res.commit);
+            }
+
             TaskCommands::Comment { id, body, author } => {
-                let (new_hash, auto_commit) = engine.add_comment(&id, &author, &body)?;
-                println!("Added comment to {} -> new object {}", id, &new_hash[..12]);
-                print_auto_commit_notice(auto_commit);
+                let author = match author {
+                    Some(a) => a,
+                    None => engine.cas.load_config()?.author_name,
+                };
+                let res = engine.add_comment(&id, &author, &body)?;
+                report_mutation(&res, "Added comment to", "Task", cli.json)?;
             }
 
             TaskCommands::Depend {
                 task_id,
                 depends_on_id,
             } => {
-                let (new_hash, auto_commit) = engine.add_dependency(&task_id, &depends_on_id)?;
-                println!(
-                    "Linked dependency: {} now depends on {} (object {})",
-                    task_id,
-                    depends_on_id,
-                    &new_hash[..12]
-                );
-                print_auto_commit_notice(auto_commit);
+                let res = engine.add_dependency(&task_id, &depends_on_id)?;
+                if cli.json {
+                    return print_json(&res);
+                }
+                if res.changed {
+                    let (_, tree) = engine.load_working_tree()?;
+                    let dep = engine.resolve_task_ref(&tree, &depends_on_id)?;
+                    println!(
+                        "Linked dependency: {} now depends on {} (object {})",
+                        res.id,
+                        dep,
+                        short(&res.hash)
+                    );
+                    print_auto_commit_notice(res.commit);
+                } else {
+                    println!("{} already has that dependency (nothing changed)", res.id);
+                }
             }
 
             TaskCommands::Transfer {
@@ -396,18 +589,35 @@ fn main() -> Result<()> {
             } => {
                 let (task, new_hash, auto_commit) =
                     engine.transfer_task(&task_id, &target_workspace, copy)?;
+                if cli.json {
+                    return print_json(&serde_json::json!({
+                        "id": task.id, "hash": new_hash, "commit": auto_commit, "task": task
+                    }));
+                }
                 println!(
                     "{} task {} to workspace '{}' -> object {}",
                     if copy { "Copied" } else { "Transferred" },
                     task.id,
                     target_workspace,
-                    &new_hash[..12]
+                    short(&new_hash)
                 );
                 print_auto_commit_notice(auto_commit);
             }
 
             TaskCommands::History { id } => {
+                // Resolve against the current tree; fall back to the raw input so the
+                // history of a deleted task can still be traced by its full ID.
+                let id = match engine.load_working_tree() {
+                    Ok((_, tree)) => engine.resolve_task_ref(&tree, &id).unwrap_or(id),
+                    Err(_) => id,
+                };
                 let history = VersioningEngine::task_history(&engine.cas, &id)?;
+                if cli.json {
+                    return print_json(&history);
+                }
+                if history.is_empty() {
+                    println!("No history found for task '{}'", id);
+                }
                 for entry in history {
                     println!(
                         "commit {} | task-obj {} | {} | {}",
@@ -476,26 +686,50 @@ fn main() -> Result<()> {
                 column,
                 force,
             } => {
-                let (new_hash, auto_commit) = engine.move_task(&task_id, &column, force)?;
-                println!(
-                    "Moved {} to '{}' -> new task object {}",
-                    task_id,
-                    column,
-                    &new_hash[..12]
-                );
-                print_auto_commit_notice(auto_commit);
+                let res = engine.move_task(&task_id, &column, force)?;
+                if cli.json {
+                    return print_json(&res);
+                }
+                if res.changed {
+                    println!(
+                        "Moved {} to '{}' -> new task object {}",
+                        res.id,
+                        column,
+                        short(&res.hash)
+                    );
+                    print_auto_commit_notice(res.commit);
+                } else {
+                    println!("{} is already in '{}' (nothing changed)", res.id, column);
+                }
             }
         },
 
         Commands::Commit { message, author } => {
-            let (tree_hash, _) = engine.load_working_tree()?;
-            let commit_hash =
-                VersioningEngine::create_commit(&engine.cas, &tree_hash, &author, &message, None)?;
-            println!("[commit {}] {}", &commit_hash[..12], message);
+            match engine.commit(&message, author.as_deref())? {
+                Some(commit_hash) => {
+                    if cli.json {
+                        return print_json(&serde_json::json!({ "commit": commit_hash }));
+                    }
+                    println!("[commit {}] {}", short(&commit_hash), message);
+                }
+                None => {
+                    if cli.json {
+                        return print_json(&serde_json::json!({ "commit": null }));
+                    }
+                    println!("Nothing to commit: the working tree matches HEAD.");
+                }
+            }
         }
 
         Commands::Log { reference } => {
             let commits = VersioningEngine::log_history(&engine.cas, reference.as_deref())?;
+            if cli.json {
+                let out: Vec<serde_json::Value> = commits
+                    .iter()
+                    .map(|(h, c)| serde_json::json!({ "hash": h, "commit": c }))
+                    .collect();
+                return print_json(&out);
+            }
             for (hash, c) in commits {
                 println!("commit {} (tree {})", hash, &c.tree_hash[..12]);
                 println!("Author: {}", c.author);
@@ -506,14 +740,25 @@ fn main() -> Result<()> {
 
         Commands::Branch { name } => {
             if let Some(new_branch) = name {
-                let head_commit = engine
-                    .cas
-                    .resolve_head_commit()?
-                    .ok_or_else(|| anyhow::anyhow!("Cannot create branch before first commit"))?;
-                engine.cas.set_branch_commit(&new_branch, &head_commit)?;
-                println!("Created branch '{}' at {}", new_branch, &head_commit[..12]);
+                let head_commit = engine.create_branch(&new_branch)?;
+                println!("Created branch '{}' at {}", new_branch, short(&head_commit));
             } else {
                 let active = engine.cas.current_branch()?;
+                if cli.json {
+                    let out: Vec<serde_json::Value> = engine
+                        .cas
+                        .list_branches()?
+                        .into_iter()
+                        .map(|(b, h)| {
+                            serde_json::json!({
+                                "name": b,
+                                "commit": h,
+                                "current": active.as_deref() == Some(b.as_str()),
+                            })
+                        })
+                        .collect();
+                    return print_json(&out);
+                }
                 for (b, h) in engine.cas.list_branches()? {
                     let marker = if active.as_deref() == Some(b.as_str()) {
                         "*"
@@ -525,13 +770,16 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Checkout { target } => {
-            let commit_hash = engine.checkout(&target)?;
-            println!("Switched to '{}' (commit {})", target, &commit_hash[..12]);
+        Commands::Checkout { target, force } => {
+            let commit_hash = engine.checkout(&target, force)?;
+            println!("Switched to '{}' (commit {})", target, short(&commit_hash));
         }
 
         Commands::Diff { from_ref, to_ref } => {
             let report = VersioningEngine::diff_refs(&engine.cas, &from_ref, &to_ref)?;
+            if cli.json {
+                return print_json(&report);
+            }
             println!(
                 "diff {} ({}) .. {} ({})",
                 report.from_ref,
@@ -556,13 +804,50 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Merge { branch, author } => {
-            let merge_commit = VersioningEngine::merge_branch(&engine.cas, &branch, &author)?;
-            println!(
-                "Merged branch '{}' -> merge commit {}",
-                branch,
-                &merge_commit[..12]
-            );
+        Commands::Merge {
+            branch,
+            author,
+            ours,
+            theirs,
+        } => {
+            let strategy = if ours {
+                MergeStrategy::Ours
+            } else if theirs {
+                MergeStrategy::Theirs
+            } else {
+                MergeStrategy::Abort
+            };
+            let outcome = engine.merge(&branch, author.as_deref(), strategy)?;
+            if cli.json {
+                return print_json(&outcome);
+            }
+            match outcome.kind {
+                MergeKind::UpToDate => println!("Already up to date with '{}'.", branch),
+                MergeKind::FastForward => println!(
+                    "Fast-forwarded to '{}' (commit {})",
+                    branch,
+                    outcome.commit.as_deref().map(short).unwrap_or("-")
+                ),
+                MergeKind::Merged => {
+                    println!(
+                        "Merged branch '{}' -> merge commit {}",
+                        branch,
+                        outcome.commit.as_deref().map(short).unwrap_or("-")
+                    );
+                    for (old, new) in &outcome.renumbered {
+                        println!("  Renumbered incoming task {} -> {} (same ID on both branches)", old, new);
+                    }
+                    for c in &outcome.resolved_conflicts {
+                        println!(
+                            "  Resolved conflict ({}): {} {} - {}",
+                            if ours { "ours" } else { "theirs" },
+                            c.entity_type,
+                            c.entity_id,
+                            c.reason
+                        );
+                    }
+                }
+            }
         }
 
         Commands::CatObject { hash } => {
@@ -572,32 +857,50 @@ fn main() -> Result<()> {
 
         Commands::Fsck => {
             let report = engine.cas.fsck()?;
-            println!(
-                "BLAKE3 CAS Integrity Check: {}/{} objects verified.",
-                report.verified_objects, report.total_objects
-            );
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                println!(
+                    "BLAKE3 CAS Integrity Check: {}/{} objects verified.",
+                    report.verified_objects, report.total_objects
+                );
+                if !report.legacy_hashes.is_empty() {
+                    println!(
+                        "{} object(s) use the old clibm-web/clibm-tui hash scheme (content intact): {:?}",
+                        report.legacy_hashes.len(),
+                        report.legacy_hashes
+                    );
+                }
+                if !report.corrupted_hashes.is_empty() {
+                    println!("Corrupted hashes: {:?}", report.corrupted_hashes);
+                }
+            }
             if !report.corrupted_hashes.is_empty() {
-                println!("Corrupted hashes: {:?}", report.corrupted_hashes);
+                std::process::exit(1);
             }
         }
 
         Commands::Plugin { action } => match action {
             PluginCommands::List => {
                 let plugins = PluginManager::load_registry(&engine.cas)?;
+                if cli.json {
+                    return print_json(&plugins);
+                }
                 if plugins.is_empty() {
                     println!(
-                        "No plugins installed (Pure Core mode). Install plugins from ./plugins/<name> via `./install.sh` or `clibm plugin install plugins/<name>`."
+                        "No plugins installed. Install one with `clibm plugin install <name>` (e.g. `clibm plugin install mcp`) or its install script."
                     );
                 } else {
                     for p in plugins {
                         println!(
-                            "{:<22} v{:<7} [BINARY  ] [{}] hooks={:?} — {}",
+                            "{:<22} v{:<7} [{}] hooks={:?} - {}",
                             p.name,
                             p.version,
                             if p.enabled { "ENABLED" } else { "DISABLED" },
                             p.hooks,
                             p.description
                         );
+                        println!("{:<22}   {}", "", p.executable.as_deref().unwrap_or("-"));
                     }
                 }
             }
@@ -656,73 +959,45 @@ fn main() -> Result<()> {
                 println!("Disabled plugin '{}'", name);
             }
             PluginCommands::Uninstall { name } => {
-                let canonical = PluginManager::normalize_plugin_name(&name);
-                println!("====================================================================");
-                println!(" CLIBM Plugin Uninstallation Guide: {}", canonical);
-                println!("====================================================================");
-                println!("This assistant indicates where '{}' is located so you can remove it.\n", canonical);
-
-                let bin_path = PluginManager::find_installed_binary(&canonical);
-                let plugins = PluginManager::load_registry(&engine.cas).unwrap_or_default();
-                let manifest = plugins.iter().find(|p| p.name == canonical);
-
-                println!("[1] Plugin Executable Binary:");
-                if let Some(ref bp) = bin_path {
-                    println!("    • Path: {}", bp.display());
-                } else {
-                    println!("    • (Binary not found in standard PATH or candidate folders)");
+                let report = PluginManager::uninstall_plugin(&engine.cas, &name)?;
+                if cli.json {
+                    return print_json(&report);
                 }
-
-                println!("\n[2] Plugin Registration Status:");
-                if let Some(m) = manifest {
-                    println!("    • Status     : {}", if m.enabled { "ENABLED" } else { "DISABLED" });
-                    println!("    • Version    : {}", m.version);
-                    println!("    • Description: {}", m.description);
-                } else {
-                    println!("    • (Plugin '{}' is not registered in active project)", canonical);
+                for path in &report.removed {
+                    println!("==> Removed binary: {}", path);
                 }
-
-                let home = env::var("CLIBM_HOME")
-                    .or_else(|_| env::var("HOME"))
-                    .or_else(|_| env::var("USERPROFILE"))
-                    .ok();
-                let global_clibm = home.as_ref().map(|h| PathBuf::from(h).join(".clibm"));
-
-                if canonical == "clibm-mcp" {
-                    if let Some(ref g) = global_clibm {
-                        let mcp_cfg = g.join("mcp-config.json");
-                        if mcp_cfg.exists() {
-                            println!("\n[3] Dedicated Plugin Configuration:");
-                            println!("    • Configuration file: {}", mcp_cfg.display());
+                for path in &report.rotated {
+                    println!(
+                        "==> Binary was locked; renamed to {} (it is deleted on the next install/uninstall)",
+                        path
+                    );
+                }
+                for path in &report.failed {
+                    eprintln!("==> Could not remove {} (close any program using it and retry)", path);
+                }
+                if report.registry_entry_removed {
+                    println!("==> Removed '{}' from the plugin registry", report.name);
+                }
+                if report.removed.is_empty()
+                    && report.rotated.is_empty()
+                    && report.failed.is_empty()
+                    && !report.registry_entry_removed
+                {
+                    println!("Plugin '{}' is not installed; nothing to do.", report.name);
+                } else {
+                    println!("Uninstalled plugin '{}'.", report.name);
+                    if report.name == "clibm-mcp" {
+                        if let Some(cfg_file) = clibm_home().map(|h| h.join(".clibm").join("mcp-config.json")) {
+                            if cfg_file.exists() {
+                                println!("  (Its settings file was kept: {})", cfg_file.display());
+                            }
                         }
                     }
+                    println!("  The user PATH was not changed; `clibm uninstall` lists remaining entries.");
                 }
-
-                println!("\n--------------------------------------------------------------------");
-                println!("Manual Removal Commands:");
-                println!("--------------------------------------------------------------------");
-                if cfg!(windows) {
-                    if let Some(ref bp) = bin_path {
-                        println!("To delete the plugin binary in PowerShell:");
-                        println!("  Remove-Item -Force \"{}\"", bp.display());
-                    }
-                    println!("\nQuick Automatic Plugin Uninstall (Recommended):");
-                    println!("  iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{}/uninstall.ps1)", canonical);
-                    println!("  (Or locally if cloned: cd plugins/{} ; .\\uninstall.ps1 -Yes)", canonical);
-                    println!("\nTo disable/deregister plugin in the active project:");
-                    println!("  clibm plugin disable {}", canonical);
-                } else {
-                    if let Some(ref bp) = bin_path {
-                        println!("To delete the plugin binary in Bash:");
-                        println!("  rm -f \"{}\"", bp.display());
-                    }
-                    println!("\nQuick Automatic Plugin Uninstall (Recommended):");
-                    println!("  curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{}/uninstall.sh | bash", canonical);
-                    println!("  (Or locally if cloned: cd plugins/{} && ./uninstall.sh -y)", canonical);
-                    println!("\nTo disable/deregister plugin in the active project:");
-                    println!("  clibm plugin disable {}", canonical);
+                if !report.failed.is_empty() {
+                    std::process::exit(1);
                 }
-                println!("====================================================================");
             }
             PluginCommands::Run { name, args } => {
                 let (tree_hash, tree) = engine.load_working_tree()?;
@@ -731,69 +1006,111 @@ fn main() -> Result<()> {
                 if !res.output.is_empty() {
                     println!("{}", res.output);
                 }
+                if !res.ok {
+                    std::process::exit(1);
+                }
             }
         },
 
         Commands::Update {
             repo,
             branch,
+            path,
             plugins,
             check,
+            skip_core,
         } => {
-            let cfg = engine.cas.load_config().unwrap_or_default();
-            let repo_url = repo.unwrap_or(cfg.github_repo_url);
-            let target_branch = branch.unwrap_or(cfg.update_branch);
-
-            println!("==> CLIBM GitHub Updater");
-            println!("    Repository : {}", repo_url);
-            println!("    Branch     : {}", target_branch);
+            let install = InstallConfig::load();
+            let project_cfg = if engine.cas.is_initialized() {
+                engine.cas.load_config().ok()
+            } else {
+                None
+            };
+            let source = UpdateSource::resolve(
+                repo.as_deref(),
+                branch.as_deref(),
+                path.as_deref(),
+                project_cfg.as_ref(),
+                &install,
+            )?;
 
             if check {
-                println!("    Mode       : --check (dry-run remote inspection)");
-                println!("    Status     : Local v0.1.0 is up to date with {}/{}", repo_url, target_branch);
+                let report = update::check(&source, &install)?;
+                if cli.json {
+                    return print_json(&report);
+                }
+                println!("Source         : {}", report.source);
+                println!(
+                    "Installed      : v{} ({})",
+                    report.installed_version,
+                    report
+                        .installed_commit
+                        .as_deref()
+                        .map(short)
+                        .unwrap_or("commit unknown: installed from a local build or an older installer")
+                );
+                println!(
+                    "Latest         : {}({})",
+                    report
+                        .latest_version
+                        .as_deref()
+                        .map(|v| format!("v{} ", v))
+                        .unwrap_or_default(),
+                    short(&report.latest_commit)
+                );
+                if report.update_available {
+                    println!("An update is available. Run `clibm update` (add --plugins to update plugins too).");
+                } else {
+                    println!("CLIBM is up to date.");
+                }
                 return Ok(());
             }
 
-            let status = std::process::Command::new("cargo")
-                .args([
-                    "install",
-                    "--git",
-                    &repo_url,
-                    "--branch",
-                    &target_branch,
-                    "--force",
-                ])
-                .status();
-
-            match status {
-                Ok(s) if s.success() => {
-                    println!("==> Successfully updated clibm core binary from {}", repo_url);
-                }
-                _ => {
-                    println!(
-                        "==> Executed update check against {} ({}). Use ./update.sh or .\\update.ps1 for local source clones.",
-                        repo_url, target_branch
-                    );
-                }
+            println!("==> CLIBM updater: {}", source.describe());
+            if !skip_core {
+                let commit = update::update_core(&source)?;
+                println!(
+                    "==> clibm updated{}",
+                    commit
+                        .as_deref()
+                        .map(|c| format!(" to commit {}", short(c)))
+                        .unwrap_or_default()
+                );
             }
-
             if plugins {
-                println!("==> Rebuilding standalone plugins in ./plugins/...");
+                let results = update::update_plugins(&source);
+                if results.is_empty() {
+                    println!("==> No installed plugins to update.");
+                }
+                let mut failed = false;
+                for r in &results {
+                    println!(
+                        "==> {} {}: {}",
+                        if r.updated { "[ok]  " } else { "[skip]" },
+                        r.name,
+                        r.message
+                    );
+                    if !r.updated && official_plugin_folder(&r.name).is_some() {
+                        failed = true;
+                    }
+                }
+                if failed {
+                    bail!("Some plugins could not be updated (see above).");
+                }
+            } else if !skip_core {
+                println!("    (Plugins were not touched; run `clibm update --plugins --skip-core` to update them.)");
             }
         }
 
-        Commands::Uninstall { purge, yes: _ } => {
+        Commands::Uninstall { purge, yes } => {
             println!("====================================================================");
             println!(" CLIBM Uninstallation Guide & Removal Assistant");
             println!("====================================================================");
             println!("This guide inspects your system and indicates all folders, binaries,");
             println!("and configuration entries so you can easily review and remove them.\n");
 
-            let home = env::var("CLIBM_HOME")
-                .or_else(|_| env::var("HOME"))
-                .or_else(|_| env::var("USERPROFILE"))
-                .ok();
-            let global_clibm = home.as_ref().map(|h| PathBuf::from(h).join(".clibm"));
+            let home = clibm_home();
+            let global_clibm = home.as_ref().map(|h| h.join(".clibm"));
 
             let mut configured_install_dir: Option<PathBuf> = None;
             let mut path_entry_added = false;
@@ -966,8 +1283,11 @@ fn main() -> Result<()> {
                 }
             }
 
-            let local_clibm = engine.cas.clibm_dir();
-            let local_clibm_exists = local_clibm.exists();
+            // Only the repository in the current directory is ever a purge target; a
+            // repository found in a parent folder is reported but never deleted.
+            let local_clibm = cwd.join(".clibm");
+            let local_clibm_exists = local_clibm.join("objects").exists();
+            let discovered = engine.cas.clibm_dir().to_path_buf();
 
             println!("\n[3] Local Project CAS Repository Data:");
             if local_clibm_exists {
@@ -976,6 +1296,12 @@ fn main() -> Result<()> {
                 println!("         Preserve this folder if you want to keep your project data intact.");
             } else {
                 println!("    • (No .clibm repository in current directory: {})", cwd.display());
+                if discovered != local_clibm && discovered.exists() {
+                    println!(
+                        "      -> A parent folder has one ({}); --purge never deletes it. Run the command there instead.",
+                        discovered.display()
+                    );
+                }
             }
 
             println!("\n[4] User PATH Entries to Remove:");
@@ -1008,8 +1334,24 @@ fn main() -> Result<()> {
             if purge {
                 println!("\n[5] Purge Option Flag Active (--purge):");
                 if local_clibm_exists {
-                    fs::remove_dir_all(&local_clibm)?;
-                    println!("    [OK] Deleted local repository directory: {}", local_clibm.display());
+                    let repo = ClibmEngine::open_exact(&cwd);
+                    let objects = repo.cas.count_objects();
+                    let branches = repo.cas.list_branches().map(|b| b.len()).unwrap_or(0);
+                    println!(
+                        "    This permanently deletes {} ({} objects, {} branch(es)). It cannot be undone.",
+                        local_clibm.display(),
+                        objects,
+                        branches
+                    );
+                    let approved = yes || confirm("    Delete it? [y/N]:");
+                    if approved {
+                        fs::remove_dir_all(&local_clibm)?;
+                        println!("    [OK] Deleted local repository directory: {}", local_clibm.display());
+                    } else {
+                        println!(
+                            "    Not deleted. Re-run with --yes to confirm (required when not running in a terminal)."
+                        );
+                    }
                 } else {
                     println!("    (No local .clibm repository found to delete)");
                 }
@@ -1067,6 +1409,16 @@ fn main() -> Result<()> {
         Commands::Export { output } => {
             let bundle = engine.export_bundle()?;
             fs::write(&output, serde_json::to_string_pretty(&bundle)?)?;
+            if let Some(tree_hash) = bundle.staged_tree_hash.as_deref() {
+                let absolute = fs::canonicalize(&output)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| output.clone());
+                engine.fire_hook(
+                    "on-export",
+                    tree_hash,
+                    serde_json::json!({ "output": absolute, "objects": bundle.objects.len() }),
+                )?;
+            }
             println!(
                 "Exported {} CAS objects to {}",
                 bundle.objects.len(),

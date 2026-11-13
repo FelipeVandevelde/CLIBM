@@ -23,10 +23,9 @@ import {
   DownloadablePluginPackage,
 } from '../rust/rustSourceRegistry';
 import { ClibmRepositoryState } from '../core/types';
-import { generateAiTeachingDocs } from '../core/clibmCore';
 import {
   stripUtf8BomForDisplay,
-  triggerUtf8BomFileDownload,
+  triggerUtf8FileDownload,
 } from '../rust/zipBuilder';
 
 interface PluginMarketplaceViewProps {
@@ -156,18 +155,6 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
     return match ? match.content : installingPlugin.files[0]?.content || '';
   }, [installingPlugin, installScriptTab]);
 
-  // Live AI doc preview when clibm-docs is opened in the Install Wizard
-  const liveAiDocPreview = useMemo(() => {
-    if (!installingPlugin || installingPlugin.id !== 'clibm-docs') return '';
-    const tabMap: Record<string, 'agents' | 'claude' | 'cursorrules' | 'mcp-json'> = {
-      all: 'agents',
-      agents: 'agents',
-      claude: 'claude',
-      cursorrules: 'cursorrules',
-    };
-    return generateAiTeachingDocs(repoState, tabMap[installChoiceValue] || 'agents');
-  }, [installingPlugin, installChoiceValue, repoState]);
-
   return (
     <div className="space-y-6">
       {/* Top Header: 100% Pure Core Status + Standalone Plugins Folder */}
@@ -181,7 +168,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
               <span aria-hidden="true">·</span>
               <span>Installed Plugins: {repoState.plugins.length}</span>
               <span aria-hidden="true">·</span>
-              <span>Scripts &amp; Archives: UTF-8-BOM (EF BB BF)</span>
+              <span>Scripts &amp; Archives: UTF-8 (no BOM)</span>
             </div>
             <h2 className="text-xl font-bold tracking-tight text-white">
               Standalone Plugins Folder (<code className="font-mono text-zinc-200">plugins/*</code>)
@@ -190,14 +177,13 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
               The <strong className="text-white">clibm_core</strong> engine starts with{' '}
               <strong className="text-white">0 built-in plugins</strong>. All plugins—including{' '}
               <code className="font-mono text-zinc-200">clibm-mcp</code>,{' '}
-              <code className="font-mono text-zinc-200">clibm-docs</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-dep-audit</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-export-md</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-workflow-lint</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-tui</code>,{' '}
               <code className="font-mono text-zinc-200">clibm-web</code>, and{' '}
               <code className="font-mono text-zinc-200">plugin-template</code>—live in{' '}
-              <code className="font-mono text-zinc-200">plugins/</code> with UTF-8-BOM encoded{' '}
+              <code className="font-mono text-zinc-200">plugins/</code> with UTF-8 encoded{' '}
               <code className="font-mono text-zinc-200">install.sh</code>,{' '}
               <code className="font-mono text-zinc-200">install.ps1</code>,{' '}
               <code className="font-mono text-zinc-200">uninstall.sh</code>, and{' '}
@@ -271,7 +257,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
         </div>
       </div>
 
-      {/* Uniform Plugin Cards Grid (All 8 Plugins Including clibm-mcp & clibm-docs Use Identical Card Layout) */}
+      {/* Uniform Plugin Cards Grid (all standalone plugins use the same card layout) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredPlugins.map((pkg) => {
           const isInspected = inspectedPlugin.id === pkg.id;
@@ -294,7 +280,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                     <span aria-hidden="true">·</span>
                     <span>v{pkg.version}</span>
                     <span aria-hidden="true">·</span>
-                    <span>UTF-8-BOM</span>
+                    <span>UTF-8</span>
                   </div>
                   <span className={isInstalled ? 'text-white font-bold underline' : 'text-zinc-400'}>
                     {isInstalled ? 'INSTALLED' : pkg.category}
@@ -366,7 +352,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                   type="button"
                   onClick={() => downloadPluginZip(pkg.id)}
                   className="px-3 py-2 text-xs font-medium bg-zinc-950 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                  title="Download UTF-8-BOM encoded plugin crate .zip"
+                  title="Download UTF-8 encoded plugin crate .zip"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>.zip</span>
@@ -431,7 +417,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                     plugins/{installingPlugin.crateName}/{installScriptTab}
                   </span>
                   <span aria-hidden="true">·</span>
-                  <span>Encoding: UTF-8 with BOM (EF BB BF)</span>
+                  <span>Encoding: UTF-8 (no BOM)</span>
                 </div>
                 <h3 className="text-base font-bold text-white">
                   Install {installingPlugin.name} — Interactive Installer Choices
@@ -512,38 +498,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                 </div>
               </div>
 
-              {/* Optional Live AI Teaching Docs Preview when installing clibm-docs */}
-              {installingPlugin.id === 'clibm-docs' && liveAiDocPreview && (
-                <div className="border border-zinc-800 bg-zinc-900/50 rounded-lg p-3.5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-semibold text-white">
-                      Preview Generated AI Context Output ({installChoiceValue}) · UTF-8-BOM
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        triggerUtf8BomFileDownload(
-                          liveAiDocPreview,
-                          installChoiceValue === 'claude'
-                            ? 'CLAUDE.md'
-                            : installChoiceValue === 'cursorrules'
-                            ? '.cursorrules'
-                            : 'AGENTS.md'
-                        )
-                      }
-                      className="px-2.5 py-1 text-[11px] font-mono bg-zinc-100 hover:bg-white text-zinc-950 font-semibold rounded flex items-center gap-1 cursor-pointer"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>Download AI Doc (UTF-8-BOM)</span>
-                    </button>
-                  </div>
-                  <pre className="p-2.5 bg-zinc-950 border border-zinc-800 rounded text-[11px] font-mono text-zinc-300 max-h-36 overflow-y-auto">
-                    {liveAiDocPreview}
-                  </pre>
-                </div>
-              )}
-
-              {/* Live UTF-8-BOM Install / Uninstall Script File Inspector */}
+              {/* Live UTF-8 Install / Uninstall Script File Inspector */}
               <div className="border border-zinc-800 bg-zinc-900/60 rounded-lg overflow-hidden">
                 <div className="px-4 py-2.5 bg-zinc-900 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -581,7 +536,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        triggerUtf8BomFileDownload(
+                        triggerUtf8FileDownload(
                           activeModalScriptContent,
                           `${installingPlugin.crateName}-${installScriptTab}`
                         )
@@ -589,7 +544,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                       className="px-2.5 py-1 text-xs font-mono bg-zinc-100 hover:bg-white text-zinc-950 font-semibold rounded flex items-center gap-1 cursor-pointer"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      <span>Download {installScriptTab} (UTF-8-BOM)</span>
+                      <span>Download {installScriptTab} (UTF-8)</span>
                     </button>
                   </div>
                 </div>
@@ -604,7 +559,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
             <div className="px-6 py-4 bg-zinc-900 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs font-mono text-zinc-400">
                 All installation &amp; uninstallation files are encoded in{' '}
-                <strong className="text-zinc-200">UTF-8 with BOM (EF BB BF)</strong>.
+                <strong className="text-zinc-200">UTF-8 (no BOM)</strong>.
               </div>
               <div className="flex items-center gap-2.5">
                 <button
@@ -642,14 +597,14 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
               <span aria-hidden="true">·</span>
               <span>Crate: {generatedTemplate.crateName}</span>
               <span aria-hidden="true">·</span>
-              <span>UTF-8-BOM (EF BB BF)</span>
+              <span>UTF-8 (no BOM)</span>
             </div>
             <h3 className="text-base font-bold text-white">
               Create a Standalone Rust Plugin from the Official Template
             </h3>
             <p className="text-xs text-zinc-400">
               Configure your plugin name, description, and lifecycle hooks below. The template
-              automatically generates a folder-isolated Rust crate with UTF-8-BOM encoded{' '}
+              automatically generates a folder-isolated Rust crate with UTF-8 encoded{' '}
               <code className="font-mono text-zinc-200">Cargo.toml</code>,{' '}
               <code className="font-mono text-zinc-200">src/main.rs</code>,{' '}
               <code className="font-mono text-zinc-200">README.md</code>,{' '}
@@ -803,7 +758,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                   <button
                     type="button"
                     onClick={() =>
-                      triggerUtf8BomFileDownload(
+                      triggerUtf8FileDownload(
                         activeTemplateFile.content,
                         activeTemplateFile.path.split('/').pop() || 'file.txt'
                       )
@@ -811,7 +766,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                     className="px-2 py-1 text-[11px] font-mono bg-zinc-100 hover:bg-white text-zinc-950 font-semibold rounded flex items-center gap-1 cursor-pointer"
                   >
                     <Download className="w-3 h-3" />
-                    <span>UTF-8-BOM</span>
+                    <span>UTF-8</span>
                   </button>
                 </div>
               )}
@@ -837,7 +792,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
               <span aria-hidden="true">·</span>
               <span>Archive: {inspectedPlugin.zipFilename}</span>
               <span aria-hidden="true">·</span>
-              <span>Encoding: UTF-8-BOM (EF BB BF)</span>
+              <span>Encoding: UTF-8 (no BOM)</span>
             </div>
             <p className="text-xs text-zinc-300">{inspectedPlugin.architectureNotes}</p>
           </div>
@@ -861,7 +816,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
               <button
                 type="button"
                 onClick={() =>
-                  triggerUtf8BomFileDownload(
+                  triggerUtf8FileDownload(
                     activeFile.content,
                     activeFile.path.split('/').pop() || 'file.txt'
                   )
@@ -869,7 +824,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                 className="px-3 py-1.5 text-xs font-mono bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Download File (UTF-8-BOM)</span>
+                <span>Download File (UTF-8)</span>
               </button>
             )}
             <button

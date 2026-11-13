@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: rust-clibm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-clibm
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Test
+        run: cargo test --workspace --locked
+
+  scripts:
+    name: Installer scripts
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shared env-path helpers are in sync
+        shell: pwsh
+        run: ./rust-clibm/scripts/sync-env-path.ps1 -Check
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = 0
+          Get-ChildItem rust-clibm -Recurse -Filter *.ps1 | Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' } | ForEach-Object {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors)
+            if ($errors) { $failed++; Write-Host "::error file=$($_.FullName)::$($errors[0].Message)" }
+          }
+          exit $failed
+      - name: Bash syntax
+        shell: bash
+        run: |
+          set -e
+          find rust-clibm -name '*.sh' -not -path '*/target/*' -print0 | xargs -0 -n1 bash -n
+
+  web:
+    name: Web workbench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run lint
+      - name: Build
+        run: npm run build

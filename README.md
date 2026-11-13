@@ -9,7 +9,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)]()
 
-> **CLIBM** is a high-performance, local-first, modular CLI project management system and Content-Addressable Storage (CAS) engine written in **Rust**, accompanied by a rich **React 19 + TypeScript** interactive web workbench and simulator.
+> **CLIBM** is a local-first, Git-style project manager for the terminal, written in **Rust**:
+> tasks live in a content-addressed store inside your project, every change is versioned, and
+> AI agents can work on the board through the Model Context Protocol. A **React 19 +
+> TypeScript** web workbench simulates the CLI in the browser.
 
 ---
 
@@ -19,47 +22,43 @@
 - [Key Architectural Highlights](#key-architectural-highlights)
 - [System Architecture](#system-architecture)
 - [Monorepo Structure](#monorepo-structure)
+- [Quick Install](#quick-install)
 - [Quick Start — Native Rust CLI](#quick-start--native-rust-cli)
-  - [Prerequisites](#prerequisites)
-  - [Quick Installation (Direct from GitHub)](#quick-installation-direct-from-github)
-  - [Local Installation (From Cloned Repository)](#local-installation-from-cloned-repository)
-  - [Non-Elevated User PATH & Reference-Counted Ledger](#non-elevated-user-path--reference-counted-ledger)
-  - [First Steps in a Project](#first-steps-in-a-project)
 - [Quick Start — Web Workbench & Simulator](#quick-start--web-workbench--simulator)
-  - [Running the Web App](#running-the-web-app)
-  - [Web Capabilities](#web-capabilities)
 - [Plugin Ecosystem (`CLIBM_PLUGIN_CONTRACT_V1`)](#plugin-ecosystem-clibm_plugin_contract_v1)
-  - [Official Plugins Overview](#official-plugins-overview)
-  - [Installing & Running Plugins in Ongoing Projects](#installing--running-plugins-in-ongoing-projects)
-  - [Scaffolding Custom Plugins](#scaffolding-custom-plugins)
-  - [Plugin JSON Contract](#plugin-json-contract)
 - [Complete CLI Command Reference](#complete-cli-command-reference)
 - [CAS Object Specification & Directory Layout](#cas-object-specification--directory-layout)
 - [Updating CLIBM](#updating-clibm)
 - [Uninstalling CLIBM](#uninstalling-clibm)
+- [Development](#development)
 - [License](#license)
 
 ---
 
 ## Overview
 
-Traditional project management tools either rely on heavy external databases (PostgreSQL, SQLite), enforce proprietary cloud silos, or lack cryptographic integrity guarantees.
+CLIBM is project management for developers, teams and AI agents without a database server:
 
-**CLIBM** fundamentally redesigns project management for developers, engineering teams, and autonomous AI agents:
-
-1. **Zero External Databases**: Completely file-based and offline-first. No background database servers or drivers required.
-2. **BLAKE3 Content-Addressable Storage (CAS)**: Every entity (`workspace`, `project`, `board`, `task`, `tree`, `commit`) is normalized via **RFC 8785 Canonical JSON** and addressed by its immutable 256-bit BLAKE3 hash.
-3. **Git-Style Versioning & Branching**: True commit history, tree snapshots, branching, O(N) structural diffs, and two-parent merges. Unchanged tasks share disk space across branches.
-4. **DAG Dependency Enforcement & Cycle Prevention**: Tasks declare blocking dependencies. Built-in DFS validation prevents circular dependencies and calculates critical-path blockers.
-5. **Decoupled Architecture**: The core logic (`clibm_core`) is 100% headless. User interfaces—CLI, Ratatui TUI, self-hosted HTTP server, Model Context Protocol (MCP) server, and Web Workbench—interact through strictly decoupled APIs and contracts.
-6. **Dual Ecosystem**: Native Rust binaries for your terminal workflows alongside an in-browser TypeScript implementation with an interactive GUI, visual Kanban board, CAS envelope inspector, and on-demand ZIP packager.
+1. **No database**: everything is plain files in `.clibm/` next to your code, fully offline.
+2. **Content-addressed storage**: every workspace, project, board, task, tree and commit is
+   stored as canonical JSON and named by its 256-bit BLAKE3 hash.
+3. **Git-style versioning**: commits, branches, checkout, structural diffs and three-way
+   merges. Unchanged tasks are shared between branches and commits.
+4. **Dependencies and workflow rules**: tasks can depend on other tasks; cycles are refused,
+   and moves respect dependencies and column WIP limits.
+5. **Headless core**: the `clibm_core` library holds all the logic; the CLI, the terminal UI,
+   the web dashboard and the MCP server all use it.
+6. **Plugins**: standalone binaries that you run on demand or that react to lifecycle hooks
+   (and may veto actions).
 
 ---
 
 ## Key Architectural Highlights
 
-- **RFC 8785 Deterministic Canonical Serialization (`canonical.rs`)**: Lexicographically sorts all object keys recursively before hashing, ensuring byte-identical BLAKE3 hashes across Linux, Windows, and macOS regardless of serialization order.
-- **4-Field Immutable Envelope**: Every object stored on disk adheres to:
+- **Canonical JSON (`canonical.rs`)**: object keys are sorted recursively (JCS-style, RFC 8785
+  ordering) before hashing, so the same content always produces the same BLAKE3 hash on every
+  platform.
+- **4-field immutable envelope** for every stored object:
   ```json
   {
     "Type": "task",
@@ -68,10 +67,14 @@ Traditional project management tools either rely on heavy external databases (Po
     "Payload": { ... }
   }
   ```
-- **Sharded File Storage**: Objects are stored in `.clibm/objects/<2-hex-shard>/<62-hex-rest>.json` to ensure high filesystem throughput even with tens of thousands of objects.
-- **Computed Indices & Fast Lookups (`index.rs`)**: Maintains `.clibm/index/computed.json` for rapid filtering by assignee, priority, tag, or column without re-scanning object directories.
-- **Automatic Per-Modification Commits**: Configurable auto-commit mechanism (`auto_commit` in `.clibm/config.json`) creates historical snapshots on every mutation while preserving manual branch and merge workflows.
-- **AI Agent Integration**: The `clibm-mcp` plugin natively implements the Model Context Protocol (MCP 2024-11-05) over stdio and HTTP SSE, letting tools like Claude, Cursor, Windsurf, and local LLMs manage projects safely.
+- **Sharded storage**: `.clibm/objects/<2-hex-shard>/<62-hex-rest>.json`.
+- **Computed index (`index.rs`)**: `.clibm/index/computed.json` for fast lookups by column,
+  priority, tag and assignee, plus dependency-cycle detection.
+- **Automatic commits**: with `auto_commit = true` (default) every change becomes a commit.
+- **Stable task numbers**: a deleted task's number is never reused, even across branches
+  (same-ID tasks added on two branches are renumbered on merge).
+- **AI integration**: the `clibm-mcp` plugin implements the Model Context Protocol
+  (`2024-11-05`) over stdio and a local HTTP endpoint.
 
 ---
 
@@ -82,24 +85,24 @@ flowchart TD
     subgraph Interfaces["User & Agent Interfaces"]
         CLI["clibm (Clap CLI)"]
         TUI["clibm-tui (Ratatui TUI)"]
-        WEB["clibm-web (Self-Hosted HTTP)"]
-        MCP["clibm-mcp (MCP Server for AI)"]
+        WEB["clibm-web (local HTTP dashboard)"]
+        MCP["clibm-mcp (MCP server for AI)"]
         BROWSER["Web Workbench (React 19 + Vite)"]
     end
 
     subgraph CoreEngine["CLIBM Core Engine (clibm_core)"]
         ENGINE["ClibmEngine"]
-        CANONICAL["RFC 8785 Canonicalizer"]
+        CANONICAL["Canonical JSON"]
         CAS["BLAKE3 CAS Storage"]
-        VERSIONING["Git-Style Versioning & DAG"]
+        VERSIONING["Versioning & 3-way merge"]
         INDEX["Computed Index & Cycle Checker"]
-        PLUGIN_MGR["Plugin Contract Dispatcher (V1)"]
+        PLUGIN_MGR["Plugin registry & lifecycle hooks"]
     end
 
     subgraph Storage[".clibm/ Repository Structure"]
         OBJECTS[".clibm/objects/xx/yyy...json\n(Immutable CAS Envelopes)"]
         REFS[".clibm/refs/heads/* & HEAD\n(Branches & Pointers)"]
-        TREE[".clibm/index/staged_tree.json\n(Current Tree Snapshot)"]
+        TREE[".clibm/STAGE_TREE\n(Hash of the current tree)"]
         COMPUTED[".clibm/index/computed.json\n(Fast Query Index)"]
         CONFIG[".clibm/config.json\n(Repo Configuration)"]
     end
@@ -107,7 +110,7 @@ flowchart TD
     CLI --> ENGINE
     TUI --> ENGINE
     WEB --> ENGINE
-    MCP --> ENGINE
+    MCP -->|runs clibm commands| CLI
     BROWSER -.->|Simulated In-Browser Engine| CAS
 
     ENGINE --> CANONICAL
@@ -129,65 +132,44 @@ flowchart TD
 
 ```
 CLIBM/
-├── package.json               # Web companion dependencies (React 19, Tailwind v4, Vite)
-├── vite.config.ts             # Vite build configuration
-├── tsconfig.json              # TypeScript compilation setup
-├── metadata.json              # Project identity & AI Studio manifest
-├── LICENSE.txt                # MIT License
-├── src/                       # Companion Web Application & Simulator
-│   ├── App.tsx                # Main workbench shell & navigation
-│   ├── components/            # UI components
-│   │   ├── CasInspectorView.tsx      # Interactive CAS object explorer
-│   │   ├── ConfigurationView.tsx     # Repo configuration editor
-│   │   ├── DocumentationView.tsx     # Comprehensive searchable docs
-│   │   ├── KanbanAndTasksView.tsx    # Visual drag-and-drop Kanban board
-│   │   ├── PluginMarketplaceView.tsx # Standalone plugin installer & template generator
-│   │   ├── RustPackageView.tsx       # Rust source code viewer & exporter
-│   │   ├── ShowcaseView.tsx          # Interactive landing page & live BLAKE3 demo
-│   │   ├── TerminalPane.tsx          # Embedded web terminal emulator
-│   │   ├── TuiAndWebPluginsView.tsx  # TUI & Web plugin runners/emulators
-│   │   └── VersioningAndDiffView.tsx # Commit log DAG and structural tree diff
-│   ├── core/                  # Client-side TypeScript CLIBM engine
-│   │   ├── blake3.ts          # Pure TypeScript BLAKE3 implementation
-│   │   ├── clibmCore.ts       # Headless state manager & command executor
-│   │   └── types.ts           # Schema models matching Rust structs
-│   └── rust/                  # Rust source registry & in-memory ZIP builder
-│       ├── rustSourceRegistry.ts
-│       └── zipBuilder.ts
-└── rust-clibm/                # Native Rust 2021 Implementation
-    ├── Cargo.toml             # Cargo manifest (clibm bin + clibm_core lib)
-    ├── install.sh / .ps1      # Non-elevated interactive core installer
-    ├── uninstall.sh / .ps1    # Safe uninstaller with reference-counted PATH cleanup
-    ├── update.sh / .ps1       # GitHub updater script
-    ├── scripts/               # Shared user PATH and ledger management helpers
-    │   ├── env-path.sh
-    │   ├── env-path.ps1
-    │   └── sync-env-path.ps1
-    ├── src/                   # Core Rust sources
-    │   ├── canonical.rs       # RFC 8785 canonical JSON sorting & serialization
-    │   ├── cas.rs             # Content-Addressable Storage engine & BLAKE3 hasher
-    │   ├── cli.rs             # Clap 4.5 subcommand and argument definitions
-    │   ├── engine.rs          # High-level ClibmEngine business logic
-    │   ├── index.rs           # Computed query indices & DFS cycle detection
-    │   ├── lib.rs             # Decoupled clibm_core library entrypoint
-    │   ├── main.rs            # Native CLI executable runner
-    │   ├── models.rs          # Domain structs (Task, Board, Commit, Tree, etc.)
-    │   ├── plugin.rs          # CLIBM_PLUGIN_CONTRACT_V1 runner & registry
-    │   └── versioning.rs      # Commits, branching, checkout, tree diff, merge
-    └── plugins/               # Official standalone plugin crates
-        ├── clibm-dep-audit/   # DAG critical path & cycle auditor
-        ├── clibm-docs/        # AI documentation & context teacher
-        ├── clibm-export-md/   # Markdown sprint report exporter
-        ├── clibm-mcp/         # Model Context Protocol (MCP) server for AI
-        ├── clibm-tui/         # Ratatui + Crossterm interactive terminal UI
-        ├── clibm-web/         # Self-hosted single-binary HTTP server & workbench
-        ├── clibm-workflow-lint/# Kanban WIP limits & workflow linter
-        └── plugin-template/   # Official boilerplate for custom plugins
+├── package.json               # Web workbench (React 19, Tailwind v4, Vite)
+├── src/                       # Web workbench & in-browser simulator
+│   ├── App.tsx, components/   # Views (terminal, Kanban, CAS inspector, plugins, ...)
+│   ├── core/                  # TypeScript simulation of the CLIBM engine
+│   └── rust/                  # Rust source registry & in-browser ZIP builder
+└── rust-clibm/                # Native Rust implementation (Cargo workspace)
+    ├── Cargo.toml             # Workspace + `clibm` package (binary `clibm`, library `clibm_core`)
+    ├── install.* / uninstall.* / update.*   # Installers (PowerShell and Bash)
+    ├── scripts/               # Shared PATH, ledger, build and registry helpers (env-path)
+    ├── src/
+    │   ├── canonical.rs       # Canonical JSON & hashing
+    │   ├── cas.rs             # Object store, refs, branch-name validation, fsck
+    │   ├── engine.rs          # ClibmEngine: tasks, workspaces, status, rules, hooks
+    │   ├── versioning.rs      # Commits, log, diff, 3-way merge
+    │   ├── index.rs           # Computed index & cycle detection
+    │   ├── plugin.rs          # Plugin registry, install/uninstall, hooks
+    │   ├── plugin_sdk.rs      # Helper for writing plugins on clibm_core
+    │   ├── install.rs         # ~/.clibm/install-config.json
+    │   ├── update.rs          # `clibm update`
+    │   ├── cli.rs, main.rs    # The `clibm` command line
+    │   └── models.rs          # Domain types
+    ├── tests/                 # End-to-end CLI tests
+    └── plugins/
+        ├── clibm-mcp/         # MCP server for AI agents
+        ├── clibm-tui/         # Terminal Kanban board
+        ├── clibm-web/         # Local web dashboard
+        ├── clibm-dep-audit/   # Dependency audit (cycles, blockers, critical path)
+        ├── clibm-export-md/   # Markdown report
+        ├── clibm-workflow-lint/ # Kanban workflow checks
+        └── plugin-template/   # Starter for your own plugins
 ```
 
 ---
 
 ## Quick Install
+
+Requires the Rust toolchain (`cargo` 1.75+, from [rustup.rs](https://rustup.rs)): the
+installers build CLIBM on your machine.
 
 ### Linux, macOS, WSL2
 ```bash
@@ -215,427 +197,357 @@ iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/mai
 
 ## Quick Start — Native Rust CLI
 
-### Prerequisites
+### Installing
 
-- **Rust toolchain** (`rustc` & `cargo` 1.75+): Install via [rustup.rs](https://rustup.rs).
+The one-liners above ask a few questions (profile, language, automatic commits, install
+folder, PATH) and build CLIBM with `cargo install --git` from the official repository.
+To build another repository or branch, set `CLIBM_GIT_URL` / `CLIBM_GIT_REF` first.
 
-### Quick Installation (Direct from GitHub)
-
-You can install CLIBM directly via the raw GitHub installer without manually cloning the repository. The installer automatically fetches the required Rust sources into a temporary build workspace, compiles the release binary, registers your user `PATH`, and cleans up temporary files.
-
-#### Windows (PowerShell)
-
-Run the interactive one-liner in PowerShell:
+Non-interactive:
 
 ```powershell
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1 | iex
-```
-
-Or download `install.ps1` and run it with custom flags (such as `-Yes`, `-Profile with-defaults`, or `-NoModifyPath`):
-
-```powershell
+# Windows: download, then run with flags
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1" -OutFile install.ps1
-.\install.ps1
-# Silent / non-interactive install (Pure Core):
-.\install.ps1 -Yes
-# Silent install including the 3 default plugins (dep-audit, export-md, workflow-lint):
-.\install.ps1 -Profile with-defaults -Yes
+.\install.ps1 -Yes                               # pure core
+.\install.ps1 -Profile with-defaults -Yes        # + dep-audit, export-md, workflow-lint
 ```
 
-#### Linux / macOS (Bash / Zsh)
-
-Run the interactive installer directly from GitHub:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
-```
-
-Or pass non-interactive flags:
-
-```bash
-# Silent install (Pure Core):
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- -y
-
-# Silent install including the 3 default plugins:
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- --with-defaults -y
 ```
 
----
-
-### Local Installation (From Cloned Repository)
-
-When running `install.ps1` or `install.sh` from a local clone of the repository, the installer automatically detects the local `Cargo.toml` and `src/` tree and builds directly in-place.
-
-#### Windows (PowerShell — Local)
-
-```powershell
-cd rust-clibm
-.\install.ps1
-
-# For silent / non-interactive installation without modifying PATH:
-.\install.ps1 -Yes -NoModifyPath
-```
-
-#### Linux / macOS (Bash — Local)
+From a clone, the installers build the local sources:
 
 ```bash
 cd rust-clibm
-./install.sh
-
-# For automated / non-interactive installations (e.g., CI/CD):
-./install.sh -y --no-modify-path
-
-# Or install directly via Cargo:
-cargo install --path .
+./install.sh                      # or: ./install.sh -y --no-modify-path
+.\install.ps1                     # or: .\install.ps1 -Yes -NoModifyPath
 ```
 
-> **Tip:** Open a new terminal session (or run `source ~/.bashrc` / `source ~/.zshrc` on Linux/macOS) to load the updated `PATH`.
+The installer records its choices and where the build came from (repository, branch, commit,
+version) in `~/.clibm/install-config.json`. `clibm init` uses them as defaults and
+`clibm update` uses them to update.
 
-### Non-Elevated User PATH & Reference-Counted Ledger
+### User PATH and the ownership ledger
 
-CLIBM never touches system or machine-wide environment variables and **never requires administrator / root privileges**:
+CLIBM never needs administrator rights and never touches the system PATH:
 
-- **Windows (`install.ps1`)**: Queries `HKCU:\Environment` `Path` with `DoNotExpandEnvironmentNames`, appends the install folder (default: `~\.clibm-bin` or `~/.local/bin`), writes it back as `REG_EXPAND_SZ` to preserve `%USERPROFILE%`, and broadcasts a `WM_SETTINGCHANGE` message.
-- **Linux / macOS (`install.sh`)**: Appends an idempotent block (`# >>> clibm PATH: <dir> >>>` ... `# <<< clibm PATH: <dir> <<<`) to user shell startup profiles (`~/.bashrc`, `~/.zshrc`, or `~/.profile`).
-- **Reference-Counted Ownership Ledger (`~/.clibm/path-ledger`)**: Records which components added each directory. When uninstalling a plugin or tool, directory entries in `PATH` are only removed if no other CLIBM components claim ownership, and pre-existing user directories are strictly preserved.
+- **Windows**: the install folder (default `~\.clibm-bin`) is added to the *user* `Path`
+  (`HKCU:\Environment`, kept as `REG_EXPAND_SZ`) and a `WM_SETTINGCHANGE` broadcast is sent.
+- **Linux / macOS**: an idempotent `# >>> clibm PATH: <dir> >>>` block is added to your shell
+  profile.
+- **`~/.clibm/path-ledger`** records which component added each folder. Uninstalling removes a
+  PATH entry only when nothing else needs it and CLIBM added it.
+- Opt out with `-NoModifyPath` / `--no-modify-path`.
 
-### First Steps in a Project
+Open a new terminal after installing.
+
+### First steps in a project
 
 ```bash
-# 1. Initialize a new CLIBM project repository
 mkdir my-app && cd my-app
-clibm init --workspace "frontend" --code "APP" --name "Client Application"
+clibm init --workspace "frontend" --code APP --name "Client Application"
 
-# 2. Add tasks with priorities, tags, and dependencies
-clibm task add "Design Token System" -p high -c done --tags ui,design
-clibm task add "Implement Responsive Layout" -p critical -c in-progress --depends-on APP-101 --tags ui,layout
-clibm task add "Add Dark Mode Switcher" -p medium -c todo --depends-on APP-102 --tags ui
+clibm task add "Design Token System" -p high -c done --tags ui,design     # APP-101
+clibm task add "Responsive Layout" -p critical -c todo --depends-on 101   # APP-102
+clibm task add "Dark Mode Switcher" --depends-on 102                       # APP-103
 
-# 3. View the Kanban board in your terminal
 clibm board show
+clibm status
 
-# 4. Move a task to a new column (enforces dependency prerequisites)
-clibm board move APP-102 review
-
-# 5. Commit your state and inspect cryptographic integrity
-clibm commit -m "Initialize project and layout tasks"
+clibm board move 102 in-progress     # 102, APP-102, app-102 or a hash prefix all work
+clibm task edit 103 --assignee ana --add-tag ui
 clibm fsck
 ```
+
+`clibm init` refuses to run where a repository already exists.
 
 ---
 
 ## Quick Start — Web Workbench & Simulator
 
-CLIBM includes an interactive web application built with **React 19**, **TypeScript**, and **Tailwind CSS v4**. It features an in-browser pure-TypeScript implementation of the BLAKE3 engine and `clibm_core`, enabling full exploration without installing Rust.
-
-### Running the Web App
+The React app simulates the CLI in the browser (no Rust needed) and lets you browse the Rust
+sources and download them as ZIP files.
 
 ```bash
-# From the project root
 npm install
-npm run dev
+npm run dev      # http://localhost:3000
+npm run build    # static build in dist/
 ```
 
-Visit `http://localhost:3000` in your browser.
+- Interactive terminal, Kanban board, CAS inspector, commit graph and diff viewer.
+- Live BLAKE3 playground.
+- ZIP downloads of the core, the whole workspace and each plugin (plain UTF-8, so the shell
+  scripts run as-is). Plugins that use the core library (`clibm-web`, `clibm-tui` and the
+  analysis plugins) build from the workspace ZIP.
 
-To build the static distribution:
-
-```bash
-npm run build
-```
-
-### Web Capabilities
-
-- **Interactive Web Terminal**: Run any `clibm` command directly in your browser with real-time feedback.
-- **Visual Kanban Board**: Drag-and-drop tasks, edit details, assignees, priorities, and monitor column WIP limits.
-- **CAS Envelope Inspector**: Browse `.clibm/objects/`, view raw RFC 8785 Canonical JSON payloads, and verify 256-bit BLAKE3 hashes on the fly.
-- **Git-Style DAG Visualizer**: Explore commit trees, historical diffs, and branch switches graphically.
-- **Live BLAKE3 Playground**: Enter arbitrary JSON fields to watch deterministic canonicalization and BLAKE3 hash computation in real time.
-- **In-Browser ZIP Packaging**: Download standalone ZIP archives generated client-side:
-  - `clibm-core-v0.1.0.zip` (Pure headless core engine + CLI, zero UI dependencies)
-  - `clibm-v0.1.0-workspace.zip` (Full Cargo workspace including all plugins)
-  - Individual plugin ZIPs
-  - `clibm-web-standalone.html` (Single-file zero-dependency offline web workbench)
+The simulator is a teaching tool: its behaviour can lag behind the Rust CLI.
 
 ---
 
 ## Plugin Ecosystem (`CLIBM_PLUGIN_CONTRACT_V1`)
 
-CLIBM provides a folder-scoped, contract-driven plugin architecture. Plugins are standalone Cargo crates that communicate through standardized JSON or direct crate linkage.
+### Official plugins
 
-### Official Plugins Overview
+| Plugin | What it does |
+|---|---|
+| [`clibm-mcp`](rust-clibm/plugins/clibm-mcp/README.md) | MCP server: lets AI agents read and manage the project |
+| [`clibm-tui`](rust-clibm/plugins/clibm-tui/README.md) | Terminal Kanban board |
+| [`clibm-web`](rust-clibm/plugins/clibm-web/README.md) | Local web dashboard (127.0.0.1, token-protected writes) |
+| [`clibm-dep-audit`](rust-clibm/plugins/clibm-dep-audit/README.md) | Dependency audit: cycles, blockers, critical path |
+| [`clibm-export-md`](rust-clibm/plugins/clibm-export-md/README.md) | Markdown report (also written on `clibm export`) |
+| [`clibm-workflow-lint`](rust-clibm/plugins/clibm-workflow-lint/README.md) | WIP limits, assignees, open dependencies, overdue tasks |
+| [`plugin-template`](rust-clibm/plugins/plugin-template/README.md) | Starter for your own plugin |
 
-| Plugin | Folder | Raw PowerShell Installer (`install.ps1`) | Description |
-|---|---|---|---|
-| **`clibm-mcp`** | `plugins/clibm-mcp` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1) | **Model Context Protocol (MCP)** server for AI assistants (Claude Desktop, Cursor, Windsurf). Supports stdio JSON-RPC 2.0 and HTTP SSE transports. |
-| **`clibm-tui`** | `plugins/clibm-tui` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1) | Interactive terminal UI powered by **Ratatui + Crossterm** with split-pane Kanban, CAS inspector, and commit creator. |
-| **`clibm-web`** | `plugins/clibm-web` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1) | Self-hosted single-binary HTTP server (`tiny_http`) with an embedded monochromatic workbench (`ui.html`). |
-| **`clibm-dep-audit`**| `plugins/clibm-dep-audit` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/install.ps1) | Analyzes task dependency DAGs, flags cycle risks, and highlights critical-path blockers. |
-| **`clibm-docs`** | `plugins/clibm-docs` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1) | Context generator that teaches AI agents and developers how to interact with CLIBM repositories. |
-| **`clibm-export-md`**| `plugins/clibm-export-md` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-export-md/install.ps1) | Exports current project/sprint trees into portable, publication-ready Markdown tables. |
-| **`clibm-workflow-lint`**| `plugins/clibm-workflow-lint` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1) | Validates Kanban WIP column limits, unblocked dependencies, and workflow policies. |
-| **`plugin-template`**| `plugins/plugin-template` | [`install.ps1`](https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.ps1) | Reference starter template for building custom CLIBM plugins in Rust. |
-
-### Installing & Running Plugins in Ongoing Projects
-
-Every standalone plugin supports **both** direct installation from its raw GitHub script and local folder installation.
-
-#### Option A: Quick Plugin Installation via GitHub Raw Script
-
-```powershell
-# Windows PowerShell — Install any official plugin directly from GitHub:
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.ps1 | iex
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1 | iex
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1 | iex
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-docs/install.ps1 | iex
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-dep-audit/install.ps1 | iex
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-export-md/install.ps1 | iex
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-workflow-lint/install.ps1 | iex
-```
+### Installing, running and removing plugins
 
 ```bash
-# Linux / macOS — Install any official plugin directly from GitHub:
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-tui/install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.sh | bash
-```
-
-```bash
-# Or via the CLIBM CLI (fetches from GitHub automatically if not in a local clone):
+clibm plugin install mcp                 # official name; builds from your clone or from GitHub
 clibm plugin install tui
-clibm plugin install web
-clibm plugin install mcp --transport both
-```
-
-#### Option B: Local Plugin Installation (From Cloned Repository)
-
-Each plugin is self-contained. When working in a local repository clone, you can build and install it directly from its own folder:
-
-```bash
-# Example: Install the Ratatui TUI plugin locally
-cd rust-clibm/plugins/clibm-tui
-./install.sh            # On Windows: .\install.ps1
-
-# Example: Install the Self-Hosted Web Server plugin locally
-cd ../clibm-web
-./install.sh            # On Windows: .\install.ps1
-```
-
-#### Running Installed Plugins
-
-Once installed, navigate to **any ongoing CLIBM project directory** (containing `.clibm/`) and run:
-
-```bash
-cd ~/my-app
-
-# List all recognized plugins
+clibm plugin install ./path/to/plugin    # any plugin folder with a Cargo.toml
 clibm plugin list
-
-# Run via clibm plugin runner
-clibm plugin run tui
+clibm plugin run dep-audit
 clibm plugin run web -- --port 7878
-
-# Or invoke the binaries directly from your PATH
-clibm-tui
-clibm-web --port 7878
+clibm plugin disable workflow-lint       # for this project only
+clibm plugin uninstall mcp               # stops it, deletes the binary, removes it from the registry
 ```
 
-### Scaffolding Custom Plugins
+Each plugin also has its own `install.ps1` / `install.sh` / `uninstall.*` scripts and
+one-liners (see its README).
 
-Generate a new standalone plugin crate using the built-in scaffolding command:
+### Where plugins are registered
 
-```bash
-clibm plugin new sprint-velocity --description "Tracks sprint cycle times and velocity" --hooks pre-commit,on-task-move
-```
+- **`~/.clibm/plugins/registry.json`** lists the installed plugins. Each entry is the plugin's
+  own manifest (`<plugin> --manifest`): hooks, MCP tools and the executable path.
+- **`.clibm/plugins/registry.json`** in a project only holds `{"name", "enabled"}` overrides.
+  A project can switch plugins on or off but never point CLIBM at an executable, so a cloned
+  repository cannot make CLIBM run its own programs.
+- Entries whose binary disappeared are removed automatically.
 
-Then build and install it:
+### Lifecycle hooks
 
-```bash
-cd plugins/clibm-sprint-velocity
-./install.sh
-clibm plugin run sprint-velocity
-```
+| Event | When | Can block |
+|---|---|---|
+| `pre-commit` / `post-commit` | around every commit (automatic or `clibm commit`) | `pre-commit` |
+| `pre-move` / `on-task-move` | around `clibm board move` | `pre-move` |
+| `on-task-depend` | after `clibm task depend` | no |
+| `on-workspace-switch` | after `clibm workspace switch` | no |
+| `on-export` | after `clibm export` | no |
 
-### Plugin JSON Contract
+A plugin that answers `ok: false` (or fails, or exceeds `hook_timeout_secs`, default 10) on a
+`pre-*` event blocks the action and nothing is written. Skip hooks once with
+`clibm --no-hooks …` or `CLIBM_NO_HOOKS=1`.
 
-External binaries interact with CLIBM via `CLIBM_PLUGIN_CONTRACT_V1`. CLIBM streams a JSON request to the plugin's `stdin`:
+### Plugin JSON contract
+
+CLIBM sends one request on the plugin's stdin:
 
 ```json
 {
   "contract": "CLIBM_PLUGIN_CONTRACT_V1",
-  "event": "pre-commit",
+  "event": "pre-move",
   "tree_hash": "a1b2c3d4e5f6...",
-  "args": ["--strict"]
+  "args": [],
+  "context": { "task_id": "APP-102", "board_id": "BRD-01", "from": "todo", "to": "in-progress", "force": false }
 }
 ```
 
-The plugin responds on `stdout`:
+`event` is `manual-run` for `clibm plugin run`; `context` is only sent with hooks. The plugin
+answers on stdout:
 
 ```json
-{
-  "ok": true,
-  "output": "[dep-audit] Audited 14 tasks: 0 cycles detected. DAG healthy."
-}
+{ "ok": true, "output": "[dep-audit] Cycles: none" }
+```
+
+### Scaffolding a plugin
+
+```bash
+clibm plugin new sprint-velocity --description "Tracks sprint velocity" --hooks post-commit,on-task-move
+cd plugins/clibm-sprint-velocity
+./install.sh
+clibm plugin run sprint-velocity
 ```
 
 ---
 
 ## Complete CLI Command Reference
 
-All commands support the global `--json` flag to return structured JSON output suitable for scripts and AI tooling.
+Global flags: `--json` (machine-readable output) and `--no-hooks` (skip plugin hooks).
 
-### Repository & Setup
+**Task references** — wherever a task is expected you can write the full ID (`APP-101`, any
+case), the number (`101`, the active project's task first) or a prefix of at least 4
+characters of the task's current object hash (as shown by `clibm board show`; it changes
+whenever the task changes).
+
+### Repository & setup
 
 ```bash
-clibm init [--workspace <WS>] [--code <PREFIX>] [--name <NAME>] [--lang <en|pt-BR|es>] [--auto-commit <bool>] [--with-defaults]
-clibm status                    # Show current branch, commit HEAD, and staged changes
-clibm fsck                      # Cryptographically verify all BLAKE3 object envelopes
-clibm cat-object <HASH_PREFIX>  # Print raw canonical JSON object envelope from CAS
-clibm export [--output <FILE>]  # Export entire repository CAS as portable JSON bundle
+clibm init [--workspace <WS>] [--code <CODE>] [--name <NAME>] [--lang <en|pt-BR|es>] [--auto-commit <bool>] [--install-path <DIR>] [--with-defaults]
+clibm status                    # branch, HEAD, uncommitted changes, active project, counts per column
+clibm fsck                      # verify every object's BLAKE3 hash (exit code 1 on corruption)
+clibm cat-object <HASH_PREFIX>  # print a stored object
+clibm export [-o <FILE>]        # whole repository as a portable JSON bundle
 ```
 
 ### Workspaces
 
 ```bash
-clibm workspace list                           # List all workspaces in repo
-clibm workspace create <NAME> [-c <CODE>]      # Create a new workspace
-clibm workspace switch [<NAME_OR_ID>]          # Switch active workspace (cycles if omitted)
+clibm workspace list
+clibm workspace create <NAME> [-c <CODE>] [-d <DESCRIPTION>]
+clibm workspace switch [<ID_OR_NAME>]            # without a target: next workspace alphabetically
 ```
 
-### Tasks & Dependencies
+### Tasks & dependencies
 
 ```bash
 clibm task list [--column <COL>] [--priority <PRIO>] [--tag <TAG>] [--all-workspaces]
-clibm task add <TITLE> [-d <DESC>] [-p <PRIO>] [-c <COL>] [-a <ASSIGNEE>] [--due <DATE>] [--tags <T1,T2>] [--depends-on <ID1,ID2>]
-clibm task show <TASK_ID>                      # Show full task metadata and comment thread
-clibm task comment <TASK_ID> <MESSAGE>         # Add a comment to a task
-clibm task depend <TASK_ID> <DEPENDS_ON_ID>    # Add a blocking dependency
-clibm task transfer <TASK_ID> <WORKSPACE> [--copy] # Transfer or copy a task to another workspace
-clibm task history <TASK_ID>                   # Trace individual task changes across commits
+clibm task add <TITLE> [-d <DESC>] [-p <PRIO>] [-c <COL>] [-a <ASSIGNEE>] [--due <DATE>] [--tags a,b] [--depends-on 101,102] [--force]
+clibm task show <TASK>
+clibm task edit <TASK> [--title …] [-d …] [-p …] [-a …] [--due …] [--tags a,b] [--add-tag t] [--remove-tag t]
+clibm task delete <TASK> [--force]               # refuses while other tasks depend on it
+clibm task comment <TASK> <MESSAGE> [-a <AUTHOR>]
+clibm task depend <TASK> <DEPENDS_ON>            # cycles are refused
+clibm task transfer <TASK> <WORKSPACE> [--copy]
+clibm task history <TASK>
 ```
 
-### Kanban Board
+`task add` without `-p` uses `default_priority` from the config.
+
+### Kanban board
 
 ```bash
-clibm board show                               # Render terminal ASCII Kanban board
-clibm board move <TASK_ID> <COLUMN> [--force]  # Move task to column (checks dependencies & WIP)
+clibm board show
+clibm board move <TASK> <COLUMN> [--force]       # dependencies, WIP limits and required assignees apply
 ```
 
-### Versioning, Branching & Merges
+### Versioning, branching & merges
 
 ```bash
-clibm commit -m <MESSAGE> [-a <AUTHOR>]        # Commit staged tree snapshot
-clibm log [<REF>]                              # View commit history DAG
-clibm branch [<NAME>]                          # List branches or create a new branch
-clibm checkout <TARGET>                        # Switch branch or checkout commit hash
-clibm diff <FROM_REF> <TO_REF>                 # Structural diff between two branches/commits
-clibm merge <BRANCH> [-a <AUTHOR>]             # Merge target branch into current HEAD
+clibm commit -m <MESSAGE> [-a <AUTHOR>]          # does nothing when there is nothing to commit
+clibm log [<REF>]
+clibm branch [<NAME>]                            # list, or create at HEAD (names are validated)
+clibm checkout <BRANCH_OR_COMMIT> [--force]      # refuses to discard uncommitted changes
+clibm diff <FROM_REF> <TO_REF>
+clibm merge <BRANCH> [--ours | --theirs] [-a <AUTHOR>]
 ```
 
-### Plugins & Tools
+`merge` is a three-way merge against the common ancestor: changes made on one side (including
+deletions) are applied, and changes made differently on both sides are conflicts. Conflicts stop
+the merge (nothing is changed) unless you pass `--ours` or `--theirs`. Tasks added on both
+branches with the same ID are renumbered. When possible the merge fast-forwards.
+
+### Plugins
 
 ```bash
-clibm plugin list                              # List registered and installed plugins
-clibm plugin install [<PATH>] [--transport <T>]# Install plugin from local folder
-clibm plugin run <NAME> [-- <ARGS>...]         # Run an installed plugin in active project
-clibm plugin new <NAME> [--hooks <HOOKS>]      # Scaffold a new plugin crate
-clibm plugin enable <NAME>                     # Enable a registered plugin
-clibm plugin disable <NAME>                    # Disable a registered plugin
+clibm plugin list
+clibm plugin install [<NAME_OR_PATH>] [--transport stdio|both|http]
+clibm plugin run <NAME> [-- <ARGS>...]
+clibm plugin new <NAME> [--description <TEXT>] [--hooks a,b]
+clibm plugin enable <NAME> | clibm plugin disable <NAME>
+clibm plugin uninstall <NAME>
 ```
 
 ### Configuration
 
 ```bash
-clibm config show                              # Display all .clibm/config.json settings
-clibm config get <KEY>                         # Read single configuration key
-clibm config set <KEY> <VALUE>                 # Update configuration value
-clibm config reset                             # Reset configuration to defaults
+clibm config show
+clibm config get <KEY>
+clibm config set <KEY> <VALUE>      # e.g. auto_commit false, hook_timeout_secs 20
+clibm config reset
+```
+
+Keys: `auto_commit`, `author_name`, `author_email`, `default_priority`,
+`enforce_dependencies`, `enforce_wip_limits`, `cross_workspace_dependencies`,
+`hook_timeout_secs`, `language`, `install_profile`, `install_path`, `mcp_transport`,
+`github_repo_url` (GitHub browser links are repaired), `update_branch`.
+
+### Updating & uninstalling
+
+```bash
+clibm update [--check] [--plugins] [--repo <URL>] [--branch <NAME>] [--path <CLONE>]
+clibm uninstall [--purge] [--yes]
 ```
 
 ---
 
 ## CAS Object Specification & Directory Layout
 
-### The `.clibm` Project Directory
-
-Inside any CLIBM project:
-
 ```
 .clibm/
-├── HEAD                         # Active branch ref ("ref: refs/heads/main") or commit hash
-├── config.json                  # Project config (workspace ID, auto_commit, language)
+├── HEAD                         # "ref: refs/heads/main" or a commit hash (detached)
+├── STAGE_TREE                   # hash of the current (staged) tree object
+├── config.json                  # project configuration
 ├── index/
-│   ├── staged_tree.json         # Current uncommitted TreeSnapshotPayload mapping
-│   └── computed.json            # Fast query indices (by column, priority, tag)
-├── refs/
-│   └── heads/
-│       ├── main                 # 64-char BLAKE3 commit hash for 'main'
-│       └── feat-xyz             # 64-char BLAKE3 commit hash for feature branch
-└── objects/                     # Sharded Content-Addressable Storage
-    ├── 7f/
-    │   └── 83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069.json
-    └── a1/
-        └── b2c3d4e5f6...json
+│   └── computed.json            # lookups by column, priority, tag, assignee; cycles
+├── refs/heads/
+│   ├── main                     # commit hash of branch 'main'
+│   └── feature/login            # branch names may contain '/'
+├── plugins/
+│   └── registry.json            # per-project plugin on/off overrides
+└── objects/
+    └── 7f/83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069.json
 ```
 
-### Object Types
-
-1. **`workspace`**: Top-level organization container grouping projects.
-2. **`project`**: Project metadata, identifier prefixes (e.g. `CLIBM-`), and default board link.
-3. **`board`**: Ordered columns (`todo`, `in-progress`, `review`, `done`), column WIP limits, and policy flags.
-4. **`task`**: Title, description, priority (`low`, `medium`, `high`, `critical`), column, assignee, tags, comments, and blocking dependencies (`depends_on`).
-5. **`tree`**: Lightweight mapping of entity IDs to immutable BLAKE3 object hashes representing the complete project state at an instant in time.
-6. **`commit`**: Commit metadata (author, message, timestamp, parents array) pointing to a root `tree` hash.
+Object types: `workspace`, `project`, `board` (columns, WIP limits, workflow rules), `task`,
+`tree` (entity IDs → object hashes, plus per-project task counters) and `commit` (tree hash,
+parents, author, time, message).
 
 ---
 
 ## Updating CLIBM
 
-CLIBM can check and install updates directly from GitHub:
-
 ```bash
-# Check if an update is available without installing:
-clibm update --check
-
-# Pull and install the latest version (including plugins):
-clibm update --plugins
-
-# Or use standalone updater scripts:
-./update.sh --plugins        # Linux / macOS
-.\update.ps1 -Plugins        # Windows PowerShell
+clibm update --check            # compare the installed build with the latest commit
+clibm update                    # rebuild and replace clibm (works while it is running)
+clibm update --plugins          # also rebuild every installed official plugin
+clibm update --path ~/src/CLIBM # build from a local clone
 ```
+
+`clibm update` builds from where CLIBM was installed (recorded by the installer), the
+official repository otherwise. Inside a clone, `./update.sh` / `.\update.ps1` pull the latest
+changes and update from the clone.
 
 ---
 
 ## Uninstalling CLIBM
 
-To completely remove CLIBM, use the **Quick Uninstall** one-liners (no manual folder deletion required):
-
-### Windows (native, PowerShell)
 ```powershell
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
-# Or from cloned repository:
-.\uninstall.ps1
-# To also purge local .clibm/ repository data:
-.\uninstall.ps1 -Purge
+.\uninstall.ps1            # from a clone
+.\uninstall.ps1 -Purge     # also delete the .clibm data in the current folder
 ```
 
-### Linux, macOS, WSL2
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.sh | bash
-# Or from cloned repository:
-./uninstall.sh
-# To also purge local .clibm/ repository data:
-./uninstall.sh --purge
+./uninstall.sh             # from a clone
+./uninstall.sh --purge     # also delete the .clibm data in the current folder
 ```
 
-Running `clibm uninstall` from inside the CLI also inspects your installed components and presents these exact commands.
+`clibm uninstall` lists everything CLIBM installed (binaries, `~/.clibm`, PATH entries) with
+the commands to remove it. `clibm uninstall --purge` deletes the current folder's `.clibm`
+after asking for confirmation (or with `--yes`); it never deletes a repository found in a
+parent folder.
+
+---
+
+## Development
+
+```bash
+cd rust-clibm
+cargo build --workspace
+cargo test --workspace                                   # unit + end-to-end tests
+powershell -File scripts/sync-env-path.ps1 -Check        # shared installer helpers in sync
+cd .. && npm run lint && npm run build                   # web workbench
+```
+
+After editing `rust-clibm/scripts/env-path.*`, run `scripts/sync-env-path.ps1` to copy the
+helpers into every install/uninstall script.
 
 ---
 
 ## License
 
-This project is licensed under the **MIT License** — see the [LICENSE.txt](LICENSE.txt) file for details.
+This project is licensed under the **MIT License** — see [LICENSE.txt](LICENSE.txt).
 
 Copyright (c) 2026 Vandevelde
-

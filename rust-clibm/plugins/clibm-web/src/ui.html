@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CLIBM Self-Hosted Local Web Console</title>
+  <title>CLIBM Web Dashboard</title>
   <style>
     :root {
       --bg: #09090b;
@@ -13,6 +13,8 @@
       --muted: #a1a1aa;
       --accent-bg: #f4f4f5;
       --accent-text: #09090b;
+      --error-bg: #3f1d1d;
+      --error-border: #7f1d1d;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -26,12 +28,14 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 16px;
       padding-bottom: 16px;
       border-bottom: 1px solid var(--border);
       margin-bottom: 24px;
+      flex-wrap: wrap;
     }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
-    .toolbar { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+    .toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
     input, select, button {
       background: var(--surface);
       color: var(--text);
@@ -40,103 +44,180 @@
       border-radius: 6px;
       font-size: 13px;
     }
-    button.primary { background: var(--accent-bg); color: var(--accent-text); border-color: var(--accent-bg); cursor: pointer; font-weight: 600; }
+    button { cursor: pointer; }
+    button.primary { background: var(--accent-bg); color: var(--accent-text); border-color: var(--accent-bg); font-weight: 600; }
+    #notice { display: none; background: var(--error-bg); border: 1px solid var(--error-border); border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; font-size: 13px; white-space: pre-wrap; }
     .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
     .col { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-height: 280px; }
     .col h3 { font-size: 13px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
     .card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 10px; }
-    .card-title { font-size: 13px; font-weight: 600; margin: 6px 0; }
+    .card-title { font-size: 13px; font-weight: 600; margin: 6px 0; overflow-wrap: anywhere; }
     .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-    .actions button { padding: 3px 8px; font-size: 11px; cursor: pointer; }
+    .actions button { padding: 3px 8px; font-size: 11px; }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1 style="font-size: 18px;">CLIBM Self-Hosted Web Dashboard (127.0.0.1:7878)</h1>
-      <div id="meta" class="mono">Connecting to local .clibm CAS store...</div>
+      <h1 style="font-size: 18px;">CLIBM Web Dashboard</h1>
+      <div id="meta" class="mono">Loading the project...</div>
     </div>
-    <div id="fsck" class="mono" style="color: var(--text);"></div>
+    <div>
+      <span id="fsck" class="mono" style="color: var(--text);"></span>
+      <button id="fsckBtn" style="margin-left: 8px;">Verify (fsck)</button>
+    </div>
   </header>
+
+  <div id="notice" role="alert"></div>
 
   <div class="toolbar">
     <input id="taskTitle" placeholder="New task title..." style="min-width: 260px;" />
     <select id="taskPrio">
-      <option value="high">High</option>
+      <option value="">Default priority</option>
       <option value="critical">Critical</option>
+      <option value="high">High</option>
       <option value="medium">Medium</option>
       <option value="low">Low</option>
     </select>
-    <button class="primary" onclick="addTask()">+ Add Task to CAS</button>
+    <button class="primary" id="addBtn">+ Add task</button>
     <input id="commitMsg" placeholder="Commit message..." style="min-width: 220px; margin-left: auto;" />
-    <button class="primary" onclick="commitTree()">Commit Snapshot</button>
+    <button class="primary" id="commitBtn">Commit</button>
   </div>
 
   <div id="board" class="board"></div>
 
   <script>
+    // Session token injected by clibm-web; required for every change.
+    const TOKEN = '__CLIBM_TOKEN__';
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function showNotice(message) {
+      const n = document.getElementById('notice');
+      if (message) {
+        n.textContent = message;
+        n.style.display = 'block';
+      } else {
+        n.textContent = '';
+        n.style.display = 'none';
+      }
+    }
+
+    async function post(path, body) {
+      try {
+        const res = await fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Clibm-Token': TOKEN },
+          body: JSON.stringify(body),
+        });
+        const out = await res.json().catch(() => ({ ok: false, error: res.statusText }));
+        if (!res.ok || out.ok === false) {
+          showNotice(out.error || ('Request failed: ' + res.status));
+          return null;
+        }
+        showNotice(out.message || '');
+        return out;
+      } catch (e) {
+        showNotice('The dashboard server is not reachable: ' + e.message);
+        return null;
+      }
+    }
+
     async function refresh() {
-      const res = await fetch('/api/state');
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch('/api/state');
+        data = await res.json();
+        if (!res.ok || data.ok === false) {
+          showNotice(data.error || 'Could not load the project');
+          return;
+        }
+      } catch (e) {
+        showNotice('The dashboard server is not reachable: ' + e.message);
+        return;
+      }
+
       document.getElementById('meta').textContent =
-        `branch: ${data.branch} · staged_tree: ${data.staged_tree_hash.slice(0, 14)} · tasks: ${data.tasks.length}`;
-      document.getElementById('fsck').textContent =
-        `[VERIFIED] BLAKE3 fsck: ${data.fsck.verified_objects}/${data.fsck.total_objects} objects intact`;
+        `${data.project.code} - ${data.project.name} · branch: ${data.branch || 'detached'} · ` +
+        `tree: ${data.staged_tree_hash.slice(0, 12)} · tasks: ${data.tasks.length}` +
+        (data.dirty ? ' · uncommitted changes' : '');
 
       const boardEl = document.getElementById('board');
-      boardEl.innerHTML = '';
-      data.board.columns.forEach(col => {
+      boardEl.replaceChildren();
+      for (const col of data.board.columns) {
         const colTasks = data.tasks.filter(t => t.task.column_id === col.id);
-        const div = document.createElement('div');
-        div.className = 'col';
-        div.innerHTML = `<h3><span>${col.name}</span><span class="mono">${colTasks.length}</span></h3>`;
-        colTasks.forEach(({ id, hash, task }) => {
-          const card = document.createElement('div');
-          card.className = 'card';
-          const moveBtns = data.board.columns
-            .filter(c => c.id !== col.id)
-            .map(c => `<button onclick="moveTask('${id}', '${c.id}')">→ ${c.name}</button>`)
-            .join('');
-          card.innerHTML = `
-            <div class="mono">${id} · [${task.priority.toUpperCase()}] · ${hash.slice(0, 8)}</div>
-            <div class="card-title">${task.title}</div>
-            <div class="actions">${moveBtns}</div>
-          `;
-          div.appendChild(card);
-        });
-        boardEl.appendChild(div);
-      });
+        const colEl = el('div', 'col');
+        const h3 = el('h3');
+        h3.append(el('span', '', col.name));
+        const count = col.wip_limit ? `${colTasks.length}/${col.wip_limit}` : String(colTasks.length);
+        h3.append(el('span', 'mono', count));
+        colEl.append(h3);
+
+        for (const { id, hash, task } of colTasks) {
+          const card = el('div', 'card');
+          card.append(el('div', 'mono', `${id} · ${task.priority.toUpperCase()} · ${hash.slice(0, 8)}`));
+          card.append(el('div', 'card-title', task.title));
+          const actions = el('div', 'actions');
+          for (const target of data.board.columns) {
+            if (target.id === col.id) continue;
+            const btn = el('button', '', '→ ' + target.name);
+            btn.addEventListener('click', async () => {
+              if (await post('/api/move', { task_id: id, column_id: target.id })) refresh();
+            });
+            actions.append(btn);
+          }
+          card.append(actions);
+          colEl.append(card);
+        }
+        boardEl.append(colEl);
+      }
     }
-    async function moveTask(task_id, column_id) {
-      const res = await fetch('/api/move', {
-        method: 'POST',
-        body: JSON.stringify({ task_id, column_id })
-      });
-      const out = await res.json();
-      if (!out.ok && out.error) alert(out.error);
-      refresh();
+
+    async function runFsck() {
+      const target = document.getElementById('fsck');
+      target.textContent = 'Verifying...';
+      try {
+        const res = await fetch('/api/fsck');
+        const out = await res.json();
+        const r = out.report;
+        target.textContent = r
+          ? `fsck: ${r.verified_objects}/${r.total_objects} verified` +
+            (r.corrupted_hashes.length ? ` · ${r.corrupted_hashes.length} CORRUPTED` : '') +
+            (r.legacy_hashes && r.legacy_hashes.length ? ` · ${r.legacy_hashes.length} legacy` : '')
+          : (out.error || 'fsck failed');
+      } catch (e) {
+        target.textContent = 'fsck failed: ' + e.message;
+      }
     }
-    async function addTask() {
-      const title = document.getElementById('taskTitle').value.trim();
-      const priority = document.getElementById('taskPrio').value;
+
+    document.getElementById('addBtn').addEventListener('click', async () => {
+      const input = document.getElementById('taskTitle');
+      const title = input.value.trim();
       if (!title) return;
-      await fetch('/api/task', {
-        method: 'POST',
-        body: JSON.stringify({ title, priority, column_id: 'todo' })
-      });
-      document.getElementById('taskTitle').value = '';
-      refresh();
-    }
-    async function commitTree() {
-      const message = document.getElementById('commitMsg').value.trim() || 'Web UI snapshot';
-      await fetch('/api/commit', {
-        method: 'POST',
-        body: JSON.stringify({ message })
-      });
-      document.getElementById('commitMsg').value = '';
-      refresh();
-    }
+      const priority = document.getElementById('taskPrio').value || undefined;
+      if (await post('/api/task', { title, priority, column_id: 'todo' })) {
+        input.value = '';
+        refresh();
+      }
+    });
+
+    document.getElementById('commitBtn').addEventListener('click', async () => {
+      const input = document.getElementById('commitMsg');
+      if (await post('/api/commit', { message: input.value.trim() })) {
+        input.value = '';
+        refresh();
+      }
+    });
+
+    document.getElementById('fsckBtn').addEventListener('click', runFsck);
+
     refresh();
+    setInterval(refresh, 5000);
   </script>
 </body>
 </html>

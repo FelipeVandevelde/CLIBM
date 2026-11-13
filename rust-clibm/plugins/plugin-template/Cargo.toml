@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Official starter template for building standalone CLIBM plugins in Rust"
 authors = ["CLIBM Systems Engineering"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [[bin]]
 name = "clibm-plugin-template"
@@ -14,3 +14,7 @@ path = "src/main.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
+
+# Only for the lifecycle-hook integration tests (not needed to build or install the plugin).
+[dev-dependencies]
+clibm = { path = "../.." }

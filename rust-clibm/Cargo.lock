@@ -225,16 +225,7 @@ name = "clibm-dep-audit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "clibm-docs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
+ "clibm",
  "serde_json",
 ]
 
@@ -243,7 +234,8 @@ name = "clibm-export-md"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde",
+ "chrono",
+ "clibm",
  "serde_json",
 ]
 
@@ -262,6 +254,7 @@ name = "clibm-plugin-template"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clibm",
  "serde",
  "serde_json",
 ]
@@ -271,11 +264,9 @@ name = "clibm-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "blake3",
- "chrono",
+ "clibm",
  "crossterm",
  "ratatui",
- "serde",
  "serde_json",
 ]
 
@@ -285,7 +276,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
- "chrono",
+ "clibm",
  "serde",
  "serde_json",
  "tiny_http",
@@ -296,7 +287,8 @@ name = "clibm-workflow-lint"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde",
+ "chrono",
+ "clibm",
  "serde_json",
 ]
 

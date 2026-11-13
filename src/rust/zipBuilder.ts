@@ -1,9 +1,9 @@
 /**
- * Standards-Compliant PKZIP Archive Builder with UTF-8-BOM (EF BB BF) Encoding
+ * Standards-compliant PKZIP archive builder (STORE method) for in-browser downloads.
  *
- * Generates a valid binary `.zip` archive in-browser and provides UTF-8-BOM
- * (`0xEF, 0xBB, 0xBF` / `\uFEFF`) file encoding for all CLI installations,
- * updates, uninstallations, and plugin templates across Linux and Windows.
+ * Every file is written as UTF-8 **without** a byte order mark: a BOM in front of
+ * `#!/usr/bin/env bash` stops shell scripts from running, and the repository files are
+ * UTF-8 without BOM as well. A leading BOM in the source text is removed.
  */
 
 export interface ZipFileEntry {
@@ -12,47 +12,25 @@ export interface ZipFileEntry {
 }
 
 export const UTF8_BOM_CHAR = '\uFEFF';
-export const UTF8_BOM_BYTES = new Uint8Array([0xef, 0xbb, 0xbf]);
 
-/**
- * Guarantees that a string starts with the UTF-8 Byte Order Mark (`\uFEFF` / `EF BB BF`).
- */
-export function ensureUtf8Bom(content: string): string {
-  if (content.startsWith(UTF8_BOM_CHAR)) {
-    return content;
-  }
-  return UTF8_BOM_CHAR + content;
-}
-
-/**
- * Strips a leading UTF-8 BOM character for clean display in code viewers while
- * keeping the underlying file/download UTF-8-BOM encoded.
- */
-export function stripUtf8BomForDisplay(content: string): string {
+/** Removes a leading UTF-8 byte order mark, if present. */
+export function withoutUtf8Bom(content: string): string {
   return content.startsWith(UTF8_BOM_CHAR) ? content.slice(1) : content;
 }
 
-/**
- * Encodes text as UTF-8 with an explicit 3-byte BOM (`0xEF, 0xBB, 0xBF`).
- */
-export function encodeUtf8WithBom(content: string): Uint8Array {
-  const encoder = new TextEncoder();
-  const cleanContent = content.startsWith(UTF8_BOM_CHAR) ? content.slice(1) : content;
-  const bodyBytes = encoder.encode(cleanContent);
-  const out = new Uint8Array(UTF8_BOM_BYTES.length + bodyBytes.length);
-  out.set(UTF8_BOM_BYTES, 0);
-  out.set(bodyBytes, UTF8_BOM_BYTES.length);
-  return out;
+/** Alias kept for code viewers. */
+export function stripUtf8BomForDisplay(content: string): string {
+  return withoutUtf8Bom(content);
 }
 
-/**
- * Creates a Blob prefixed with the UTF-8 Byte Order Mark (`0xEF, 0xBB, 0xBF`).
- */
-export function createUtf8BomBlob(
-  content: string,
-  mimeType = 'text/plain;charset=utf-8'
-): Blob {
-  const bytes = encodeUtf8WithBom(content);
+/** Encodes text as UTF-8 without a BOM. */
+export function encodeUtf8(content: string): Uint8Array {
+  return new TextEncoder().encode(withoutUtf8Bom(content));
+}
+
+/** Creates a UTF-8 (no BOM) text Blob. */
+export function createUtf8Blob(content: string, mimeType = 'text/plain;charset=utf-8'): Blob {
+  const bytes = encodeUtf8(content);
   return new Blob([bytes.buffer as ArrayBuffer], { type: mimeType });
 }
 
@@ -84,8 +62,8 @@ export function buildZipArchive(files: ZipFileEntry[]): Blob {
 
   for (const file of files) {
     const nameBytes = encoder.encode(file.path);
-    // Encode all packaged files with UTF-8-BOM (EF BB BF) for cross-platform compatibility
-    const dataBytes = encodeUtf8WithBom(file.content);
+    // Plain UTF-8 (no BOM) so shell scripts keep a working `#!` line
+    const dataBytes = encodeUtf8(file.content);
     const crc = crc32(dataBytes);
     const size = dataBytes.length;
 
@@ -175,14 +153,12 @@ export function triggerBlobDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-/**
- * Convenience helper to download any script or source file with UTF-8-BOM (EF BB BF) encoding.
- */
-export function triggerUtf8BomFileDownload(
+/** Downloads a script or source file as UTF-8 (no BOM). */
+export function triggerUtf8FileDownload(
   content: string,
   filename: string,
   mimeType = 'text/plain;charset=utf-8'
 ): void {
-  const blob = createUtf8BomBlob(content, mimeType);
+  const blob = createUtf8Blob(content, mimeType);
   triggerBlobDownload(blob, filename);
 }

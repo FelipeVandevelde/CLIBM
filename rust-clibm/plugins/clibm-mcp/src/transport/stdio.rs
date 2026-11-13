@@ -17,15 +17,13 @@ impl StdioTransport {
     }
 
     pub fn run(adapter: Arc<McpAdapter>) -> Result<()> {
-        let doc_link = "https://github.com/FelipeVandevelde/CLIBM/blob/main/rust-clibm/plugins/clibm-mcp/README.md#ai-agent-mcp-configuration-json";
-        eprintln!("====================================================================");
-        eprintln!(" CLIBM-MCP v0.2.0 — Self-Hosted AI Model Context Protocol Server");
-        eprintln!(" Transport Config : STDIO JSON-RPC 2.0");
-        eprintln!(" Active Project   : {}", adapter.project_root().display());
-        eprintln!(" Read-Only Mode   : {}", adapter.config().read_only);
-        eprintln!(" Documentation    : {}", doc_link);
-        eprintln!(" Agent Setup      : Configure your agent JSON using the documentation link above");
-        eprintln!("====================================================================");
+        // Diagnostics go to stderr: stdout carries the JSON-RPC stream only.
+        eprintln!(
+            "[clibm-mcp {}] stdio transport ready (project: {}, read-only: {})",
+            env!("CARGO_PKG_VERSION"),
+            adapter.project_root().display(),
+            adapter.config().read_only
+        );
 
         let stdin = io::stdin();
         let mut stdout = io::stdout();

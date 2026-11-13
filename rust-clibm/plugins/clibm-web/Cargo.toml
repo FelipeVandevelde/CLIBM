@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["CLIBM Contributors"]
 description = "Standalone single-binary local HTTP server plugin serving an embedded Web UI for ongoing CLIBM projects"
-license = "Apache-2.0"
+license = "MIT"
 readme = "README.md"
 
 [[bin]]
@@ -12,9 +12,10 @@ name = "clibm-web"
 path = "src/main.rs"
 
 [dependencies]
+# The CLIBM core library: all reads and writes go through it.
+clibm_core = { package = "clibm", path = "../.." }
 anyhow = "1.0"
 blake3 = "1.5"
-chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tiny_http = "0.12"

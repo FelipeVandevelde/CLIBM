@@ -1,6 +1,12 @@
-# CLIBM Self-Hosted Model Context Protocol Server (`clibm-mcp` v0.2.0)
+# clibm-mcp — Model Context Protocol server for CLIBM
 
-Modular, self-hosted Model Context Protocol (MCP) server plugin (`2024-11-05` specification) allowing AI agents and IDEs (Claude Desktop, Cursor, Windsurf, custom LLM orchestrators) to inspect and mutate `.clibm` repositories deterministically.
+`clibm-mcp` lets AI agents and coding assistants (Claude Desktop, Claude Code, Cursor,
+Windsurf, Cline, custom agents) read and manage a CLIBM project through the
+[Model Context Protocol](https://modelcontextprotocol.io) (`2024-11-05`).
+
+It is a thin, safe layer over the `clibm` CLI: every tool runs a `clibm` command in the
+project, so the agent follows exactly the same rules as you do (dependencies, WIP limits,
+plugin hooks, automatic commits).
 
 ## Quick Install
 
@@ -14,6 +20,11 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/install.ps1)
 ```
 
+The installer asks which transport to build (default **stdio**, the one AI clients use).
+Non-interactive: `./install.sh -y --transport both` / `.\install.ps1 -Yes -Transport both`.
+From a clone: `cd plugins/clibm-mcp && ./install.sh` (or `.\install.ps1`), or
+`clibm plugin install mcp --transport stdio`.
+
 ## Quick Uninstall
 
 ### Linux, macOS, WSL2
@@ -26,316 +37,159 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-mcp/uninstall.ps1)
 ```
 
+Or simply `clibm plugin uninstall mcp`. A running `clibm-mcp` (for example one started by an
+AI client) is stopped first, so the binary can always be removed.
+
 ---
 
-## Architecture Highlights
+## Command line
 
-- **Shared MCP Adapter**: Fully decoupled core engine providing `ToolRegistry`, `ResourceRegistry`, `PromptRegistry`, `PermissionManager`, and `RequestDispatcher`.
-- **Compile-Time Transport Gating**:
-  - `transport-stdio`: Lightweight STDIO JSON-RPC 2.0 without HTTP dependencies or network sockets.
-  - `transport-http`: Local HTTP JSON-RPC 2.0 server with CORS support.
-  - Both enabled: True concurrent dual-transport execution sharing a single `Arc<McpAdapter>`.
-- **Permission & Safety Model**: Enforces workspace boundary containment and supports `--read-only` policy.
-- **Strict Protocol Compliance**: Fully adheres to the Model Context Protocol (`2024-11-05`) and JSON-RPC 2.0 (§4.1) by silently consuming notification requests (such as `notifications/initialized`), ensuring compatibility with strict MCP client SDKs without connection drops.
+```text
+clibm-mcp [OPTIONS]
+clibm plugin run mcp -- [OPTIONS]
 
-## Cargo Feature Flags
+  --stdio          JSON-RPC 2.0 over stdin/stdout (default)
+  --http           Local HTTP endpoint: POST http://127.0.0.1:<port>/mcp
+  --both           stdio in the foreground and HTTP in the background
+  -p, --port <P>   Port for HTTP (default 7879)
+  --root <PATH>    Project folder containing .clibm (default: current folder or CLIBM_PROJECT_ROOT)
+  --read-only      Refuse tools that change the project
+  --print-config   Print the MCP client configuration (.mcp.json snippet)
+  -V, --version    Print the version
+  -h, --help       Print help
+```
 
-| Feature | Description | Dependency Impact |
+Unknown options are rejected (exit code 2). Defaults can also be set in
+`~/.clibm/mcp-config.json` (`transport`, `http_port`, `read_only`), which the installer writes.
+
+### Cargo features
+
+| Feature | Transport | Default |
 |---|---|---|
-| `transport-stdio` | Enables stdio JSON-RPC 2.0 communication | Zero networking crates |
-| `transport-http` | Enables local HTTP JSON-RPC 2.0 server | Includes `tiny_http` |
-| `default` | Enables both transports | Full dual capability |
+| `transport-stdio` | stdin/stdout | yes |
+| `transport-http` | local HTTP (`tiny_http`) | yes |
 
 ```bash
-# Build STDIO only (minimal size, zero networking)
-cargo build --release --no-default-features --features transport-stdio
-
-# Build HTTP only
-cargo build --release --no-default-features --features transport-http
-
-# Build both (default)
-cargo build --release --features "transport-stdio,transport-http"
+cargo build --release -p clibm-mcp --no-default-features --features transport-stdio   # stdio only
+cargo build --release -p clibm-mcp --no-default-features --features transport-http    # HTTP only
 ```
 
-## Interactive Transport Configuration During Installation
-
-When you run `./install.sh` (or `.\install.ps1` on Windows) inside `plugins/clibm-mcp`, the installer compiles only the chosen transport:
-
-```powershell
-# Windows PowerShell:
-cd plugins\clibm-mcp
-.\install.ps1
-# Or non-interactively:
-.\install.ps1 -Transport stdio
-```
-
-```bash
-# Linux / macOS:
-cd plugins/clibm-mcp
-./install.sh
-# Or non-interactively:
-./install.sh --transport stdio
-```
-
-## Running Inside an Ongoing CLIBM Project
-
-```bash
-cd ~/my-clibm-project
-
-# Run in stdio mode (Claude Desktop / Cursor MCP config):
-clibm plugin run mcp -- --stdio
-
-# Run self-hosted HTTP server on custom port:
-clibm plugin run mcp -- --http --port 7879
-
-# Run in read-only mode (prevents mutating tool calls):
-clibm plugin run mcp -- --stdio --read-only
-
-# Run both transports simultaneously (HTTP runs in background thread):
-clibm plugin run mcp -- --both
-```
+---
 
 ## AI Agent MCP Configuration JSON
 
-To connect `clibm-mcp` with AI agents and coding assistants (Google Antigravity, Claude Desktop, Cursor, Windsurf, Claude Code, Cline, Roo Code, or custom LLM orchestrators), configure your client's MCP configuration JSON file using the templates below.
+`clibm-mcp --print-config` prints the minimal configuration:
 
-### 1. Google Antigravity / Gemini CLI (`mcp_config.json`)
-
-Antigravity supports both local STDIO executables and Streamable HTTP endpoints. Configure globally in `~/.gemini/config/mcp_config.json` or in your workspace config:
-
-#### STDIO Transport
 ```json
 {
   "mcpServers": {
     "clibm": {
       "command": "clibm-mcp",
-      "args": ["--stdio", "--root", "/absolute/path/to/your/clibm/project"]
-    }
-  }
-}
-```
-*(On Windows, you can specify `"clibm-mcp.exe"` or the full path `"%USERPROFILE%\\.clibm-bin\\clibm-mcp.exe"` if not yet in your system `PATH`.)*
-
-#### HTTP Transport (Self-Hosted Daemon)
-```json
-{
-  "mcpServers": {
-    "clibm-http": {
-      "serverUrl": "http://127.0.0.1:7879"
+      "args": ["--stdio"]
     }
   }
 }
 ```
 
----
+The server works on the project in its **current folder** (or a parent folder). When your
+client does not start it inside the project, add `"--root", "/absolute/path/to/project"` to
+`args`. If `clibm-mcp` is not on the `PATH` the client sees, use the full path
+(`~/.local/bin/clibm-mcp` or `%USERPROFILE%\.clibm-bin\clibm-mcp.exe`).
 
-### 2. Claude Desktop
+| Client | Where the configuration goes |
+|---|---|
+| Claude Code | `.mcp.json` at the project root, or `claude mcp add clibm -- clibm-mcp --stdio` |
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json` (add `--root`) |
+| Cursor | `.cursor/mcp.json` in the project |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` (add `--root`) |
+| VS Code (Cline, Roo Code) | the extension's MCP settings file (add `--root`) |
 
-Add `clibm` under the `mcpServers` object in your Claude Desktop configuration file:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux**: `~/.config/Claude/claude_desktop_config.json`
-
-#### Recommended: Standard CLI Invocation (Workspace-Bound)
-```json
-{
-  "mcpServers": {
-    "clibm": {
-      "command": "clibm",
-      "args": ["plugin", "run", "mcp", "--", "--stdio"],
-      "env": {
-        "CLIBM_PROJECT_ROOT": "/absolute/path/to/your/clibm/project"
-      }
-    }
-  }
-}
-```
-
-#### Alternative: Direct Standalone Binary Invocation (`clibm-mcp`)
-If you prefer calling the installed binary directly without the `clibm plugin run` runner:
-```json
-{
-  "mcpServers": {
-    "clibm": {
-      "command": "clibm-mcp",
-      "args": ["--stdio", "--root", "/absolute/path/to/your/clibm/project"]
-    }
-  }
-}
-```
-*(On Windows, you can specify `"clibm-mcp.exe"` or the full path `"%USERPROFILE%\\.clibm-bin\\clibm-mcp.exe"` if not yet on system `PATH`.)*
-
----
-
-### 3. Cursor IDE (`.cursor/mcp.json`)
-
-Cursor natively supports repository-level MCP configurations. Create or edit `.cursor/mcp.json` at the root of your project:
-
-```json
-{
-  "mcpServers": {
-    "clibm": {
-      "command": "clibm",
-      "args": ["plugin", "run", "mcp", "--", "--stdio"]
-    }
-  }
-}
-```
-
-Or configure globally in Cursor via **Settings** -> **Features** -> **MCP** -> **+ Add New MCP Server**:
-- **Name**: `clibm`
-- **Type**: `command`
-- **Command**: `clibm plugin run mcp -- --stdio`
-
----
-
-### 4. Windsurf (`~/.codeium/windsurf/mcp_config.json`)
-
-Windsurf reads MCP servers from `~/.codeium/windsurf/mcp_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "clibm": {
-      "command": "clibm",
-      "args": ["plugin", "run", "mcp", "--", "--stdio"],
-      "env": {
-        "CLIBM_PROJECT_ROOT": "${workspaceFolder}"
-      }
-    }
-  }
-}
-```
-
----
-
-### 5. VS Code Extensions (Cline, Roo Code, Claude Dev)
-
-In Cline / Roo Code MCP Settings (`cline_mcp_settings.json`):
-
-```json
-{
-  "mcpServers": {
-    "clibm": {
-      "command": "clibm",
-      "args": ["plugin", "run", "mcp", "--", "--stdio"],
-      "disabled": false,
-      "autoApprove": [
-        "clibm_status",
-        "clibm_task_list"
-      ]
-    }
-  }
-}
-```
-
----
-
-### 6. Safe Read-Only Policy for Autonomous Agents
-
-To allow autonomous agents or multi-agent pipelines to inspect tasks, query Kanban columns, and analyze commit trees without permission to mutate your backlog or switch workspaces, append `--read-only` to the server arguments:
+### Safe read-only mode for autonomous agents
 
 ```json
 {
   "mcpServers": {
     "clibm-readonly": {
-      "command": "clibm",
-      "args": ["plugin", "run", "mcp", "--", "--stdio", "--read-only"]
+      "command": "clibm-mcp",
+      "args": ["--stdio", "--read-only", "--root", "/absolute/path/to/project"]
     }
   }
 }
 ```
 
-When `--read-only` is active:
-- Query tools (`clibm_status`, `clibm_task_list`, non-mutating plugin tools) execute normally.
-- Mutating tools (`clibm_task_add`, `clibm_board_move`, `clibm_workspace_switch`, mutating plugin tools) are automatically rejected with an access-denied error code.
+Tools that change the project (`clibm_task_add`, `clibm_board_move`,
+`clibm_workspace_switch`, and plugin tools declared as mutating) are refused.
+
+### Local HTTP endpoint
+
+Start it with `clibm-mcp --http` (or `--both`), then point HTTP-capable clients at
+`http://127.0.0.1:7879/mcp`:
+
+```json
+{
+  "mcpServers": {
+    "clibm-http": { "type": "http", "url": "http://127.0.0.1:7879/mcp" }
+  }
+}
+```
+
+The endpoint is a minimal *Streamable HTTP* server: `POST /mcp` takes one JSON-RPC message
+or a batch and answers with `application/json`; notifications get `202 Accepted`; `GET`
+answers `405` (no server-sent event stream). It binds `127.0.0.1` only, sends no CORS
+headers, and refuses requests whose `Host` or `Origin` is not the local server, so other
+websites cannot reach it from your browser.
 
 ---
 
-### 7. Local HTTP Server Configuration (Multi-Agent & Web Clients)
+## Exposed capabilities
 
-When running `clibm-mcp` with the HTTP transport (`clibm plugin run mcp -- --http --port 7879`):
+### Tools
 
-#### Standard / Antigravity Streamable HTTP:
+| Tool | Changes the project | What it does |
+|---|---|---|
+| `clibm_status` | no | Branch, HEAD, uncommitted changes, active workspace/project, counts per column (JSON) |
+| `clibm_task_list` | no | Tasks as JSON; filters `all_workspaces`, `priority`, `column`, `tag` |
+| `clibm_task_show` | no | One task as JSON; `task` = `APP-101`, `101` or a hash prefix |
+| `clibm_task_add` | yes | Create a task (`title`, optional `description`, `priority`, `column`, `assignee`, `depends_on`) |
+| `clibm_board_move` | yes | Move a task to a column; refusals (dependency, WIP limit, plugin veto) explain why |
+| `clibm_workspace_switch` | yes | Switch workspace by ID/name, or cycle alphabetically |
+
+When a tool fails (for example a move blocked by a dependency) the result is returned with
+`isError: true` and CLIBM's message, so the agent can read it and react.
+
+#### Plugin tools
+
+Installed plugins can declare MCP tools in their manifest (`<plugin> --manifest`, stored in
+`~/.clibm/plugins/registry.json`). They appear as `<plugin>__<tool>`, for example
+`dep_audit__audit_dependencies`, `export_md__export_project`, `workflow_lint__lint_workflow`.
+
+- Only plugins that are **installed** (binary present) and **enabled** expose tools.
+- Names always carry the plugin prefix, so a plugin can never replace a built-in tool or
+  another plugin's tool.
+- Arguments are validated against the declared `input_schema` and passed to
+  `clibm plugin run <plugin> -- <execution_ref> --<arg> <value>`.
+
+A tool declaration in a plugin manifest:
+
 ```json
 {
-  "mcpServers": {
-    "clibm-http": {
-      "serverUrl": "http://127.0.0.1:7879"
-    }
-  }
+  "name": "audit_dependencies",
+  "description": "Audit the task dependency graph",
+  "input_schema": { "type": "object", "properties": { "all": { "type": "boolean" } } },
+  "is_mutating": false,
+  "execution_ref": "audit"
 }
 ```
 
-#### Custom Transport Clients:
-```json
-{
-  "mcpServers": {
-    "clibm-http": {
-      "url": "http://127.0.0.1:7879",
-      "transport": "http"
-    }
-  }
-}
-```
+### Resources
 
-- **`GET /`**: Returns server capability discovery metadata, version info, and links to documentation.
-- **`POST /`**: Full JSON-RPC 2.0 endpoint for agent method dispatching (`initialize`, `tools/list`, `tools/call`, `resources/list`, etc.).
+| URI | Content |
+|---|---|
+| `clibm://tree/staged` | The current (staged) tree object: IDs mapped to object hashes |
+| `clibm://config` | `.clibm/config.json` |
+| `clibm://board/active` | The active board as text (`clibm board show`) |
 
+### Prompts
 
-## Exposed Capabilities
-
-### 1. Tools (`tools/list`, `tools/call`)
-
-#### Native Tools
-- `clibm_status` — Inspect active workspace, branch, HEAD commit, and BLAKE3 CAS stats.
-- `clibm_task_list` — Query tasks in the active workspace or across `--all-workspaces`.
-- `clibm_task_add` — Create an immutable task in the active workspace (auto-committed via BLAKE3).
-- `clibm_board_move` — Transition a task across Kanban columns with DAG dependency validation.
-- `clibm_workspace_switch` — Switch active workspace by ID/name or cycle alphabetically (`A->Z`).
-
-#### Dynamic Plugin Tools (Registry-Driven)
-`clibm-mcp` automatically reads the local repository's `.clibm/plugins/registry.json` (and user-level registry) to expose tools declared by enabled, installed plugins:
-- Namespaced identifiers (e.g. `dep_audit.audit_dependencies`, `export_md.export_project`).
-- Validates input arguments against the declared JSON Schema before invocation.
-- Dispatches execution to the owning plugin via `clibm plugin run <plugin_name> [args]`.
-- Live reloading: detects modifications to `registry.json` and updates the active tool set on the fly without restarting the MCP server (supported by advertising `"tools": { "listChanged": true }`).
-
-### Declaring Tools in `registry.json`
-
-Add a `tools` array (or `mcp: { "tools": [...] }`) to any plugin's entry in `.clibm/plugins/registry.json`:
-
-```json
-[
-  {
-    "name": "clibm-dep-audit",
-    "version": "0.1.0",
-    "description": "Dependency graph auditor",
-    "enabled": true,
-    "executable": "~/.clibm-bin/clibm-dep-audit.exe",
-    "tools": [
-      {
-        "name": "audit_dependencies",
-        "description": "Audit task DAG for circular dependencies and blockers",
-        "input_schema": {
-          "type": "object",
-          "properties": {
-            "format": { "type": "string", "enum": ["text", "json"] }
-          }
-        },
-        "is_mutating": false,
-        "execution_ref": "audit"
-      }
-    ]
-  }
-]
-```
-
-### 2. Live CAS Resources (`resources/list`, `resources/read`)
-- `clibm://tree/staged` — Current staged BLAKE3 CAS objects and manifest trees.
-- `clibm://config` — Repository configuration, branch heads, and active workspace metadata.
-- `clibm://board/active` — Active ASCII Kanban board visualization.
-
-### 3. Agent Prompts (`prompts/list`, `prompts/get`)
-- `clibm_task_planning` — Requirements decomposition and task breakdown prompt template.
-- `clibm_commit_summary` — Conventional BLAKE3 commit message generation prompt template.
+`clibm_task_planning` (break a goal into tasks) and `clibm_commit_summary` (summarize recent
+history).

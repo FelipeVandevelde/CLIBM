@@ -15,26 +15,22 @@ use std::time::UNIX_EPOCH;
 pub struct PluginToolDiscovery;
 
 impl PluginToolDiscovery {
-    /// Returns the list of registry files to inspect, in order of priority.
-    pub fn candidate_registry_files(project_root: &Path) -> Vec<PathBuf> {
-        let mut files = Vec::new();
-
-        // 1. Local project registry
-        let local_reg = project_root.join(".clibm").join("plugins").join("registry.json");
-        files.push(local_reg);
-
-        // 2. User-level global registry
-        if let Ok(home) = env::var("CLIBM_HOME")
-            .or_else(|_| env::var("HOME"))
-            .or_else(|_| env::var("USERPROFILE"))
-        {
-            let home_path = PathBuf::from(home);
-            files.push(home_path.join(".clibm").join("plugins").join("registry.json"));
-            files.push(home_path.join(".clibm-bin").join("registry.json"));
-            files.push(home_path.join(".local").join("bin").join("registry.json"));
-        }
-
-        files
+    /// Registry files to inspect: `[global, project]`. The global registry
+    /// (`~/.clibm/plugins/registry.json`) is the list of installed plugins; the project
+    /// registry may only switch them on or off (`{"name": .., "enabled": ..}`).
+    pub fn candidate_registry_files(project_root: &Path, home_dir: Option<&Path>) -> Vec<PathBuf> {
+        let home = home_dir.map(Path::to_path_buf).or_else(|| {
+            env::var("CLIBM_HOME")
+                .or_else(|_| env::var("HOME"))
+                .or_else(|_| env::var("USERPROFILE"))
+                .ok()
+                .map(PathBuf::from)
+        });
+        let global = home
+            .map(|h| h.join(".clibm").join("plugins").join("registry.json"))
+            .unwrap_or_else(|| PathBuf::from(".clibm-global-registry-unavailable"));
+        let project = project_root.join(".clibm").join("plugins").join("registry.json");
+        vec![global, project]
     }
 
     /// Computes a composite fingerprint (mtime + size) for active registry files.
@@ -74,7 +70,7 @@ impl PluginToolDiscovery {
     /// Reads registry files, validates plugin tool declarations, and builds MCP ToolDefinitions.
     #[allow(dead_code)]
     pub fn discover_tools(project_root: &Path) -> (Vec<ToolDefinition>, u64) {
-        let files = Self::candidate_registry_files(project_root);
+        let files = Self::candidate_registry_files(project_root, None);
         Self::discover_tools_from_files(&files, project_root)
     }
 
@@ -84,106 +80,97 @@ impl PluginToolDiscovery {
         _project_root: &Path,
     ) -> (Vec<ToolDefinition>, u64) {
         let fingerprint = Self::compute_fingerprint(files);
-        let mut plugins_by_name: HashMap<String, PluginRegistryEntry> = HashMap::new();
+        let read_entries = |path: &PathBuf| -> Vec<serde_json::Value> {
+            fs::read_to_string(path)
+                .ok()
+                .and_then(|raw| {
+                    let clean = raw.strip_prefix('\u{feff}').unwrap_or(&raw).to_string();
+                    serde_json::from_str::<Vec<serde_json::Value>>(&clean).ok()
+                })
+                .unwrap_or_default()
+        };
 
-        // 1. Load and merge plugins across candidate files (earlier files take precedence)
-        for path in files {
-            if !path.exists() {
-                continue;
+        // 1. Installed plugins come from the global registry (first file) only; project
+        //    registries (remaining files) can only override `enabled`.
+        let mut plugins_by_name: HashMap<String, PluginRegistryEntry> = HashMap::new();
+        if let Some(global) = files.first() {
+            for value in read_entries(global) {
+                if let Ok(entry) = serde_json::from_value::<PluginRegistryEntry>(value) {
+                    plugins_by_name.entry(entry.name.clone()).or_insert(entry);
+                }
             }
-            if let Ok(raw) = fs::read_to_string(path) {
-                let clean = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
-                if let Ok(entries) = serde_json::from_str::<Vec<PluginRegistryEntry>>(clean) {
-                    for entry in entries {
-                        plugins_by_name.entry(entry.name.clone()).or_insert(entry);
+        }
+        for overrides in files.iter().skip(1) {
+            for value in read_entries(overrides) {
+                let name = value.get("name").and_then(|n| n.as_str());
+                let enabled = value.get("enabled").and_then(|e| e.as_bool());
+                if let (Some(name), Some(enabled)) = (name, enabled) {
+                    if let Some(entry) = plugins_by_name.get_mut(name) {
+                        entry.enabled = enabled;
                     }
                 }
             }
         }
 
-        // 2. Identify native tool names to prevent conflicts
-        let native_tool_names: HashSet<&'static str> = [
-            "clibm_status",
-            "clibm_task_list",
-            "clibm_task_add",
-            "clibm_board_move",
-            "clibm_workspace_switch",
-        ]
-        .into_iter()
-        .collect();
-
+        // 2. Build tools. Names are always `<plugin>__<tool>` (letters, digits, '_' and
+        //    '-' only, at most 64 characters), so a plugin can neither shadow a native
+        //    tool nor claim another plugin's tool name.
         let mut discovered = Vec::new();
         let mut registered_names: HashSet<String> = HashSet::new();
 
-        // 3. Process eligible plugins
         for (plugin_name, manifest) in plugins_by_name {
-            // Must be enabled and installed (has executable)
-            if !manifest.enabled || manifest.executable.is_none() {
+            if !manifest.enabled {
+                continue;
+            }
+            // Only installed plugins: the executable must exist.
+            let installed = manifest
+                .executable
+                .as_deref()
+                .map(|e| Path::new(e).is_file())
+                .unwrap_or(false);
+            if !installed {
                 continue;
             }
 
-            // Collect tools from both direct `tools` array and `mcp.tools`
             let mut raw_tools = manifest.tools.clone();
             if let Some(mcp) = manifest.mcp {
                 raw_tools.extend(mcp.tools);
             }
-
-            if raw_tools.is_empty() {
-                continue;
-            }
-
             let plugin_prefix = Self::clean_plugin_prefix(&plugin_name);
 
             for tool_decl in raw_tools {
-                if tool_decl.name.trim().is_empty() {
+                let tool_part = Self::sanitize_name(tool_decl.name.trim());
+                if tool_part.is_empty() || plugin_prefix.is_empty() {
                     continue;
                 }
-
-                // Deterministic namespacing
-                let qualified_name = if tool_decl.name.contains('.') {
-                    tool_decl.name.trim().to_string()
-                } else {
-                    format!("{}.{}", plugin_prefix, tool_decl.name.trim())
-                };
-
-                // Conflict check 1: Native tools cannot be overwritten
-                if native_tool_names.contains(qualified_name.as_str())
-                    || native_tool_names.contains(tool_decl.name.as_str())
-                {
+                let qualified_name = format!("{}__{}", plugin_prefix, tool_part);
+                if qualified_name.len() > 64 {
                     eprintln!(
-                        "[clibm-mcp] Warning: Plugin '{}' attempted to overwrite native tool '{}'; skipping.",
-                        plugin_name, qualified_name
+                        "[clibm-mcp] Warning: tool name '{}' from plugin '{}' is longer than 64 characters; skipping.",
+                        qualified_name, plugin_name
                     );
                     continue;
                 }
-
-                // Conflict check 2: Prevent cross-plugin duplicate registrations
-                if registered_names.contains(&qualified_name) {
+                if !registered_names.insert(qualified_name.clone()) {
                     eprintln!(
-                        "[clibm-mcp] Warning: Duplicate tool name '{}' declared by plugin '{}'; skipping.",
+                        "[clibm-mcp] Warning: duplicate tool name '{}' from plugin '{}'; skipping.",
                         qualified_name, plugin_name
                     );
                     continue;
                 }
 
-                registered_names.insert(qualified_name.clone());
+                let description = tool_decl.description.unwrap_or_else(|| {
+                    format!("Tool '{}' provided by plugin '{}'", tool_part, plugin_name)
+                });
 
-                let description = tool_decl
-                    .description
-                    .unwrap_or_else(|| {
-                        format!("Tool '{}' provided by plugin '{}'", qualified_name, plugin_name)
-                    });
-
-                let tool_def = Self::build_tool_definition(
+                discovered.push(Self::build_tool_definition(
                     qualified_name,
                     description,
                     tool_decl.input_schema,
                     tool_decl.is_mutating,
                     plugin_name.clone(),
                     tool_decl.execution_ref,
-                );
-
-                discovered.push(tool_def);
+                ));
             }
         }
 
@@ -197,7 +184,15 @@ impl PluginToolDiscovery {
     pub fn clean_plugin_prefix(name: &str) -> String {
         let trimmed = name.trim();
         let stripped = trimmed.strip_prefix("clibm-").unwrap_or(trimmed);
-        stripped.replace('-', "_")
+        Self::sanitize_name(stripped).replace('-', "_")
+    }
+
+    /// Keeps letters, digits, '_' and '-' (MCP clients accept `^[a-zA-Z0-9_-]{1,64}$`);
+    /// anything else becomes '_'.
+    pub fn sanitize_name(name: &str) -> String {
+        name.chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .collect()
     }
 
     /// Builds a ToolDefinition with the dispatch closure.
