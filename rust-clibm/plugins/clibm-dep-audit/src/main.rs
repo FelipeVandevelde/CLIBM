@@ -12,6 +12,11 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+const PLUGIN_NAME: &str = "clibm-dep-audit";
+const PLUGIN_DESCRIPTION: &str = "Critical path and circular dependency analyzer for task graphs";
+/// Lifecycle events this plugin subscribes to by default.
+const DEFAULT_HOOKS: &[&str] = &["on-task-depend"];
+
 #[derive(Debug, Serialize)]
 struct PluginResponse {
     ok: bool,
@@ -29,6 +34,11 @@ struct ComputedIndex {
 }
 
 fn main() -> Result<()> {
+    let manifest_args: Vec<String> = env::args().skip(1).collect();
+    if manifest_args.iter().any(|a| a == "--manifest") {
+        println!("{}", manifest_json(&manifest_args));
+        return Ok(());
+    }
     let project_root = env::var("CLIBM_PROJECT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -76,4 +86,34 @@ fn main() -> Result<()> {
     let _ = Value::Null;
     println!("{}", serde_json::to_string(&fallback)?);
     Ok(())
+}
+
+/// `--manifest [--executable <path>] [--hooks a,b]`: prints this plugin's registry entry
+/// (one JSON line). Installers and `clibm plugin install` store it in
+/// `~/.clibm/plugins/registry.json`.
+fn manifest_json(args: &[String]) -> String {
+    let value_after = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let hooks: Vec<String> = match value_after("--hooks") {
+        Some(csv) => csv
+            .split(',')
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .collect(),
+        None => DEFAULT_HOOKS.iter().map(|h| h.to_string()).collect(),
+    };
+    serde_json::json!({
+        "name": PLUGIN_NAME,
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": PLUGIN_DESCRIPTION,
+        "enabled": true,
+        "hooks": hooks,
+        "executable": value_after("--executable"),
+        "tools": serde_json::json!([{ "name": "audit_dependencies", "description": "Audit the task dependency graph for circular chains and critical-path blockers", "input_schema": { "type": "object", "properties": {} }, "is_mutating": false, "execution_ref": "audit" }]),
+    })
+    .to_string()
 }

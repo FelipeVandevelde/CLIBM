@@ -6,14 +6,18 @@
 //! Cargo crates in `plugins/` and communicate via `CLIBM_PLUGIN_CONTRACT_V1`.
 
 use crate::cas::CasStore;
+use crate::install::{clibm_home, expand_tilde, global_clibm_dir, InstallConfig};
 use crate::models::*;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 pub const CONTRACT_VERSION: &str = "CLIBM_PLUGIN_CONTRACT_V1";
 pub const UTF8_BOM: &str = "\u{FEFF}";
@@ -135,17 +139,90 @@ fn read_utf8_strip_bom(path: &Path) -> Result<String> {
     Ok(raw.strip_prefix(UTF8_BOM).unwrap_or(&raw).to_string())
 }
 
+/// Lifecycle events the core fires to subscribed plugins. A plugin answering
+/// `ok: false` to a `pre-*` event blocks the action; other events are informational.
+pub const HOOK_EVENTS: &[&str] = &[
+    "pre-commit",
+    "post-commit",
+    "pre-move",
+    "on-task-move",
+    "on-task-depend",
+    "on-workspace-switch",
+    "on-export",
+];
+
+/// Hook names that mark a plugin as interactive (it owns the terminal or runs a server).
+/// Interactive plugins are launched with the terminal attached and never receive hooks.
+const INTERACTIVE_MARKERS: &[&str] = &[
+    "interactive-tui",
+    "http-bridge",
+    "mcp-stdio",
+    "mcp-http",
+    "mcp-http-sse",
+];
+
+fn default_plugin_version() -> String {
+    "0.1.0".to_string()
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+/// An installed plugin, as stored in the global registry `~/.clibm/plugins/registry.json`.
+/// Official plugins print this manifest themselves with `<binary> --manifest`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub name: String,
+    #[serde(default = "default_plugin_version")]
     pub version: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
     pub hooks: Vec<String>,
-    /// Path or binary name of the installed standalone plugin executable on Linux/Windows.
+    /// Absolute path of the installed plugin executable.
+    #[serde(default)]
     pub executable: Option<String>,
+    /// Extra fields (e.g. MCP `tools`) are preserved as-is.
     #[serde(flatten, default)]
-    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl PluginManifest {
+    /// Executable path with `~` expanded.
+    pub fn executable_path(&self) -> Option<PathBuf> {
+        self.executable
+            .as_deref()
+            .filter(|e| !e.trim().is_empty())
+            .map(expand_tilde)
+    }
+
+    /// `true` when the registered executable exists on disk.
+    pub fn is_installed(&self) -> bool {
+        self.executable_path().map(|p| p.is_file()).unwrap_or(false)
+    }
+
+    pub fn is_interactive(&self) -> bool {
+        matches!(self.name.as_str(), "clibm-tui" | "clibm-web" | "clibm-mcp")
+            || self
+                .hooks
+                .iter()
+                .any(|h| INTERACTIVE_MARKERS.contains(&h.as_str()))
+    }
+
+    pub fn subscribes_to(&self, event: &str) -> bool {
+        self.hooks.iter().any(|h| h == event)
+    }
+}
+
+/// Per-project setting stored in `.clibm/plugins/registry.json`. A project can only
+/// enable or disable an installed plugin; it can never point CLIBM at an executable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginOverride {
+    pub name: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,157 +231,167 @@ pub struct PluginInvocationRequest {
     pub event: String,
     pub tree_hash: String,
     pub args: Vec<String>,
+    /// Event details (task, columns, commit...). Optional, so V1 plugins keep working.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub context: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginInvocationResponse {
     pub ok: bool,
+    #[serde(default)]
     pub output: String,
+}
+
+/// What `clibm plugin uninstall` did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginUninstallReport {
+    pub name: String,
+    /// Binaries deleted.
+    pub removed: Vec<String>,
+    /// Binaries that were locked (Windows) and renamed to `*.old.<id>` instead.
+    pub rotated: Vec<String>,
+    /// Binaries that could neither be deleted nor renamed.
+    pub failed: Vec<String>,
+    pub registry_entry_removed: bool,
+}
+
+/// Reads a registry file (global manifests or project overrides). Missing or invalid
+/// files read as empty; a UTF-8 BOM is tolerated.
+fn read_registry_values(path: &Path) -> Vec<Value> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let clean = raw.strip_prefix(UTF8_BOM).unwrap_or(&raw);
+    serde_json::from_str::<Vec<Value>>(clean).unwrap_or_default()
+}
+
+/// Writes registry entries as a JSON array with one compact object per line (UTF-8,
+/// no BOM). The shell helpers in `scripts/env-path.*` rely on this line format.
+pub fn write_registry_file<T: Serialize>(path: &Path, entries: &[T]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut lines = Vec::with_capacity(entries.len());
+    for e in entries {
+        lines.push(serde_json::to_string(e)?);
+    }
+    let body = if lines.is_empty() {
+        "[]\n".to_string()
+    } else {
+        format!("[\n{}\n]\n", lines.join(",\n"))
+    };
+    write_utf8_file(path, &body)
+        .with_context(|| format!("Failed to write plugin registry {}", path.display()))
 }
 
 pub struct PluginManager;
 
 impl PluginManager {
-    /// Returns an empty list (`vec![]`) because `clibm_core` is 100% pure by default.
-    /// Plugins are installed from their respective folders in `plugins/`.
-    pub fn default_manifests() -> Vec<PluginManifest> {
-        Vec::new()
-    }
-
-    /// Returns the 3 default plugin manifests (`clibm-dep-audit`, `clibm-export-md`, `clibm-workflow-lint`)
-    /// when the user explicitly chooses the "Core + Default Plugins" profile during installation.
-    pub fn default_plugin_bundle(install_dir: &str) -> Vec<PluginManifest> {
-        let base = install_dir.trim_end_matches('/');
-        vec![
-            PluginManifest {
-                name: "clibm-dep-audit".to_string(),
-                version: "0.1.0".to_string(),
-                description: "Critical path and circular dependency analyzer for task graphs"
-                    .to_string(),
-                enabled: true,
-                hooks: vec!["pre-commit".to_string(), "on-task-depend".to_string()],
-                executable: Some(format!("{}/clibm-dep-audit", base)),
-                extra: {
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert(
-                        "tools".to_string(),
-                        serde_json::json!([
-                            {
-                                "name": "audit_dependencies",
-                                "description": "Audit task dependency DAG in computed index to detect circular chains and blockers",
-                                "input_schema": {
-                                    "type": "object",
-                                    "properties": {}
-                                },
-                                "is_mutating": false,
-                                "execution_ref": "audit"
-                            }
-                        ]),
-                    );
-                    m
-                },
-            },
-            PluginManifest {
-                name: "clibm-export-md".to_string(),
-                version: "0.1.0".to_string(),
-                description: "Generates portable Markdown sprint reports from CAS snapshots"
-                    .to_string(),
-                enabled: true,
-                hooks: vec!["on-export".to_string()],
-                executable: Some(format!("{}/clibm-export-md", base)),
-                extra: {
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert(
-                        "tools".to_string(),
-                        serde_json::json!([
-                            {
-                                "name": "export_project",
-                                "description": "Generate portable Markdown sprint report from CAS object snapshot",
-                                "input_schema": {
-                                    "type": "object",
-                                    "properties": {}
-                                },
-                                "is_mutating": false,
-                                "execution_ref": "export"
-                            }
-                        ]),
-                    );
-                    m
-                },
-            },
-            PluginManifest {
-                name: "clibm-workflow-lint".to_string(),
-                version: "0.1.0".to_string(),
-                description: "Validates Kanban WIP limits, unblocked dependencies, and SLA dates"
-                    .to_string(),
-                enabled: true,
-                hooks: vec!["pre-move".to_string(), "pre-commit".to_string()],
-                executable: Some(format!("{}/clibm-workflow-lint", base)),
-                extra: {
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert(
-                        "tools".to_string(),
-                        serde_json::json!([
-                            {
-                                "name": "lint_workflow",
-                                "description": "Validate Kanban column WIP limits and required assignees",
-                                "input_schema": {
-                                    "type": "object",
-                                    "properties": {}
-                                },
-                                "is_mutating": false,
-                                "execution_ref": "lint"
-                            }
-                        ]),
-                    );
-                    m
-                },
-            },
-        ]
-    }
-
-    /// Returns the user-level global plugin registry path (`~/.clibm/plugins/registry.json`)
-    /// so plugins installed once from their own folder are available in all ongoing projects.
+    /// `~/.clibm/plugins/registry.json`: the single list of installed plugins.
     pub fn global_registry_file() -> Option<PathBuf> {
-        let home = env::var("CLIBM_HOME")
-            .or_else(|_| env::var("HOME"))
-            .or_else(|_| env::var("USERPROFILE"))
-            .ok()?;
-        let dir = PathBuf::from(home).join(".clibm").join("plugins");
-        let _ = fs::create_dir_all(&dir);
-        Some(dir.join("registry.json"))
+        global_clibm_dir().map(|d| d.join("plugins").join("registry.json"))
     }
 
-    /// Returns candidate `registry.json` files located alongside installed binaries
-    /// (`<install_path>/registry.json`, `<current_exe_dir>/registry.json`, `~/.clibm-bin/registry.json`, `~/.local/bin/registry.json`).
-    pub fn extra_registry_files(cas: &CasStore) -> Vec<PathBuf> {
-        let mut files = Vec::new();
-        let home = env::var("CLIBM_HOME")
-            .or_else(|_| env::var("HOME"))
-            .or_else(|_| env::var("USERPROFILE"))
-            .ok()
-            .map(PathBuf::from);
+    fn project_registry_file(cas: &CasStore) -> PathBuf {
+        cas.plugins_dir().join("registry.json")
+    }
 
-        if let Ok(cfg) = cas.load_config() {
-            if !cfg.install_path.is_empty() {
-                let expanded = if let Some(ref h) = home {
-                    cfg.install_path.replace('~', &h.to_string_lossy())
-                } else {
-                    cfg.install_path.clone()
-                };
-                files.push(PathBuf::from(expanded).join("registry.json"));
+    /// All entries of the global registry, including ones whose binary is missing.
+    pub fn load_global_registry() -> Vec<PluginManifest> {
+        Self::global_registry_file()
+            .map(|f| read_registry_values(&f))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|v| serde_json::from_value::<PluginManifest>(v).ok())
+            .collect()
+    }
+
+    pub fn save_global_registry(entries: &[PluginManifest]) -> Result<()> {
+        let file = Self::global_registry_file()
+            .ok_or_else(|| anyhow!("Cannot determine the home directory for ~/.clibm"))?;
+        write_registry_file(&file, entries)
+    }
+
+    /// Project overrides. Older full manifests in the project file are read as overrides
+    /// (only `name` and `enabled` are used).
+    pub fn load_project_overrides(cas: &CasStore) -> Vec<PluginOverride> {
+        read_registry_values(&Self::project_registry_file(cas))
+            .into_iter()
+            .filter_map(|v| {
+                let name = v.get("name")?.as_str()?.to_string();
+                let enabled = v.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+                Some(PluginOverride { name, enabled })
+            })
+            .collect()
+    }
+
+    fn save_project_overrides(cas: &CasStore, overrides: &[PluginOverride]) -> Result<()> {
+        write_registry_file(&Self::project_registry_file(cas), overrides)
+    }
+
+    /// Installed plugins with this project's enable/disable overrides applied, sorted by
+    /// name. Entries whose executable no longer exists are removed from the global
+    /// registry (with a notice on stderr) instead of being listed.
+    pub fn load_registry(cas: &CasStore) -> Result<Vec<PluginManifest>> {
+        let global = Self::load_global_registry();
+        let (mut installed, missing): (Vec<PluginManifest>, Vec<PluginManifest>) =
+            global.into_iter().partition(|p| p.is_installed());
+        if !missing.is_empty() {
+            for m in &missing {
+                eprintln!(
+                    "[clibm] Removed stale plugin entry '{}' (binary not found: {})",
+                    m.name,
+                    m.executable.as_deref().unwrap_or("-")
+                );
+            }
+            let _ = Self::save_global_registry(&installed);
+        }
+        if cas.is_initialized() {
+            let overrides = Self::load_project_overrides(cas);
+            for p in installed.iter_mut() {
+                if let Some(o) = overrides.iter().find(|o| o.name == p.name) {
+                    p.enabled = o.enabled;
+                }
             }
         }
-        if let Ok(exe) = env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                files.push(dir.join("registry.json"));
-            }
+        installed.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(installed)
+    }
+
+    /// Adds or replaces `manifest` in the global registry.
+    pub fn register_installed_plugin(manifest: &PluginManifest) -> Result<()> {
+        let mut entries = Self::load_global_registry();
+        match entries.iter_mut().find(|p| p.name == manifest.name) {
+            Some(existing) => *existing = manifest.clone(),
+            None => entries.push(manifest.clone()),
         }
-        if let Some(h) = home {
-            files.push(h.join(".clibm-bin").join("registry.json"));
-            files.push(h.join(".local").join("bin").join("registry.json"));
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        Self::save_global_registry(&entries)
+    }
+
+    /// Asks a plugin binary for its manifest (`<exe> --manifest --executable <exe>`).
+    /// Returns `None` for plugins that do not support it.
+    pub fn query_manifest(exe: &Path, hooks: Option<&str>) -> Option<PluginManifest> {
+        let mut args = vec![
+            "--manifest".to_string(),
+            "--executable".to_string(),
+            exe.to_string_lossy().to_string(),
+        ];
+        if let Some(h) = hooks.filter(|h| !h.trim().is_empty()) {
+            args.push("--hooks".to_string());
+            args.push(h.to_string());
         }
-        files
+        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let (ok, out) =
+            run_plugin_process(exe, &args, &cwd, None, Some(Duration::from_secs(10)), false).ok()?;
+        if !ok {
+            return None;
+        }
+        let line = out.lines().map(str::trim).find(|l| l.starts_with('{'))?;
+        let mut manifest: PluginManifest = serde_json::from_str(line).ok()?;
+        manifest.executable = Some(exe.to_string_lossy().replace('\\', "/"));
+        Some(manifest)
     }
 
     /// Resolves short plugin aliases to their standalone crate binary names in `plugins/`.
@@ -318,53 +405,70 @@ impl PluginManager {
             "dep-audit" => "clibm-dep-audit".to_string(),
             "export-md" => "clibm-export-md".to_string(),
             "workflow-lint" => "clibm-workflow-lint".to_string(),
+            "template" | "plugin-template" => "clibm-plugin-template".to_string(),
             other => other.to_string(),
         }
     }
 
-    /// Checks whether a binary exists in configured `install_path`, `~/.local/bin`, `~/.cargo/bin`, `~/.clibm-bin`, or `PATH`.
-    pub fn find_installed_binary(bin_name: &str) -> Option<PathBuf> {
-        let exe_name = if cfg!(windows) && !bin_name.ends_with(".exe") {
+    fn binary_file_name(bin_name: &str) -> String {
+        if cfg!(windows) && !bin_name.to_ascii_lowercase().ends_with(".exe") {
             format!("{}.exe", bin_name)
         } else {
             bin_name.to_string()
-        };
-
-        let explicit = PathBuf::from(&exe_name);
-        if explicit.is_absolute() && explicit.exists() {
-            return Some(explicit);
         }
+    }
 
-        if let Ok(exe) = env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                let candidate = dir.join(&exe_name);
-                if candidate.exists() {
-                    return Some(candidate);
+    /// Directories where CLIBM binaries are normally installed, most specific first.
+    fn candidate_bin_dirs(cas: Option<&CasStore>) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        let mut push = |d: PathBuf| {
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        };
+        if let Some(d) = InstallConfig::load().install_dir() {
+            push(d);
+        }
+        if let Some(cas) = cas {
+            if let Ok(cfg) = cas.load_config() {
+                if !cfg.install_path.trim().is_empty() {
+                    push(expand_tilde(&cfg.install_path));
                 }
             }
         }
+        if let Ok(exe) = env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                push(dir.to_path_buf());
+            }
+        }
+        if let Some(h) = clibm_home() {
+            push(h.join(".clibm-bin"));
+            push(h.join(".local").join("bin"));
+            push(h.join(".cargo").join("bin"));
+        }
+        dirs
+    }
 
-        if let Ok(home) = env::var("CLIBM_HOME")
-            .or_else(|_| env::var("HOME"))
-            .or_else(|_| env::var("USERPROFILE"))
-        {
-            let home_path = PathBuf::from(home);
-            let candidates = [
-                home_path.join(".local").join("bin").join(&exe_name),
-                home_path.join(".cargo").join("bin").join(&exe_name),
-                home_path.join(".clibm-bin").join(&exe_name),
-            ];
-            for c in candidates {
-                if c.exists() {
-                    return Some(c);
-                }
+    /// Checks whether a binary exists in the usual install folders or on `PATH`.
+    pub fn find_installed_binary(bin_name: &str) -> Option<PathBuf> {
+        let exe_name = Self::binary_file_name(bin_name);
+
+        let explicit = expand_tilde(&exe_name);
+        if explicit.is_absolute() {
+            return explicit.is_file().then_some(explicit);
+        }
+
+        for dir in Self::candidate_bin_dirs(None) {
+            let candidate = dir.join(&exe_name);
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
 
         if let Ok(path_var) = env::var("PATH") {
             for dir in env::split_paths(&path_var) {
                 let full = dir.join(&exe_name);
-                if full.exists() {
+                if full.is_file() {
                     return Some(full);
                 }
             }
@@ -401,96 +505,6 @@ impl PluginManager {
             }
         }
         false
-    }
-
-    /// Loads the merged plugin registry (project `.clibm/plugins/registry.json` +
-    /// global `~/.clibm/plugins/registry.json` + binary directory `registry.json`).
-    /// Starts empty on a Pure Core repository and persists merged manifests into `.clibm/plugins/registry.json`.
-    pub fn load_registry(cas: &CasStore) -> Result<Vec<PluginManifest>> {
-        let reg_file = cas.plugins_dir().join("registry.json");
-        let had_reg_file = reg_file.exists();
-        let mut plugins = if had_reg_file {
-            let content = read_utf8_strip_bom(&reg_file)?;
-            serde_json::from_str::<Vec<PluginManifest>>(&content)
-                .unwrap_or_else(|_| Self::default_manifests())
-        } else {
-            Self::default_manifests()
-        };
-
-        let mut changed = !had_reg_file;
-        let mut candidate_files = Vec::new();
-        if let Some(global_file) = Self::global_registry_file() {
-            candidate_files.push(global_file);
-        }
-        candidate_files.extend(Self::extra_registry_files(cas));
-
-        for ext_file in candidate_files {
-            if ext_file.exists() && ext_file != reg_file {
-                if let Ok(content) = read_utf8_strip_bom(&ext_file) {
-                    if let Ok(ext_plugins) =
-                        serde_json::from_str::<Vec<PluginManifest>>(&content)
-                    {
-                        for gp in ext_plugins {
-                            if let Some(existing) =
-                                plugins.iter_mut().find(|p| p.name == gp.name)
-                            {
-                                if existing.executable.is_none() && gp.executable.is_some() {
-                                    existing.executable = gp.executable;
-                                    changed = true;
-                                }
-                            } else {
-                                plugins.push(gp);
-                                changed = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if cas.is_initialized() && changed {
-            let _ = Self::save_registry(cas, &plugins);
-        }
-
-        Ok(plugins)
-    }
-
-    pub fn save_registry(cas: &CasStore, plugins: &[PluginManifest]) -> Result<()> {
-        if cas.is_initialized() {
-            let _ = fs::create_dir_all(cas.plugins_dir());
-            let reg_file = cas.plugins_dir().join("registry.json");
-            write_utf8_file(&reg_file, &serde_json::to_string_pretty(plugins)?)?;
-        }
-        Ok(())
-    }
-
-    pub fn save_manifest_to_file(reg_file: &Path, manifest: &PluginManifest) -> Result<()> {
-        if let Some(parent) = reg_file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let mut list: Vec<PluginManifest> = if reg_file.exists() {
-            read_utf8_strip_bom(reg_file)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-
-        if let Some(existing) = list.iter_mut().find(|p| p.name == manifest.name) {
-            *existing = manifest.clone();
-        } else {
-            list.push(manifest.clone());
-        }
-        write_utf8_file(reg_file, &serde_json::to_string_pretty(&list)?)?;
-        Ok(())
-    }
-
-    pub fn save_global_manifest(manifest: PluginManifest) -> Result<()> {
-        if let Some(global_file) = Self::global_registry_file() {
-            Self::save_manifest_to_file(&global_file, &manifest)?;
-        }
-        Ok(())
     }
 
     /// Resolves an official plugin's remote directory and source file list for raw GitHub installation.
@@ -727,21 +741,21 @@ impl PluginManager {
             }
         };
 
-        let cfg = cas.load_config().unwrap_or_default();
-        let home = env::var("HOME")
-            .or_else(|_| env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        let install_dir = if !cfg.install_path.is_empty() && cfg.install_path != "~/.local/bin" {
-            PathBuf::from(cfg.install_path.replace('~', &home))
-        } else if cfg!(windows) {
-            PathBuf::from(&home).join(".clibm-bin")
-        } else {
-            PathBuf::from(&home).join(".local").join("bin")
-        };
+        let install_dir = InstallConfig::load().install_dir().unwrap_or_else(|| {
+            let cfg = cas.load_config().unwrap_or_default();
+            let home = clibm_home().unwrap_or_else(|| PathBuf::from("."));
+            if !cfg.install_path.is_empty() && cfg.install_path != "~/.local/bin" {
+                expand_tilde(&cfg.install_path)
+            } else if cfg!(windows) {
+                home.join(".clibm-bin")
+            } else {
+                home.join(".local").join("bin")
+            }
+        });
 
         fs::create_dir_all(&install_dir)?;
         let installed_bin = install_dir.join(&bin_filename);
-        fs::copy(&built_bin, &installed_bin)?;
+        replace_binary(&built_bin, &installed_bin)?;
 
         if let Some(tmp) = temp_cleanup_dir {
             let _ = fs::remove_dir_all(tmp);
@@ -756,7 +770,7 @@ impl PluginManager {
                 );
             } else {
                 let _ = Command::new("cargo")
-                    .args(&["clean", "-p", &name, "--release"])
+                    .args(["clean", "-p", &name, "--release"])
                     .current_dir(&resolved_dir)
                     .status();
             }
@@ -771,64 +785,32 @@ impl PluginManager {
             );
         }
 
-        let hooks = if name.contains("tui") {
-            vec!["interactive-tui".to_string(), "on-board-move".to_string()]
-        } else if name.contains("web") {
-            vec!["http-bridge".to_string(), "on-state-query".to_string()]
-        } else if name.contains("mcp") {
-            let mode = mcp_transport.unwrap_or("both");
+        if name == "clibm-mcp" {
             if let Ok(mut updated_cfg) = cas.load_config() {
-                updated_cfg.mcp_transport = mode.to_string();
+                updated_cfg.mcp_transport = mcp_transport.unwrap_or("stdio").to_string();
                 let _ = cas.save_config(&updated_cfg);
             }
-            match mode {
-                "stdio" => vec!["mcp-stdio".to_string(), "on-ai-tool-call".to_string()],
-                "http" => vec!["mcp-http-sse".to_string(), "on-ai-tool-call".to_string()],
-                _ => vec![
-                    "mcp-stdio".to_string(),
-                    "mcp-http-sse".to_string(),
-                    "on-ai-tool-call".to_string(),
-                ],
-            }
-        } else if name.contains("dep-audit") {
-            vec!["pre-commit".to_string(), "on-task-depend".to_string()]
-        } else if name.contains("export-md") {
-            vec!["on-export".to_string()]
-        } else if name.contains("workflow-lint") {
-            vec!["pre-move".to_string(), "pre-commit".to_string()]
-        } else {
-            vec!["manual-run".to_string()]
-        };
+        }
 
-        let mut manifest = PluginManifest {
+        // The plugin describes itself (hooks, MCP tools); fall back to a manual-run entry
+        // for third-party plugins that do not implement `--manifest`.
+        let manifest = Self::query_manifest(&installed_bin, None).unwrap_or_else(|| PluginManifest {
             name: name.clone(),
             version: "0.1.0".to_string(),
             description,
             enabled: true,
-            hooks,
-            executable: Some(installed_bin.to_string_lossy().to_string()),
-            extra: std::collections::BTreeMap::new(),
-        };
-
-        if cas.is_initialized() {
-            let mut project_plugins = Self::load_registry(cas)?;
-            if let Some(existing) = project_plugins.iter_mut().find(|p| p.name == name) {
-                manifest.extra = existing.extra.clone();
-                *existing = manifest.clone();
-            } else {
-                project_plugins.push(manifest.clone());
-            }
-            Self::save_registry(cas, &project_plugins)?;
-        }
-
-        Self::save_global_manifest(manifest.clone())?;
+            hooks: vec!["manual-run".to_string()],
+            executable: Some(installed_bin.to_string_lossy().replace('\\', "/")),
+            extra: BTreeMap::new(),
+        });
+        Self::register_installed_plugin(&manifest)?;
 
         Ok(manifest)
     }
 
     /// Scaffolds a new standalone plugin crate in `plugins/<crate_name>` using the official
     /// CLIBM plugin template (`Cargo.toml`, `src/main.rs`, `README.md`, `install.sh`, `install.ps1`, `uninstall.sh`, `uninstall.ps1`)
-    /// with UTF-8 encoding and registers it in the active repository's plugin registry.
+    /// with UTF-8 encoding. The plugin is registered when its installer runs.
     pub fn scaffold_plugin_template(
         cas: &CasStore,
         raw_name: &str,
@@ -847,6 +829,19 @@ impl PluginManager {
         } else {
             format!("clibm-{}", slug)
         };
+
+        // Escaped for use inside TOML / Rust string literals.
+        let description = description.replace('\\', "\\\\").replace('"', "\\\"");
+        let hooks: Vec<String> = hooks
+            .into_iter()
+            .map(|h| h.trim().to_lowercase())
+            .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+            .collect();
+        let hooks_rust = hooks
+            .iter()
+            .map(|h| format!("\"{}\"", h))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         let plugin_dir = cas.workspace_root().join("plugins").join(&crate_name);
         let src_dir = plugin_dir.join("src");
@@ -874,21 +869,92 @@ anyhow = "1.0"
         let main_rs = format!(
             r#"//! Standalone CLIBM Plugin: `{crate_name}`
 //! Description: {description}
-//! Subscribed Hooks: {:?}
+//!
+//! - `{crate_name} --manifest` prints this plugin's registry entry (used by installers).
+//! - When CLIBM runs it (`clibm plugin run` or a lifecycle hook), a CLIBM_PLUGIN_CONTRACT_V1
+//!   JSON request arrives on stdin and a `{{"ok": bool, "output": "..."}}` reply is expected
+//!   on stdout. Answering `ok: false` to a `pre-*` event blocks that action.
 
 use anyhow::Result;
+use serde::{{Deserialize, Serialize}};
 use std::env;
+use std::io::{{self, IsTerminal, Read}};
 use std::path::PathBuf;
 
+const NAME: &str = "{crate_name}";
+const DESCRIPTION: &str = "{description}";
+/// Lifecycle events this plugin subscribes to (pre-commit, post-commit, pre-move,
+/// on-task-move, on-task-depend, on-workspace-switch, on-export).
+const DEFAULT_HOOKS: &[&str] = &[{hooks_rust}];
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct Request {{
+    contract: String,
+    event: String,
+    tree_hash: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    context: serde_json::Value,
+}}
+
+#[derive(Debug, Serialize)]
+struct Response {{
+    ok: bool,
+    output: String,
+}}
+
 fn main() -> Result<()> {{
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--manifest") {{
+        println!("{{}}", manifest_json(&args));
+        return Ok(());
+    }}
+
     let project_root = env::var("CLIBM_PROJECT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    println!("[{crate_name}] Running in ongoing CLIBM project: {{}}", project_root.display());
+
+    let mut input = String::new();
+    if !io::stdin().is_terminal() {{
+        let _ = io::stdin().read_to_string(&mut input);
+    }}
+    match serde_json::from_str::<Request>(input.trim()) {{
+        Ok(req) => {{
+            let output = format!(
+                "[{{}}] event={{}} tree={{}} context={{}} project={{}}",
+                NAME,
+                req.event,
+                &req.tree_hash[..req.tree_hash.len().min(12)],
+                req.context,
+                project_root.display()
+            );
+            println!("{{}}", serde_json::to_string(&Response {{ ok: true, output }})?);
+        }}
+        Err(_) => println!("[{{}}] Running in CLIBM project: {{}}", NAME, project_root.display()),
+    }}
     Ok(())
 }}
-"#,
-            hooks
+
+/// Registry entry printed for `--manifest [--executable <path>] [--hooks a,b]`.
+fn manifest_json(args: &[String]) -> String {{
+    let value_after = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+    let hooks: Vec<String> = match value_after("--hooks") {{
+        Some(csv) => csv.split(',').map(|h| h.trim().to_string()).filter(|h| !h.is_empty()).collect(),
+        None => DEFAULT_HOOKS.iter().map(|h| h.to_string()).collect(),
+    }};
+    serde_json::json!({{
+        "name": NAME,
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": DESCRIPTION,
+        "enabled": true,
+        "hooks": hooks,
+        "executable": value_after("--executable"),
+    }})
+    .to_string()
+}}
+"#
         );
         write_utf8_file(&src_dir.join("main.rs"), &main_rs)?;
 
@@ -1062,121 +1128,159 @@ Write-Host \"Installed {crate_name}.exe to $InstallDir (hooks: $Hooks, scope: $S
         write_utf8_file(&plugin_dir.join("install.ps1"), &install_ps1)?;
 
         let uninstall_sh = format!(
-            "#!/usr/bin/env bash\n\
-# Encoding: UTF-8 (without BOM)\n\
-set -euo pipefail\n\
-{sh_helper_block}\n\
-OWNER_DIRS=$(clibm_path_owner_dirs \"{crate_name}\" || true)\n\
-SEARCH_DIRS=$(\n\
-  {{\n\
-    [ -n \"$OWNER_DIRS\" ] && printf '%s\\n' \"$OWNER_DIRS\"\n\
-    printf '%s\\n' \"$HOME/.local/bin\" \"$HOME/.cargo/bin\" \"$HOME/.clibm-bin\"\n\
-  }} | awk 'NF && !seen[$0]++'\n\
-)\n\
-while IFS= read -r dir; do\n\
-  [ -z \"$dir\" ] && continue\n\
-  if [ -f \"${{dir}}/{crate_name}\" ]; then\n\
-    rm -f \"${{dir}}/{crate_name}\"\n\
-    echo \"==> Removed binary: ${{dir}}/{crate_name}\"\n\
-  fi\n\
-done <<EOF\n\
-$SEARCH_DIRS\n\
-EOF\n\
-clibm_unregister_plugin \"{crate_name}\" \"$(pwd)\"\n\
-clibm_path_remove \"{crate_name}\"\n\
-if [ -n \"$CLIBM_REMOVED_PATH_DIRS\" ]; then\n\
-  while IFS= read -r rdir; do\n\
-    [ -z \"$rdir\" ] && continue\n\
-    echo \"==> Removed user PATH entry: $rdir\"\n\
-    if [ -d \"$rdir\" ] && [ -z \"$(ls -A \"$rdir\" 2>/dev/null || true)\" ]; then\n\
-      rmdir \"$rdir\" 2>/dev/null || true\n\
-    fi\n\
-  done <<EOF\n\
-$CLIBM_REMOVED_PATH_DIRS\n\
-EOF\n\
-fi\n\
-echo \"Uninstalled {crate_name}\"\n"
+            "#!/usr/bin/env bash
+# Encoding: UTF-8 (without BOM)
+set -euo pipefail
+{sh_helper_block}
+clibm_uninstall_plugin \"{crate_name}\"
+echo \"Uninstalled {crate_name}\"
+"
         );
         write_utf8_file(&plugin_dir.join("uninstall.sh"), &uninstall_sh)?;
 
         let uninstall_ps1 = format!(
-            "# Encoding: UTF-8 (without BOM)\n\
-$ErrorActionPreference = \"Stop\"\n\
-{ps1_helper_block}\n\
-$OwnerDirs = @(Get-ClibmOwnerDirs -Owner \"{crate_name}\")\n\
-$SearchDirs = @()\n\
-$Seen = @{{}}\n\
-foreach ($D in ($OwnerDirs + @((Join-Path $HOME \".clibm-bin\"), (Join-Path $HOME \".local\\bin\"), (Join-Path $HOME \".cargo\\bin\")))) {{\n\
-  if ([string]::IsNullOrWhiteSpace($D)) {{ continue }}\n\
-  $K = ($D -replace '/', '\\').TrimEnd('\\').ToLowerInvariant()\n\
-  if (-not $Seen.ContainsKey($K)) {{ $Seen[$K] = $true; $SearchDirs += $D }}\n\
-}}\n\
-foreach ($Dir in $SearchDirs) {{\n\
-  $Bin = Join-Path $Dir \"{crate_name}.exe\"\n\
-  if (Test-Path -LiteralPath $Bin) {{\n\
-    Remove-Item -LiteralPath $Bin -Force\n\
-    Write-Host \"==> Removed binary: $Bin\"\n\
-  }}\n\
-}}\n\
-Unregister-ClibmPlugin -Name \"{crate_name}\" -ProjectDir (Get-Location).ProviderPath -ExtraDirs $SearchDirs\n\
-$RemovedPathDirs = @(Remove-ClibmPathEntry -Owner \"{crate_name}\")\n\
-foreach ($RDir in $RemovedPathDirs) {{\n\
-  Write-Host \"==> Removed user PATH entry: $RDir\"\n\
-  if ((Test-Path -LiteralPath $RDir) -and @(Get-ChildItem -LiteralPath $RDir -Force -ErrorAction SilentlyContinue).Count -eq 0) {{\n\
-    Remove-Item -LiteralPath $RDir -Force -ErrorAction SilentlyContinue\n\
-  }}\n\
-}}\n\
-Write-Host \"Uninstalled {crate_name}.exe\"\n"
+            "# Encoding: UTF-8 (without BOM)
+$ErrorActionPreference = \"Stop\"
+{ps1_helper_block}
+Uninstall-ClibmPlugin -Name \"{crate_name}\"
+Write-Host \"Uninstalled {crate_name}.exe\"
+"
         );
         write_utf8_file(&plugin_dir.join("uninstall.ps1"), &uninstall_ps1)?;
 
+        // Not registered yet: the binary does not exist until the plugin is built and
+        // installed (its installer registers it from `--manifest`).
         let manifest = PluginManifest {
             name: crate_name.clone(),
             version: "0.1.0".to_string(),
-            description: description.to_string(),
+            description,
             enabled: true,
             hooks: if hooks.is_empty() {
                 vec!["manual-run".to_string()]
             } else {
                 hooks
             },
-            executable: Some(format!("~/.local/bin/{}", crate_name)),
-            extra: std::collections::BTreeMap::new(),
+            executable: None,
+            extra: BTreeMap::new(),
         };
-
-        let _ = Self::save_global_manifest(manifest.clone());
-
-        if cas.is_initialized() {
-            let mut list = Self::load_registry(cas)?;
-            if let Some(existing) = list.iter_mut().find(|p| p.name == crate_name) {
-                *existing = manifest.clone();
-            } else {
-                list.push(manifest.clone());
-            }
-            Self::save_registry(cas, &list)?;
-        }
 
         Ok((plugin_dir, manifest))
     }
 
+    /// Enables or disables an installed plugin. Inside a repository this is a project
+    /// override; outside one it changes the global default.
     pub fn set_plugin_enabled(cas: &CasStore, name: &str, enabled: bool) -> Result<()> {
         let canonical_name = Self::normalize_plugin_name(name);
-        let mut plugins = Self::load_registry(cas)?;
-        let found = plugins.iter_mut().find(|p| p.name == canonical_name);
-        match found {
-            Some(p) => {
-                p.enabled = enabled;
-                if p.executable.is_some() {
-                    let _ = Self::save_global_manifest(p.clone());
-                }
-                Self::save_registry(cas, &plugins)
+        let installed = Self::load_registry(cas)?;
+        if !installed.iter().any(|p| p.name == canonical_name) {
+            bail!(
+                "Plugin '{}' is not installed. Install it with `clibm plugin install {}`.",
+                canonical_name,
+                canonical_name
+            );
+        }
+        if cas.is_initialized() {
+            let mut overrides = Self::load_project_overrides(cas);
+            match overrides.iter_mut().find(|o| o.name == canonical_name) {
+                Some(o) => o.enabled = enabled,
+                None => overrides.push(PluginOverride {
+                    name: canonical_name,
+                    enabled,
+                }),
             }
-            None => bail!("Plugin '{}' is not registered", canonical_name),
+            Self::save_project_overrides(cas, &overrides)
+        } else {
+            let mut global = Self::load_global_registry();
+            if let Some(p) = global.iter_mut().find(|p| p.name == canonical_name) {
+                p.enabled = enabled;
+            }
+            Self::save_global_registry(&global)
         }
     }
 
-    /// Executes an installed standalone plugin binary against the ongoing project in `cas`.
-    /// Because `clibm_core` is 100% pure, all plugins must be installed from `plugins/<name>` first.
+    /// Uninstalls a plugin: stops its running processes (Windows), deletes its binary
+    /// from the usual install folders (renaming it when Windows keeps it locked), and
+    /// removes it from the global registry and from this project's overrides. The user
+    /// `PATH` is left alone because the install folder is shared with the core.
+    pub fn uninstall_plugin(cas: &CasStore, name: &str) -> Result<PluginUninstallReport> {
+        let canonical = Self::normalize_plugin_name(name);
+        if canonical == "clibm" || canonical.trim().is_empty() {
+            bail!("Use `clibm uninstall` (or the core uninstall script) to remove CLIBM itself.");
+        }
+        let exe_name = Self::binary_file_name(&canonical);
+        let mut report = PluginUninstallReport {
+            name: canonical.clone(),
+            ..Default::default()
+        };
+
+        let global = Self::load_global_registry();
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if let Some(dir) = global
+            .iter()
+            .find(|p| p.name == canonical)
+            .and_then(|p| p.executable_path())
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+        {
+            dirs.push(dir);
+        }
+        for d in Self::candidate_bin_dirs(Some(cas)) {
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+        let targets: Vec<PathBuf> = dirs
+            .iter()
+            .map(|d| d.join(&exe_name))
+            .filter(|p| p.is_file())
+            .collect();
+
+        if cfg!(windows) && !targets.is_empty() {
+            // A running plugin (e.g. an MCP server started by an AI client) keeps its .exe locked.
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", &exe_name])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            std::thread::sleep(Duration::from_millis(300));
+        }
+
+        for target in targets {
+            match fs::remove_file(&target) {
+                Ok(()) => report.removed.push(target.display().to_string()),
+                Err(_) => {
+                    let rotated = target.with_file_name(format!("{}.old.{}", exe_name, unique_suffix()));
+                    match fs::rename(&target, &rotated) {
+                        Ok(()) => report.rotated.push(rotated.display().to_string()),
+                        Err(_) => report.failed.push(target.display().to_string()),
+                    }
+                }
+            }
+        }
+        for dir in &dirs {
+            cleanup_rotated_binaries(dir, &exe_name);
+        }
+
+        let remaining: Vec<PluginManifest> =
+            global.iter().filter(|p| p.name != canonical).cloned().collect();
+        if remaining.len() != global.len() {
+            Self::save_global_registry(&remaining)?;
+            report.registry_entry_removed = true;
+        }
+        if cas.is_initialized() {
+            let overrides = Self::load_project_overrides(cas);
+            let kept: Vec<PluginOverride> =
+                overrides.iter().filter(|o| o.name != canonical).cloned().collect();
+            if kept.len() != overrides.len() {
+                Self::save_project_overrides(cas, &kept)?;
+                report.registry_entry_removed = true;
+            }
+        }
+        Ok(report)
+    }
+
+    /// Executes an installed plugin binary against the project in `cas`. Interactive
+    /// plugins (TUI, web, MCP) get the terminal; others use the JSON stdin/stdout contract.
+    /// Only executables from the global registry are ever run.
     pub fn execute_plugin(
         cas: &CasStore,
         name: &str,
@@ -1191,9 +1295,7 @@ Write-Host \"Uninstalled {crate_name}.exe\"\n"
             .find(|p| p.name == canonical_name)
             .ok_or_else(|| {
                 anyhow!(
-                    "Plugin '{}' is not installed in this pure core repository. Install it from `plugins/{}` via `cd plugins/{} && ./install.sh` or `clibm plugin install plugins/{}`.",
-                    canonical_name,
-                    canonical_name,
+                    "Plugin '{}' is not installed. Install it with `clibm plugin install {}` (or its install script).",
                     canonical_name,
                     canonical_name
                 )
@@ -1207,31 +1309,13 @@ Write-Host \"Uninstalled {crate_name}.exe\"\n"
             );
         }
 
-        let exe = manifest.executable.as_ref().ok_or_else(|| {
-            anyhow!(
-                "Plugin '{}' has no executable binary registered. Re-install it from `plugins/{}`.",
-                canonical_name,
-                canonical_name
-            )
-        })?;
-
-        let resolved_exe = Self::find_installed_binary(exe)
-            .or_else(|| Self::find_installed_binary(&canonical_name))
-            .unwrap_or_else(|| PathBuf::from(exe));
-
+        let exe = manifest
+            .executable_path()
+            .ok_or_else(|| anyhow!("Plugin '{}' has no executable registered", canonical_name))?;
         let project_root = cas.workspace_root();
-        let is_interactive = canonical_name == "clibm-tui"
-            || canonical_name == "clibm-web"
-            || canonical_name == "clibm-mcp"
-            || manifest.hooks.iter().any(|h| {
-                h == "interactive-tui"
-                    || h == "http-bridge"
-                    || h == "mcp-stdio"
-                    || h == "mcp-http-sse"
-            });
 
-        if is_interactive {
-            let status = Command::new(&resolved_exe)
+        if manifest.is_interactive() {
+            let status = Command::new(&exe)
                 .args(args)
                 .current_dir(&project_root)
                 .env("CLIBM_PROJECT_ROOT", &project_root)
@@ -1242,45 +1326,222 @@ Write-Host \"Uninstalled {crate_name}.exe\"\n"
                 .with_context(|| {
                     format!(
                         "Failed to launch installed plugin binary '{}' in ongoing project {}",
-                        resolved_exe.display(),
+                        exe.display(),
                         project_root.display()
                     )
                 })?;
 
             return Ok(PluginInvocationResponse {
                 ok: status.success(),
-                output: format!(
-                    "[{}] Session finished in project {}",
-                    canonical_name,
-                    project_root.display()
-                ),
+                output: String::new(),
             });
         }
 
-        // Standard JSON stdin/stdout contract for non-interactive external plugin binaries
         let req = PluginInvocationRequest {
             contract: CONTRACT_VERSION.to_string(),
             event: "manual-run".to_string(),
             tree_hash: tree_hash.to_string(),
             args: args.to_vec(),
+            context: Value::Null,
         };
-        let mut child = Command::new(&resolved_exe)
-            .args(args)
-            .current_dir(&project_root)
-            .env("CLIBM_PROJECT_ROOT", &project_root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(&serde_json::to_vec(&req)?)?;
-        }
-        let out = child.wait_with_output()?;
-        if let Ok(resp) = serde_json::from_slice::<PluginInvocationResponse>(&out.stdout) {
-            return Ok(resp);
-        }
-        Ok(PluginInvocationResponse {
-            ok: out.status.success(),
-            output: String::from_utf8_lossy(&out.stdout).to_string(),
-        })
+        let payload = serde_json::to_vec(&req)?;
+        let (ok, out) = run_plugin_process(&exe, args, &project_root, Some(&payload), None, false)?;
+        Ok(parse_plugin_response(&out, ok))
     }
+
+    /// `true` when hooks are switched off for this process (`CLIBM_NO_HOOKS=1`, or we are
+    /// running inside another plugin's hook, signalled by `CLIBM_IN_HOOK`).
+    pub fn hooks_disabled_by_env() -> bool {
+        let truthy = |k: &str| {
+            env::var(k)
+                .map(|v| !v.trim().is_empty() && v.trim() != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(false)
+        };
+        truthy("CLIBM_NO_HOOKS") || truthy("CLIBM_IN_HOOK")
+    }
+
+    /// Fires `event` to every enabled, installed, non-interactive plugin subscribed to it.
+    /// A `pre-*` hook that answers `ok: false`, fails or times out blocks the action
+    /// (returns an error). Problems in other hooks are only reported on stderr.
+    pub fn fire_hook(
+        cas: &CasStore,
+        event: &str,
+        tree_hash: &str,
+        context: Value,
+        timeout: Duration,
+    ) -> Result<()> {
+        if Self::hooks_disabled_by_env() {
+            return Ok(());
+        }
+        let blocking = event.starts_with("pre-");
+        let plugins = Self::load_registry(cas)?;
+        let project_root = cas.workspace_root();
+        for plugin in plugins
+            .iter()
+            .filter(|p| p.enabled && p.subscribes_to(event) && !p.is_interactive())
+        {
+            let Some(exe) = plugin.executable_path() else {
+                continue;
+            };
+            let req = PluginInvocationRequest {
+                contract: CONTRACT_VERSION.to_string(),
+                event: event.to_string(),
+                tree_hash: tree_hash.to_string(),
+                args: Vec::new(),
+                context: context.clone(),
+            };
+            let payload = serde_json::to_vec(&req)?;
+            let result = run_plugin_process(&exe, &[], &project_root, Some(&payload), Some(timeout), true)
+                .map(|(ok, out)| parse_plugin_response(&out, ok));
+            match result {
+                Ok(resp) if resp.ok => {}
+                Ok(resp) => {
+                    if blocking {
+                        bail!(
+                            "Blocked by plugin '{}' ({} hook): {}\n(Disable it with `clibm plugin disable {}` or skip hooks once with --no-hooks.)",
+                            plugin.name,
+                            event,
+                            resp.output.trim(),
+                            plugin.name
+                        );
+                    }
+                    eprintln!(
+                        "[clibm] Plugin '{}' reported a problem on {}: {}",
+                        plugin.name,
+                        event,
+                        resp.output.trim()
+                    );
+                }
+                Err(e) => {
+                    if blocking {
+                        bail!(
+                            "Plugin '{}' failed on the {} hook: {}\n(Skip hooks once with --no-hooks.)",
+                            plugin.name,
+                            event,
+                            e
+                        );
+                    }
+                    eprintln!("[clibm] Plugin '{}' failed on {}: {}", plugin.name, event, e);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Interprets a plugin's stdout: the whole output (or its last JSON line) as a
+/// `PluginInvocationResponse`, otherwise the raw text with the process exit status.
+fn parse_plugin_response(stdout: &str, process_ok: bool) -> PluginInvocationResponse {
+    if let Ok(resp) = serde_json::from_str::<PluginInvocationResponse>(stdout.trim()) {
+        return resp;
+    }
+    if let Some(resp) = stdout
+        .lines()
+        .rev()
+        .map(str::trim)
+        .filter(|l| l.starts_with('{'))
+        .find_map(|l| serde_json::from_str::<PluginInvocationResponse>(l).ok())
+    {
+        return resp;
+    }
+    PluginInvocationResponse {
+        ok: process_ok,
+        output: stdout.trim_end().to_string(),
+    }
+}
+
+/// Runs a plugin process with `CLIBM_PROJECT_ROOT` set, optionally writing `stdin_payload`
+/// and enforcing `timeout`. Returns (exit success, stdout). Stderr goes to the terminal.
+fn run_plugin_process(
+    exe: &Path,
+    args: &[String],
+    project_root: &Path,
+    stdin_payload: Option<&[u8]>,
+    timeout: Option<Duration>,
+    in_hook: bool,
+) -> Result<(bool, String)> {
+    let mut cmd = Command::new(exe);
+    cmd.args(args)
+        .current_dir(project_root)
+        .env("CLIBM_PROJECT_ROOT", project_root)
+        .stdin(if stdin_payload.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    if in_hook {
+        cmd.env("CLIBM_IN_HOOK", "1");
+    }
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("Failed to start plugin binary '{}'", exe.display()))?;
+    if let (Some(payload), Some(mut stdin)) = (stdin_payload, child.stdin.take()) {
+        let _ = stdin.write_all(payload);
+    }
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+
+    let status = match timeout {
+        None => child.wait()?,
+        Some(limit) => {
+            let start = Instant::now();
+            loop {
+                if let Some(status) = child.try_wait()? {
+                    break status;
+                }
+                if start.elapsed() >= limit {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    bail!("timed out after {}s", limit.as_secs());
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    let out = reader.join().unwrap_or_default();
+    Ok((status.success(), String::from_utf8_lossy(&out).to_string()))
+}
+
+fn unique_suffix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:x}{:x}", std::process::id(), nanos & 0xffff_ffff)
+}
+
+/// Deletes leftovers named `<exe_name>.old.*` from earlier locked-file rotations.
+fn cleanup_rotated_binaries(dir: &Path, exe_name: &str) {
+    let prefix = format!("{}.old.", exe_name);
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+/// Copies `src` over `dest`. When Windows keeps `dest` locked (the binary is running),
+/// the old file is renamed out of the way first.
+fn replace_binary(src: &Path, dest: &Path) -> Result<()> {
+    if dest.exists() && fs::remove_file(dest).is_err() {
+        let name = dest
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let rotated = dest.with_file_name(format!("{}.old.{}", name, unique_suffix()));
+        fs::rename(dest, &rotated).with_context(|| {
+            format!("Cannot replace {} (is it running?)", dest.display())
+        })?;
+    }
+    fs::copy(src, dest).with_context(|| format!("Failed to copy binary to {}", dest.display()))?;
+    if let Some(dir) = dest.parent() {
+        if let Some(name) = dest.file_name() {
+            cleanup_rotated_binaries(dir, &name.to_string_lossy());
+        }
+    }
+    Ok(())
 }

@@ -6,12 +6,15 @@
 use crate::cas::{CasObject, CasStore};
 use crate::index::ComputedIndex;
 use crate::models::*;
+use crate::plugin::PluginManager;
 use crate::versioning::{MergeOutcome, MergeStrategy, VersioningEngine};
 use anyhow::{anyhow, bail, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use serde_json::json;
 use std::path::Path;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortableBundle {
@@ -108,6 +111,8 @@ fn clean_tags(tags: impl IntoIterator<Item = String>) -> Vec<String> {
 
 pub struct ClibmEngine {
     pub cas: CasStore,
+    /// Whether lifecycle hooks are fired to plugins (see [`ClibmEngine::without_hooks`]).
+    hooks: bool,
 }
 
 impl ClibmEngine {
@@ -115,6 +120,7 @@ impl ClibmEngine {
     pub fn open(workspace_root: impl AsRef<Path>) -> Self {
         Self {
             cas: CasStore::new(workspace_root),
+            hooks: true,
         }
     }
 
@@ -122,7 +128,29 @@ impl ClibmEngine {
     pub fn open_exact(workspace_root: impl AsRef<Path>) -> Self {
         Self {
             cas: CasStore::at_root(workspace_root),
+            hooks: true,
         }
+    }
+
+    /// Disables plugin lifecycle hooks for this engine (`clibm --no-hooks`).
+    pub fn without_hooks(mut self) -> Self {
+        self.hooks = false;
+        self
+    }
+
+    /// Fires a lifecycle hook to subscribed plugins. `pre-*` hooks may return an error
+    /// that blocks the action; see [`PluginManager::fire_hook`].
+    pub fn fire_hook(&self, event: &str, tree_hash: &str, context: serde_json::Value) -> Result<()> {
+        if !self.hooks {
+            return Ok(());
+        }
+        let timeout = self
+            .cas
+            .load_config()
+            .map(|c| c.hook_timeout_secs)
+            .unwrap_or(10)
+            .max(1);
+        PluginManager::fire_hook(&self.cas, event, tree_hash, context, Duration::from_secs(timeout))
     }
 
     fn default_columns() -> Vec<KanbanColumn> {
@@ -308,8 +336,17 @@ impl ClibmEngine {
         tree: &TreeSnapshotPayload,
         commit_message: &str,
     ) -> Result<(String, Option<String>)> {
-        let tree_hash = self.save_working_tree(tree)?;
         let cfg = self.cas.load_config()?;
+        if cfg.auto_commit {
+            // Let pre-commit hooks veto the change before anything is staged.
+            let tree_hash = self.cas.put_object(OBJ_TREE, tree)?;
+            self.fire_hook(
+                "pre-commit",
+                &tree_hash,
+                json!({ "message": commit_message, "auto": true }),
+            )?;
+        }
+        let tree_hash = self.save_working_tree(tree)?;
         if cfg.auto_commit {
             let commit_hash = VersioningEngine::create_commit(
                 &self.cas,
@@ -317,6 +354,11 @@ impl ClibmEngine {
                 &cfg.author_name,
                 commit_message,
                 None,
+            )?;
+            self.fire_hook(
+                "post-commit",
+                &tree_hash,
+                json!({ "message": commit_message, "commit": commit_hash, "auto": true }),
             )?;
             return Ok((tree_hash, Some(commit_hash)));
         }
@@ -736,12 +778,17 @@ impl ClibmEngine {
             tree.active_project_id = first_prj.clone();
         }
 
-        let (_, auto_commit) = self.record_mutation(
+        let (tree_hash, auto_commit) = self.record_mutation(
             &tree,
             &format!(
                 "auto(workspace): switch active workspace to {} ({})",
                 chosen.id, chosen.name
             ),
+        )?;
+        self.fire_hook(
+            "on-workspace-switch",
+            &tree_hash,
+            json!({ "workspace_id": chosen.id, "workspace_name": chosen.name, "commit": auto_commit }),
         )?;
 
         Ok((chosen, auto_commit))
@@ -917,14 +964,27 @@ impl ClibmEngine {
             self.check_column_rules(&tree, &board, &task, &col, &cfg)?;
         }
 
+        let from_column = task.column_id.clone();
+        let (current_tree_hash, _) = self.load_working_tree()?;
+        self.fire_hook(
+            "pre-move",
+            &current_tree_hash,
+            json!({ "task_id": task_id, "board_id": board.id, "from": from_column, "to": col.id, "force": force }),
+        )?;
+
         task.column_id = col.id.clone();
         task.updated_at = Utc::now().to_rfc3339();
 
         let new_task_hash = self.cas.put_object(OBJ_TASK, &task)?;
         tree.tasks.insert(task.id.clone(), new_task_hash.clone());
-        let (_, auto_commit) = self.record_mutation(
+        let (tree_hash, auto_commit) = self.record_mutation(
             &tree,
             &format!("auto(task): move {} to {}", task.id, col.id),
+        )?;
+        self.fire_hook(
+            "on-task-move",
+            &tree_hash,
+            json!({ "task_id": task_id, "board_id": board.id, "from": from_column, "to": col.id, "commit": auto_commit }),
         )?;
 
         Ok(MutationResult {
@@ -1005,9 +1065,14 @@ impl ClibmEngine {
 
         let new_hash = self.cas.put_object(OBJ_TASK, &task)?;
         tree.tasks.insert(task.id.clone(), new_hash.clone());
-        let (_, auto_commit) = self.record_mutation(
+        let (tree_hash, auto_commit) = self.record_mutation(
             &tree,
             &format!("auto(task): depend {} -> {}", task.id, depends_on_id),
+        )?;
+        self.fire_hook(
+            "on-task-depend",
+            &tree_hash,
+            json!({ "task_id": task_id, "depends_on": depends_on_id, "commit": auto_commit }),
         )?;
         Ok(MutationResult {
             id: task_id,
@@ -1134,7 +1199,15 @@ impl ClibmEngine {
         let author = author
             .map(str::to_string)
             .unwrap_or_else(|| cfg.author_name.clone());
-        VersioningEngine::create_commit(&self.cas, &tree_hash, &author, message, None).map(Some)
+        self.fire_hook("pre-commit", &tree_hash, json!({ "message": message, "auto": false }))?;
+        let commit_hash =
+            VersioningEngine::create_commit(&self.cas, &tree_hash, &author, message, None)?;
+        self.fire_hook(
+            "post-commit",
+            &tree_hash,
+            json!({ "message": message, "commit": commit_hash, "auto": false }),
+        )?;
+        Ok(Some(commit_hash))
     }
 
     /// Creates branch `name` at the HEAD commit.

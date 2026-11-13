@@ -92,7 +92,11 @@ fn default_install_path() -> String {
 }
 
 fn default_mcp_transport() -> String {
-    "both".to_string()
+    "stdio".to_string()
+}
+
+fn default_hook_timeout_secs() -> u64 {
+    10
 }
 
 /// Repository & machine installation configuration stored in `.clibm/config.json`.
@@ -128,6 +132,9 @@ pub struct ClibmConfig {
     pub install_path: String,
     #[serde(default = "default_mcp_transport")]
     pub mcp_transport: String,
+    /// Seconds a plugin may take to answer a lifecycle hook before it is stopped.
+    #[serde(default = "default_hook_timeout_secs")]
+    pub hook_timeout_secs: u64,
 }
 
 impl Default for ClibmConfig {
@@ -146,6 +153,7 @@ impl Default for ClibmConfig {
             language: default_language(),
             install_path: default_install_path(),
             mcp_transport: default_mcp_transport(),
+            hook_timeout_secs: default_hook_timeout_secs(),
         }
     }
 }

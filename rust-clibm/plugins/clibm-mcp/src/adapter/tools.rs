@@ -22,6 +22,7 @@ pub struct ToolRegistry {
     native_tools: HashMap<String, ToolDefinition>,
     dynamic_tools: HashMap<String, ToolDefinition>,
     registry_fingerprint: u64,
+    home_dir: Option<PathBuf>,
 }
 
 impl ToolRegistry {
@@ -30,13 +31,15 @@ impl ToolRegistry {
             native_tools: HashMap::new(),
             dynamic_tools: HashMap::new(),
             registry_fingerprint: 0,
+            home_dir: None,
         };
         registry.register_default_tools();
         registry
     }
 
-    pub fn new_with_discovery(project_root: &Path) -> Self {
+    pub fn new_with_discovery(project_root: &Path, home_dir: Option<PathBuf>) -> Self {
         let mut registry = Self::new();
+        registry.home_dir = home_dir;
         registry.check_and_reload(project_root);
         registry
     }
@@ -49,7 +52,7 @@ impl ToolRegistry {
     /// If changes are detected, re-discovers dynamic tools and updates the registry.
     /// Returns `true` if dynamic tools were reloaded, `false` otherwise.
     pub fn check_and_reload(&mut self, project_root: &Path) -> bool {
-        let files = PluginToolDiscovery::candidate_registry_files(project_root);
+        let files = PluginToolDiscovery::candidate_registry_files(project_root, self.home_dir.as_deref());
         self.reload_with_files(&files, project_root)
     }
 

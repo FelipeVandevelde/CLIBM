@@ -30,6 +30,11 @@ use std::{
     time::Duration,
 };
 
+const PLUGIN_NAME: &str = "clibm-tui";
+const PLUGIN_DESCRIPTION: &str = "Interactive Ratatui terminal UI for CLIBM projects";
+/// Lifecycle events this plugin subscribes to by default.
+const DEFAULT_HOOKS: &[&str] = &["interactive-tui"];
+
 const FORMAT_VERSION: &str = "0.1.0";
 const OBJ_BOARD: &str = "board";
 const OBJ_TASK: &str = "task";
@@ -504,6 +509,11 @@ fn register_plugin_globally(bin_path: Option<String>) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    let manifest_args: Vec<String> = env::args().skip(1).collect();
+    if manifest_args.iter().any(|a| a == "--manifest") {
+        println!("{}", manifest_json(&manifest_args));
+        return Ok(());
+    }
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|a| a == "--contract") {
         println!(
@@ -705,4 +715,34 @@ fn main() -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+/// `--manifest [--executable <path>] [--hooks a,b]`: prints this plugin's registry entry
+/// (one JSON line). Installers and `clibm plugin install` store it in
+/// `~/.clibm/plugins/registry.json`.
+fn manifest_json(args: &[String]) -> String {
+    let value_after = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let hooks: Vec<String> = match value_after("--hooks") {
+        Some(csv) => csv
+            .split(',')
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .collect(),
+        None => DEFAULT_HOOKS.iter().map(|h| h.to_string()).collect(),
+    };
+    serde_json::json!({
+        "name": PLUGIN_NAME,
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": PLUGIN_DESCRIPTION,
+        "enabled": true,
+        "hooks": hooks,
+        "executable": value_after("--executable"),
+        "tools": serde_json::json!([]),
+    })
+    .to_string()
 }

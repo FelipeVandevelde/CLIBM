@@ -36,6 +36,10 @@ pub struct McpConfig {
     pub http_port: u16,
     pub read_only: bool,
     pub project_root: PathBuf,
+    /// Home directory holding `.clibm/plugins/registry.json`. `None` uses
+    /// `CLIBM_HOME` / `HOME` / `USERPROFILE` (tests point it at a temp folder).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_dir: Option<PathBuf>,
 }
 
 impl Default for McpConfig {
@@ -45,6 +49,7 @@ impl Default for McpConfig {
             http_port: 7879,
             read_only: false,
             project_root: env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            home_dir: None,
         }
     }
 }

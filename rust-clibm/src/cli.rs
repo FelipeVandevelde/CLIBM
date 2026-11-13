@@ -14,6 +14,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Do not run plugin lifecycle hooks for this command (same as CLIBM_NO_HOOKS=1)
+    #[arg(long, global = true)]
+    pub no_hooks: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -350,7 +354,7 @@ pub enum PluginCommands {
     Enable { name: String },
     /// Disable a plugin
     Disable { name: String },
-    /// Display uninstallation guidance and paths to remove an installed plugin
+    /// Uninstall a plugin: stop it, delete its binary and remove it from the plugin registries
     Uninstall {
         /// Plugin name (e.g. 'clibm-mcp', 'mcp', 'clibm-tui', 'tui', etc.)
         name: String,

@@ -15,26 +15,22 @@ use std::time::UNIX_EPOCH;
 pub struct PluginToolDiscovery;
 
 impl PluginToolDiscovery {
-    /// Returns the list of registry files to inspect, in order of priority.
-    pub fn candidate_registry_files(project_root: &Path) -> Vec<PathBuf> {
-        let mut files = Vec::new();
-
-        // 1. Local project registry
-        let local_reg = project_root.join(".clibm").join("plugins").join("registry.json");
-        files.push(local_reg);
-
-        // 2. User-level global registry
-        if let Ok(home) = env::var("CLIBM_HOME")
-            .or_else(|_| env::var("HOME"))
-            .or_else(|_| env::var("USERPROFILE"))
-        {
-            let home_path = PathBuf::from(home);
-            files.push(home_path.join(".clibm").join("plugins").join("registry.json"));
-            files.push(home_path.join(".clibm-bin").join("registry.json"));
-            files.push(home_path.join(".local").join("bin").join("registry.json"));
-        }
-
-        files
+    /// Registry files to inspect: `[global, project]`. The global registry
+    /// (`~/.clibm/plugins/registry.json`) is the list of installed plugins; the project
+    /// registry may only switch them on or off (`{"name": .., "enabled": ..}`).
+    pub fn candidate_registry_files(project_root: &Path, home_dir: Option<&Path>) -> Vec<PathBuf> {
+        let home = home_dir.map(Path::to_path_buf).or_else(|| {
+            env::var("CLIBM_HOME")
+                .or_else(|_| env::var("HOME"))
+                .or_else(|_| env::var("USERPROFILE"))
+                .ok()
+                .map(PathBuf::from)
+        });
+        let global = home
+            .map(|h| h.join(".clibm").join("plugins").join("registry.json"))
+            .unwrap_or_else(|| PathBuf::from(".clibm-global-registry-unavailable"));
+        let project = project_root.join(".clibm").join("plugins").join("registry.json");
+        vec![global, project]
     }
 
     /// Computes a composite fingerprint (mtime + size) for active registry files.
@@ -74,7 +70,7 @@ impl PluginToolDiscovery {
     /// Reads registry files, validates plugin tool declarations, and builds MCP ToolDefinitions.
     #[allow(dead_code)]
     pub fn discover_tools(project_root: &Path) -> (Vec<ToolDefinition>, u64) {
-        let files = Self::candidate_registry_files(project_root);
+        let files = Self::candidate_registry_files(project_root, None);
         Self::discover_tools_from_files(&files, project_root)
     }
 
@@ -84,18 +80,33 @@ impl PluginToolDiscovery {
         _project_root: &Path,
     ) -> (Vec<ToolDefinition>, u64) {
         let fingerprint = Self::compute_fingerprint(files);
-        let mut plugins_by_name: HashMap<String, PluginRegistryEntry> = HashMap::new();
+        let read_entries = |path: &PathBuf| -> Vec<serde_json::Value> {
+            fs::read_to_string(path)
+                .ok()
+                .and_then(|raw| {
+                    let clean = raw.strip_prefix('\u{feff}').unwrap_or(&raw).to_string();
+                    serde_json::from_str::<Vec<serde_json::Value>>(&clean).ok()
+                })
+                .unwrap_or_default()
+        };
 
-        // 1. Load and merge plugins across candidate files (earlier files take precedence)
-        for path in files {
-            if !path.exists() {
-                continue;
+        // 1. Installed plugins come from the global registry (first file) only; project
+        //    registries (remaining files) can only override `enabled`.
+        let mut plugins_by_name: HashMap<String, PluginRegistryEntry> = HashMap::new();
+        if let Some(global) = files.first() {
+            for value in read_entries(global) {
+                if let Ok(entry) = serde_json::from_value::<PluginRegistryEntry>(value) {
+                    plugins_by_name.entry(entry.name.clone()).or_insert(entry);
+                }
             }
-            if let Ok(raw) = fs::read_to_string(path) {
-                let clean = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
-                if let Ok(entries) = serde_json::from_str::<Vec<PluginRegistryEntry>>(clean) {
-                    for entry in entries {
-                        plugins_by_name.entry(entry.name.clone()).or_insert(entry);
+        }
+        for overrides in files.iter().skip(1) {
+            for value in read_entries(overrides) {
+                let name = value.get("name").and_then(|n| n.as_str());
+                let enabled = value.get("enabled").and_then(|e| e.as_bool());
+                if let (Some(name), Some(enabled)) = (name, enabled) {
+                    if let Some(entry) = plugins_by_name.get_mut(name) {
+                        entry.enabled = enabled;
                     }
                 }
             }

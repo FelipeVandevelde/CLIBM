@@ -36,7 +36,7 @@ impl McpAdapter {
         let root = config.project_root.clone();
         let bridge = ClibmBridge::new(root.clone());
         let permissions = PermissionManager::new(root.clone(), config.read_only);
-        let tools = RwLock::new(ToolRegistry::new_with_discovery(&root));
+        let tools = RwLock::new(ToolRegistry::new_with_discovery(&root, config.home_dir.clone()));
         let resources = ResourceRegistry::new();
         let prompts = PromptRegistry::new();
 
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn test_dynamic_tool_discovery_and_live_reload() {
         let temp_dir = std::env::temp_dir().join(format!("clibm_test_dyn_discovery_{}", std::process::id()));
-        let plugins_dir = temp_dir.join(".clibm").join("plugins");
+        let plugins_dir = temp_dir.join("home").join(".clibm").join("plugins");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&plugins_dir).unwrap();
         let reg_file = plugins_dir.join("registry.json");
@@ -264,6 +264,7 @@ mod tests {
 
         let mut cfg = McpConfig::default();
         cfg.project_root = temp_dir.clone();
+        cfg.home_dir = Some(temp_dir.join("home"));
         let adapter = McpAdapter::new(cfg);
 
         // Verify tools/list contains dep_audit.audit_dependencies but not ignored_tool
@@ -375,7 +376,7 @@ mod tests {
     #[test]
     fn test_dynamic_tool_collision_prevention() {
         let temp_dir = std::env::temp_dir().join(format!("clibm_test_collision_{}", std::process::id()));
-        let plugins_dir = temp_dir.join(".clibm").join("plugins");
+        let plugins_dir = temp_dir.join("home").join(".clibm").join("plugins");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&plugins_dir).unwrap();
         let reg_file = plugins_dir.join("registry.json");
@@ -412,6 +413,7 @@ mod tests {
 
         let mut cfg = McpConfig::default();
         cfg.project_root = temp_dir.clone();
+        cfg.home_dir = Some(temp_dir.join("home"));
         let adapter = McpAdapter::new(cfg);
 
         let req = JsonRpcRequest {
@@ -437,7 +439,7 @@ mod tests {
     #[test]
     fn test_dynamic_tool_schema_validation_and_read_only() {
         let temp_dir = std::env::temp_dir().join(format!("clibm_test_validation_{}", std::process::id()));
-        let plugins_dir = temp_dir.join(".clibm").join("plugins");
+        let plugins_dir = temp_dir.join("home").join(".clibm").join("plugins");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&plugins_dir).unwrap();
         let reg_file = plugins_dir.join("registry.json");
@@ -468,6 +470,7 @@ mod tests {
         // Case 1: Schema validation failure (missing required parameter)
         let mut cfg = McpConfig::default();
         cfg.project_root = temp_dir.clone();
+        cfg.home_dir = Some(temp_dir.join("home"));
         let adapter = McpAdapter::new(cfg);
 
         let req_missing = JsonRpcRequest {
@@ -488,6 +491,7 @@ mod tests {
         // Case 2: Read-only mode rejection for mutating dynamic tool
         let mut ro_cfg = McpConfig::default();
         ro_cfg.project_root = temp_dir.clone();
+        ro_cfg.home_dir = Some(temp_dir.join("home"));
         ro_cfg.read_only = true;
         let ro_adapter = McpAdapter::new(ro_cfg);
 

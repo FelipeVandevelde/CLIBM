@@ -17,6 +17,11 @@ use std::{
 };
 use tiny_http::{Header, Method, Response, Server};
 
+const PLUGIN_NAME: &str = "clibm-web";
+const PLUGIN_DESCRIPTION: &str = "Self-hosted local web dashboard for CLIBM projects (127.0.0.1)";
+/// Lifecycle events this plugin subscribes to by default.
+const DEFAULT_HOOKS: &[&str] = &["http-bridge"];
+
 const FORMAT_VERSION: &str = "0.1.0";
 const OBJ_PROJECT: &str = "project";
 const OBJ_BOARD: &str = "board";
@@ -493,6 +498,11 @@ fn register_plugin_globally(bin_path: Option<String>) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    let manifest_args: Vec<String> = env::args().skip(1).collect();
+    if manifest_args.iter().any(|a| a == "--manifest") {
+        println!("{}", manifest_json(&manifest_args));
+        return Ok(());
+    }
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|a| a == "--contract") {
         println!(
@@ -685,4 +695,34 @@ mod tests {
         let headers = cors_headers();
         assert_eq!(headers.len(), 3);
     }
+}
+
+/// `--manifest [--executable <path>] [--hooks a,b]`: prints this plugin's registry entry
+/// (one JSON line). Installers and `clibm plugin install` store it in
+/// `~/.clibm/plugins/registry.json`.
+fn manifest_json(args: &[String]) -> String {
+    let value_after = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let hooks: Vec<String> = match value_after("--hooks") {
+        Some(csv) => csv
+            .split(',')
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .collect(),
+        None => DEFAULT_HOOKS.iter().map(|h| h.to_string()).collect(),
+    };
+    serde_json::json!({
+        "name": PLUGIN_NAME,
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": PLUGIN_DESCRIPTION,
+        "enabled": true,
+        "hooks": hooks,
+        "executable": value_after("--executable"),
+        "tools": serde_json::json!([]),
+    })
+    .to_string()
 }

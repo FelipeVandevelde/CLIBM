@@ -56,8 +56,48 @@ AGENT MCP CONFIGURATION JSON (for Claude Desktop / Cursor / Windsurf):\n\
     );
 }
 
+/// `--manifest [--executable <path>] [--hooks a,b]`: prints this plugin's registry entry
+/// (one JSON line) for installers. The hooks name the compiled-in transports.
+fn manifest_json(args: &[String]) -> String {
+    let value_after = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let mut default_hooks: Vec<String> = Vec::new();
+    if cfg!(feature = "transport-stdio") {
+        default_hooks.push("mcp-stdio".to_string());
+    }
+    if cfg!(feature = "transport-http") {
+        default_hooks.push("mcp-http".to_string());
+    }
+    let hooks: Vec<String> = match value_after("--hooks") {
+        Some(csv) => csv
+            .split(',')
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .collect(),
+        None => default_hooks,
+    };
+    serde_json::json!({
+        "name": "clibm-mcp",
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": "Model Context Protocol (MCP) server that exposes a CLIBM project to AI agents",
+        "enabled": true,
+        "hooks": hooks,
+        "executable": value_after("--executable"),
+    })
+    .to_string()
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
+
+    if args.iter().any(|a| a == "--manifest") {
+        println!("{}", manifest_json(&args));
+        return Ok(());
+    }
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_help();

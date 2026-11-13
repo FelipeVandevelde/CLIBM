@@ -95,7 +95,11 @@ fn record_binary(
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let cwd = env::current_dir()?;
-    let engine = ClibmEngine::open(&cwd);
+    let engine = if cli.no_hooks {
+        ClibmEngine::open(&cwd).without_hooks()
+    } else {
+        ClibmEngine::open(&cwd)
+    };
 
     match cli.command {
         Commands::Init {
@@ -133,20 +137,7 @@ fn main() -> Result<()> {
             cfg.install_path = install_path.clone();
             engine.cas.save_config(&cfg)?;
 
-            if with_defaults {
-                let mut merged = PluginManager::default_plugin_bundle(&install_path);
-                if let Ok(existing) = PluginManager::load_registry(&engine.cas) {
-                    for p in existing {
-                        if !merged.iter().any(|m| m.name == p.name) {
-                            merged.push(p);
-                        }
-                    }
-                }
-                PluginManager::save_registry(&engine.cas, &merged)?;
-            } else {
-                let existing = PluginManager::load_registry(&engine.cas).unwrap_or_default();
-                PluginManager::save_registry(&engine.cas, &existing)?;
-            }
+            let installed = PluginManager::load_registry(&engine.cas).unwrap_or_default();
 
             println!(
                 "Initialized CLIBM repository in {}",
@@ -154,10 +145,20 @@ fn main() -> Result<()> {
             );
             println!("Root commit (BLAKE3): {}", commit_hash);
             println!(
-                "Core Profile      : {} ({} pre-installed plugins)",
+                "Core Profile      : {} ({} plugin(s) installed on this machine)",
                 cfg.install_profile,
-                if with_defaults { 3 } else { 0 }
+                installed.len()
             );
+            if with_defaults {
+                for default in ["clibm-dep-audit", "clibm-export-md", "clibm-workflow-lint"] {
+                    if !installed.iter().any(|p| p.name == default) {
+                        println!(
+                            "  Default plugin '{}' is not installed yet: run `clibm plugin install {}`",
+                            default, default
+                        );
+                    }
+                }
+            }
             println!("Language          : {}", cfg.language);
             println!("Automatic commits : {}", cfg.auto_commit);
             println!("Storage location  : {}", cfg.install_path);
@@ -298,6 +299,7 @@ fn main() -> Result<()> {
                 println!("  auto_commit                  = {}", cfg.auto_commit);
                 println!("  install_path                 = {}", cfg.install_path);
                 println!("  mcp_transport                = {}", cfg.mcp_transport);
+                println!("  hook_timeout_secs            = {}", cfg.hook_timeout_secs);
                 println!("  author_name                  = {}", cfg.author_name);
                 println!("  author_email                 = {}", cfg.author_email);
                 println!("  default_priority             = {}", cfg.default_priority);
@@ -318,6 +320,7 @@ fn main() -> Result<()> {
                     "auto_commit" => println!("{}", cfg.auto_commit),
                     "install_path" => println!("{}", cfg.install_path),
                     "mcp_transport" => println!("{}", cfg.mcp_transport),
+                    "hook_timeout_secs" => println!("{}", cfg.hook_timeout_secs),
                     "author_name" => println!("{}", cfg.author_name),
                     "author_email" => println!("{}", cfg.author_email),
                     "default_priority" => println!("{}", cfg.default_priority),
@@ -339,6 +342,14 @@ fn main() -> Result<()> {
                     "auto_commit" => cfg.auto_commit = parse_bool(&value)?,
                     "install_path" => cfg.install_path = value.clone(),
                     "mcp_transport" => cfg.mcp_transport = value.clone(),
+                    "hook_timeout_secs" => {
+                        cfg.hook_timeout_secs = value
+                            .trim()
+                            .parse::<u64>()
+                            .ok()
+                            .filter(|n| *n > 0)
+                            .ok_or_else(|| anyhow::anyhow!("hook_timeout_secs must be a positive number of seconds"))?
+                    }
                     "author_name" => cfg.author_name = value.clone(),
                     "author_email" => cfg.author_email = value.clone(),
                     "default_priority" => {
@@ -870,18 +881,19 @@ fn main() -> Result<()> {
                 }
                 if plugins.is_empty() {
                     println!(
-                        "No plugins installed (Pure Core mode). Install plugins from ./plugins/<name> via `./install.sh` or `clibm plugin install plugins/<name>`."
+                        "No plugins installed. Install one with `clibm plugin install <name>` (e.g. `clibm plugin install mcp`) or its install script."
                     );
                 } else {
                     for p in plugins {
                         println!(
-                            "{:<22} v{:<7} [BINARY  ] [{}] hooks={:?} — {}",
+                            "{:<22} v{:<7} [{}] hooks={:?} - {}",
                             p.name,
                             p.version,
                             if p.enabled { "ENABLED" } else { "DISABLED" },
                             p.hooks,
                             p.description
                         );
+                        println!("{:<22}   {}", "", p.executable.as_deref().unwrap_or("-"));
                     }
                 }
             }
@@ -940,69 +952,45 @@ fn main() -> Result<()> {
                 println!("Disabled plugin '{}'", name);
             }
             PluginCommands::Uninstall { name } => {
-                let canonical = PluginManager::normalize_plugin_name(&name);
-                println!("====================================================================");
-                println!(" CLIBM Plugin Uninstallation Guide: {}", canonical);
-                println!("====================================================================");
-                println!("This assistant indicates where '{}' is located so you can remove it.\n", canonical);
-
-                let bin_path = PluginManager::find_installed_binary(&canonical);
-                let plugins = PluginManager::load_registry(&engine.cas).unwrap_or_default();
-                let manifest = plugins.iter().find(|p| p.name == canonical);
-
-                println!("[1] Plugin Executable Binary:");
-                if let Some(ref bp) = bin_path {
-                    println!("    • Path: {}", bp.display());
-                } else {
-                    println!("    • (Binary not found in standard PATH or candidate folders)");
+                let report = PluginManager::uninstall_plugin(&engine.cas, &name)?;
+                if cli.json {
+                    return print_json(&report);
                 }
-
-                println!("\n[2] Plugin Registration Status:");
-                if let Some(m) = manifest {
-                    println!("    • Status     : {}", if m.enabled { "ENABLED" } else { "DISABLED" });
-                    println!("    • Version    : {}", m.version);
-                    println!("    • Description: {}", m.description);
-                } else {
-                    println!("    • (Plugin '{}' is not registered in active project)", canonical);
+                for path in &report.removed {
+                    println!("==> Removed binary: {}", path);
                 }
-
-                let global_clibm = clibm_home().map(|h| h.join(".clibm"));
-
-                if canonical == "clibm-mcp" {
-                    if let Some(ref g) = global_clibm {
-                        let mcp_cfg = g.join("mcp-config.json");
-                        if mcp_cfg.exists() {
-                            println!("\n[3] Dedicated Plugin Configuration:");
-                            println!("    • Configuration file: {}", mcp_cfg.display());
+                for path in &report.rotated {
+                    println!(
+                        "==> Binary was locked; renamed to {} (it is deleted on the next install/uninstall)",
+                        path
+                    );
+                }
+                for path in &report.failed {
+                    eprintln!("==> Could not remove {} (close any program using it and retry)", path);
+                }
+                if report.registry_entry_removed {
+                    println!("==> Removed '{}' from the plugin registry", report.name);
+                }
+                if report.removed.is_empty()
+                    && report.rotated.is_empty()
+                    && report.failed.is_empty()
+                    && !report.registry_entry_removed
+                {
+                    println!("Plugin '{}' is not installed; nothing to do.", report.name);
+                } else {
+                    println!("Uninstalled plugin '{}'.", report.name);
+                    if report.name == "clibm-mcp" {
+                        if let Some(cfg_file) = clibm_home().map(|h| h.join(".clibm").join("mcp-config.json")) {
+                            if cfg_file.exists() {
+                                println!("  (Its settings file was kept: {})", cfg_file.display());
+                            }
                         }
                     }
+                    println!("  The user PATH was not changed; `clibm uninstall` lists remaining entries.");
                 }
-
-                println!("\n--------------------------------------------------------------------");
-                println!("Manual Removal Commands:");
-                println!("--------------------------------------------------------------------");
-                if cfg!(windows) {
-                    if let Some(ref bp) = bin_path {
-                        println!("To delete the plugin binary in PowerShell:");
-                        println!("  Remove-Item -Force \"{}\"", bp.display());
-                    }
-                    println!("\nQuick Automatic Plugin Uninstall (Recommended):");
-                    println!("  iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{}/uninstall.ps1)", canonical);
-                    println!("  (Or locally if cloned: cd plugins/{} ; .\\uninstall.ps1 -Yes)", canonical);
-                    println!("\nTo disable/deregister plugin in the active project:");
-                    println!("  clibm plugin disable {}", canonical);
-                } else {
-                    if let Some(ref bp) = bin_path {
-                        println!("To delete the plugin binary in Bash:");
-                        println!("  rm -f \"{}\"", bp.display());
-                    }
-                    println!("\nQuick Automatic Plugin Uninstall (Recommended):");
-                    println!("  curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{}/uninstall.sh | bash", canonical);
-                    println!("  (Or locally if cloned: cd plugins/{} && ./uninstall.sh -y)", canonical);
-                    println!("\nTo disable/deregister plugin in the active project:");
-                    println!("  clibm plugin disable {}", canonical);
+                if !report.failed.is_empty() {
+                    std::process::exit(1);
                 }
-                println!("====================================================================");
             }
             PluginCommands::Run { name, args } => {
                 let (tree_hash, tree) = engine.load_working_tree()?;
@@ -1372,6 +1360,13 @@ fn main() -> Result<()> {
         Commands::Export { output } => {
             let bundle = engine.export_bundle()?;
             fs::write(&output, serde_json::to_string_pretty(&bundle)?)?;
+            if let Some(tree_hash) = bundle.staged_tree_hash.as_deref() {
+                engine.fire_hook(
+                    "on-export",
+                    tree_hash,
+                    serde_json::json!({ "output": output, "objects": bundle.objects.len() }),
+                )?;
+            }
             println!(
                 "Exported {} CAS objects to {}",
                 bundle.objects.len(),

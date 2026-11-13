@@ -253,6 +253,7 @@ name = "clibm-plugin-template"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clibm",
  "serde",
  "serde_json",
 ]
