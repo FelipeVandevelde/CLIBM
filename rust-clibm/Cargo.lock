@@ -263,11 +263,9 @@ name = "clibm-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "blake3",
- "chrono",
+ "clibm",
  "crossterm",
  "ratatui",
- "serde",
  "serde_json",
 ]
 
@@ -277,7 +275,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
- "chrono",
+ "clibm",
  "serde",
  "serde_json",
  "tiny_http",

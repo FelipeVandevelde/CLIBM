@@ -1,20 +1,21 @@
-//! CLIBM-WEB — Standalone Single-Binary Self-Hosted Web Dashboard Plugin
+//! CLIBM-WEB — local web dashboard for a CLIBM project.
 //!
-//! Built and installed from within its own plugin folder (`plugins/clibm-web`).
-//! Once installed (`./install.sh`, `.\install.ps1`, or `clibm plugin install .`),
-//! run it inside any ongoing CLIBM project via:
-//!   - `clibm plugin run web` (or `clibm plugin run clibm-web -- --port 7878`)
-//!   - `clibm-web --port 7878`
+//! Run it inside a project with `clibm plugin run web` (or `clibm-web --port 7878`).
+//! Every read and write goes through `clibm_core`, so the dashboard follows exactly the
+//! same rules as the CLI (dependencies, WIP limits, hooks, auto-commit).
+//!
+//! Security: the server only listens on 127.0.0.1, sends no CORS headers, rejects
+//! requests whose `Host`/`Origin` is not this local server (blocks other websites and
+//! DNS rebinding), and requires a per-start random token on every write.
 
-use anyhow::{anyhow, bail, Context, Result};
-use chrono::Utc;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use std::{
-    collections::BTreeMap,
-    env, fs,
-    path::{Path, PathBuf},
-};
+use anyhow::{anyhow, bail, Result};
+use clibm_core::engine::ClibmEngine;
+use clibm_core::models::{TaskPayload, TaskPriority, OBJ_TASK};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::hash_map::RandomState;
+use std::env;
+use std::hash::{BuildHasher, Hasher};
 use tiny_http::{Header, Method, Response, Server};
 
 const PLUGIN_NAME: &str = "clibm-web";
@@ -22,679 +23,363 @@ const PLUGIN_DESCRIPTION: &str = "Self-hosted local web dashboard for CLIBM proj
 /// Lifecycle events this plugin subscribes to by default.
 const DEFAULT_HOOKS: &[&str] = &["http-bridge"];
 
-const FORMAT_VERSION: &str = "0.1.0";
-const OBJ_PROJECT: &str = "project";
-const OBJ_BOARD: &str = "board";
-const OBJ_TASK: &str = "task";
-const OBJ_TREE: &str = "tree";
-const OBJ_COMMIT: &str = "commit";
-
+const DEFAULT_PORT: u16 = 7878;
 const EMBEDDED_UI_HTML: &str = include_str!("ui.html");
+const TOKEN_PLACEHOLDER: &str = "__CLIBM_TOKEN__";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CasObject {
-    #[serde(rename = "Type")]
-    object_type: String,
-    #[serde(rename = "Version")]
-    version: String,
-    #[serde(rename = "Hash")]
-    hash: String,
-    #[serde(rename = "Payload")]
-    payload: Value,
+const USAGE: &str = "clibm-web - local web dashboard for the CLIBM project in the current folder
+
+USAGE:
+  clibm-web [--port <PORT>]
+  clibm plugin run web -- [--port <PORT>]
+
+OPTIONS:
+  -p, --port <PORT>   Port on 127.0.0.1 (default 7878)
+      --manifest      Print this plugin's registry entry (used by installers)
+  -h, --help          Show this help";
+
+/// Per-server settings used to authorize requests.
+#[derive(Debug, Clone)]
+pub struct ServerCtx {
+    pub port: u16,
+    pub token: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProjectPayload {
-    id: String,
-    workspace_id: String,
-    code: String,
-    name: String,
-    #[serde(default)]
-    board_ids: Vec<String>,
+/// An HTTP answer independent of tiny_http (easy to test).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reply {
+    pub status: u16,
+    pub content_type: &'static str,
+    pub body: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct KanbanColumn {
-    id: String,
-    name: String,
-    order: usize,
-    wip_limit: Option<usize>,
-    #[serde(default)]
-    is_completed_state: bool,
+impl Reply {
+    fn json(status: u16, value: Value) -> Self {
+        Self {
+            status,
+            content_type: "application/json; charset=utf-8",
+            body: value.to_string(),
+        }
+    }
+    fn error(status: u16, message: impl Into<String>) -> Self {
+        Self::json(status, json!({ "ok": false, "error": message.into() }))
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct KanbanBoardPayload {
-    id: String,
-    project_id: String,
-    name: String,
-    columns: Vec<KanbanColumn>,
+/// A random token for this server run: BLAKE3 over OS-seeded hasher output, the time
+/// and the process id.
+fn generate_token() -> String {
+    let mut seed = Vec::new();
+    for _ in 0..4 {
+        let mut h = RandomState::new().build_hasher();
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
+        seed.extend_from_slice(&h.finish().to_le_bytes());
+    }
+    seed.extend_from_slice(&std::process::id().to_le_bytes());
+    blake3::hash(&seed).to_hex()[..32].to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TaskComment {
-    id: String,
-    author: String,
-    timestamp: String,
-    body: String,
+fn is_local_host(value: &str, port: u16) -> bool {
+    let v = value.trim().to_ascii_lowercase();
+    v == format!("127.0.0.1:{}", port) || v == format!("localhost:{}", port)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TaskPayload {
-    id: String,
-    project_id: String,
-    board_id: String,
-    column_id: String,
-    title: String,
-    description: String,
-    priority: String,
-    assignee: Option<String>,
-    due_date: Option<String>,
-    created_at: String,
-    updated_at: String,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    depends_on: Vec<String>,
-    #[serde(default)]
-    comments: Vec<TaskComment>,
-    #[serde(default)]
-    metadata: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct TreeSnapshotPayload {
-    active_workspace_id: String,
-    active_project_id: String,
-    workspaces: BTreeMap<String, String>,
-    projects: BTreeMap<String, String>,
-    boards: BTreeMap<String, String>,
-    tasks: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CommitPayload {
-    tree_hash: String,
-    parents: Vec<String>,
-    author: String,
-    timestamp: String,
-    message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PluginManifest {
-    name: String,
-    version: String,
-    description: String,
-    enabled: bool,
-    hooks: Vec<String>,
-    executable: Option<String>,
+/// Checks that a request comes from this dashboard: the `Host` must be this local
+/// server (stops DNS rebinding), an `Origin`, when sent, must be this server too (stops
+/// other websites), and writes must carry the session token.
+pub fn authorize(
+    ctx: &ServerCtx,
+    host: Option<&str>,
+    origin: Option<&str>,
+    token: Option<&str>,
+    is_write: bool,
+) -> Result<(), Reply> {
+    match host {
+        Some(h) if is_local_host(h, ctx.port) => {}
+        _ => return Err(Reply::error(403, "Forbidden: unexpected Host header")),
+    }
+    if let Some(o) = origin {
+        let o = o.trim().to_ascii_lowercase();
+        let allowed = o
+            .strip_prefix("http://")
+            .map(|rest| is_local_host(rest, ctx.port))
+            .unwrap_or(false);
+        if !allowed {
+            return Err(Reply::error(403, "Forbidden: cross-origin request"));
+        }
+    }
+    if is_write && token != Some(ctx.token.as_str()) {
+        return Err(Reply::error(403, "Forbidden: missing or invalid session token"));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
 struct MoveRequest {
     task_id: String,
     column_id: String,
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Deserialize)]
 struct NewTaskRequest {
     title: String,
-    priority: String,
-    column_id: String,
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    column_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct CommitRequest {
+    #[serde(default)]
     message: String,
 }
 
-fn normalize_value(val: &Value) -> Value {
-    match val {
-        Value::Object(map) => {
-            let mut sorted: BTreeMap<String, Value> = BTreeMap::new();
-            for (k, v) in map {
-                sorted.insert(k.clone(), normalize_value(v));
-            }
-            let mut out = Map::new();
-            for (k, v) in sorted {
-                out.insert(k, v);
-            }
-            Value::Object(out)
-        }
-        Value::Array(arr) => Value::Array(arr.iter().map(normalize_value).collect()),
-        other => other.clone(),
-    }
-}
-
-fn compute_object_hash<T: Serialize>(object_type: &str, payload: &T) -> Result<(String, Value)> {
-    let raw = serde_json::to_value(payload)?;
-    let normalized = normalize_value(&raw);
-    let canonical_payload = serde_json::to_string(&normalized)?;
-    let preimage = format!(
-        "{}:{}:{}",
-        object_type, FORMAT_VERSION, canonical_payload
-    );
-    let hash = blake3::hash(preimage.as_bytes()).to_hex().to_string();
-    Ok((hash, normalized))
-}
-
-struct ProjectCas {
-    project_root: PathBuf,
-    clibm_dir: PathBuf,
-}
-
-impl ProjectCas {
-    fn discover_ongoing(cwd: &Path) -> Result<Self> {
-        if let Ok(env_root) = env::var("CLIBM_PROJECT_ROOT") {
-            let p = PathBuf::from(env_root);
-            let candidate = p.join(".clibm");
-            if candidate.exists() && candidate.join("objects").exists() {
-                return Ok(Self {
-                    project_root: p,
-                    clibm_dir: candidate,
-                });
-            }
-        }
-
-        for ancestor in cwd.ancestors() {
-            let candidate = ancestor.join(".clibm");
-            if candidate.exists() && candidate.join("objects").exists() {
-                return Ok(Self {
-                    project_root: ancestor.to_path_buf(),
-                    clibm_dir: candidate,
-                });
-            }
-        }
-
-        bail!(
-            "No ongoing CLIBM project (.clibm/) found in '{}' or its parent directories.\n\
-             Navigate to an initialized CLIBM project folder (`cd <your-project>` where `clibm init` was run) \
-             and execute `clibm plugin run web` or `clibm-web`.",
-            cwd.display()
-        )
-    }
-
-    fn object_path(&self, hash: &str) -> Result<PathBuf> {
-        if hash.len() < 6 {
-            bail!("Invalid BLAKE3 hash: {}", hash);
-        }
-        let (shard, rest) = hash.split_at(2);
-        Ok(self
-            .clibm_dir
-            .join("objects")
-            .join(shard)
-            .join(format!("{}.json", rest)))
-    }
-
-    fn get_typed<T: DeserializeOwned>(&self, hash: &str, expected_type: &str) -> Result<T> {
-        let path = self.object_path(hash)?;
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read CAS object {}", hash))?;
-        let obj: CasObject = serde_json::from_str(&content)?;
-        if obj.object_type != expected_type {
-            bail!(
-                "CAS type mismatch for {}: expected {}, got {}",
-                hash,
-                expected_type,
-                obj.object_type
-            );
-        }
-        Ok(serde_json::from_value(obj.payload)?)
-    }
-
-    fn put_object<T: Serialize>(&self, object_type: &str, payload: &T) -> Result<String> {
-        let (hash, normalized) = compute_object_hash(object_type, payload)?;
-        let path = self.object_path(&hash)?;
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let env = CasObject {
-                object_type: object_type.to_string(),
-                version: FORMAT_VERSION.to_string(),
-                hash: hash.clone(),
-                payload: normalized,
-            };
-            fs::write(&path, serde_json::to_string_pretty(&env)?)?;
-        }
-        Ok(hash)
-    }
-
-    fn current_branch(&self) -> Option<String> {
-        let head = fs::read_to_string(self.clibm_dir.join("HEAD")).ok()?;
-        head.trim()
-            .strip_prefix("ref: refs/heads/")
-            .map(|s| s.to_string())
-    }
-
-    fn resolve_head_commit(&self) -> Option<String> {
-        let head = fs::read_to_string(self.clibm_dir.join("HEAD")).ok()?;
-        let trimmed = head.trim();
-        if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
-            let bfile = self.clibm_dir.join("refs").join("heads").join(branch);
-            fs::read_to_string(bfile)
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        } else if !trimmed.is_empty() {
-            Some(trimmed.to_string())
-        } else {
-            None
-        }
-    }
-
-    fn load_working_tree(&self) -> Result<(String, TreeSnapshotPayload)> {
-        let stage_file = self.clibm_dir.join("STAGE_TREE");
-        if stage_file.exists() {
-            let h = fs::read_to_string(&stage_file)?.trim().to_string();
-            if !h.is_empty() {
-                let tree = self.get_typed::<TreeSnapshotPayload>(&h, OBJ_TREE)?;
-                return Ok((h, tree));
-            }
-        }
-        if let Some(commit_hash) = self.resolve_head_commit() {
-            let commit = self.get_typed::<CommitPayload>(&commit_hash, OBJ_COMMIT)?;
-            let tree = self.get_typed::<TreeSnapshotPayload>(&commit.tree_hash, OBJ_TREE)?;
-            return Ok((commit.tree_hash, tree));
-        }
-        bail!("Ongoing project has no staged tree or HEAD commit.")
-    }
-
-    fn save_working_tree(&self, tree: &TreeSnapshotPayload) -> Result<String> {
-        let hash = self.put_object(OBJ_TREE, tree)?;
-        fs::write(self.clibm_dir.join("STAGE_TREE"), format!("{}\n", hash))?;
-        Ok(hash)
-    }
-
-    fn log_commits(&self) -> Result<Vec<(String, CommitPayload)>> {
-        let mut results = Vec::new();
-        let mut queue = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        if let Some(head) = self.resolve_head_commit() {
-            queue.push(head);
-        }
-        while let Some(curr) = queue.pop() {
-            if !visited.insert(curr.clone()) {
-                continue;
-            }
-            if let Ok(commit) = self.get_typed::<CommitPayload>(&curr, OBJ_COMMIT) {
-                for p in &commit.parents {
-                    queue.push(p.clone());
-                }
-                results.push((curr, commit));
-            }
-        }
-        results.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp));
-        Ok(results)
-    }
-
-    fn fsck(&self) -> Result<Value> {
-        let mut total = 0usize;
-        let mut verified = 0usize;
-        let mut corrupted = Vec::new();
-        let obj_dir = self.clibm_dir.join("objects");
-        if obj_dir.exists() {
-            for shard in fs::read_dir(obj_dir)? {
-                let shard = shard?;
-                if shard.path().is_dir() {
-                    for entry in fs::read_dir(shard.path())? {
-                        let entry = entry?;
-                        if entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
-                            total += 1;
-                            let text = fs::read_to_string(entry.path())?;
-                            if let Ok(obj) = serde_json::from_str::<CasObject>(&text) {
-                                let (recomputed, _) =
-                                    compute_object_hash(&obj.object_type, &obj.payload)?;
-                                if recomputed == obj.hash {
-                                    verified += 1;
-                                } else {
-                                    corrupted.push(obj.hash);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(json!({
-            "total_objects": total,
-            "verified_objects": verified,
-            "corrupted_hashes": corrupted,
-        }))
-    }
-}
-
-fn json_header() -> Header {
-    Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap()
-}
-
-fn html_header() -> Header {
-    Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap()
-}
-
-fn cors_headers() -> Vec<Header> {
-    vec![
-        Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap(),
-        Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"GET, POST, OPTIONS"[..]).unwrap(),
-        Header::from_bytes(
-            &b"Access-Control-Allow-Headers"[..],
-            &b"Content-Type, X-MCP-Transport, Authorization"[..],
-        )
-        .unwrap(),
-    ]
-}
-
-fn respond_json(request: tiny_http::Request, body: String, status: u16) {
-    let mut resp = Response::from_string(body)
-        .with_status_code(status)
-        .with_header(json_header());
-    for h in cors_headers() {
-        resp.add_header(h);
-    }
-    let _ = request.respond(resp);
-}
-
-fn build_state_snapshot(cas: &ProjectCas) -> Result<Value> {
-    let (tree_hash, tree) = cas.load_working_tree()?;
-    let branch = cas.current_branch().unwrap_or_else(|| "detached".to_string());
-    let board_hash = tree
-        .boards
-        .values()
-        .next()
-        .ok_or_else(|| anyhow!("No board"))?;
-    let board: KanbanBoardPayload = cas.get_typed(board_hash, OBJ_BOARD)?;
-
+/// Current board of the active project with its tasks.
+fn state_snapshot(engine: &ClibmEngine) -> Result<Value> {
+    let st = engine.status()?;
+    let (tree_hash, tree) = engine.load_working_tree()?;
+    let project = engine.active_project(&tree)?;
+    let board = engine.project_board(&tree, &project)?;
     let mut tasks = Vec::new();
-    for (tid, thash) in &tree.tasks {
-        let t: TaskPayload = cas.get_typed(thash, OBJ_TASK)?;
-        tasks.push(json!({
-            "id": tid,
-            "hash": thash,
-            "task": t,
-        }));
+    for (id, hash) in &tree.tasks {
+        let task: TaskPayload = engine.cas.get_typed_payload(hash, OBJ_TASK)?;
+        if task.project_id == project.id && task.board_id == board.id {
+            tasks.push(json!({ "id": id, "hash": hash, "task": task }));
+        }
     }
-
-    let commits = cas.log_commits()?;
-    let fsck = cas.fsck()?;
-
     Ok(json!({
-        "branch": branch,
+        "ok": true,
+        "branch": st.branch,
+        "head_commit": st.head_commit,
         "staged_tree_hash": tree_hash,
+        "dirty": st.dirty,
+        "auto_commit": st.auto_commit,
+        "project": { "id": project.id, "code": project.code, "name": project.name },
         "board": board,
         "tasks": tasks,
-        "commits": commits,
-        "fsck": fsck,
     }))
 }
 
-fn update_registry_file(reg_file: &Path, manifest: &PluginManifest) -> Result<()> {
-    if let Some(parent) = reg_file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut list: Vec<PluginManifest> = if reg_file.exists() {
-        fs::read_to_string(reg_file)
-            .ok()
-            .and_then(|s| {
-                let clean = s.strip_prefix('\u{FEFF}').unwrap_or(&s);
-                serde_json::from_str(clean).ok()
-            })
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    if let Some(existing) = list.iter_mut().find(|p| p.name == manifest.name) {
-        *existing = manifest.clone();
-    } else {
-        list.push(manifest.clone());
-    }
-
-    let json = format!("\u{FEFF}{}", serde_json::to_string_pretty(&list)?);
-    fs::write(reg_file, json)?;
-    Ok(())
+fn parse_body<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Reply> {
+    serde_json::from_str(body).map_err(|e| Reply::error(400, format!("Invalid JSON body: {}", e)))
 }
 
-fn register_plugin_globally(bin_path: Option<String>) -> Result<()> {
-    let home = env::var("CLIBM_HOME")
-        .or_else(|_| env::var("HOME"))
-        .or_else(|_| env::var("USERPROFILE"))
-        .context("Could not determine user home directory")?;
-    let plugins_dir = PathBuf::from(home).join(".clibm").join("plugins");
-    fs::create_dir_all(&plugins_dir)?;
-    let reg_file = plugins_dir.join("registry.json");
+/// Routes one request. `host`, `origin` and `token` are the raw header values.
+#[allow(clippy::too_many_arguments)]
+pub fn handle_request(
+    engine: &ClibmEngine,
+    ctx: &ServerCtx,
+    method: &str,
+    url: &str,
+    host: Option<&str>,
+    origin: Option<&str>,
+    token: Option<&str>,
+    body: &str,
+) -> Reply {
+    let path = url.split('?').next().unwrap_or("/");
+    let is_write = method != "GET" && method != "HEAD";
+    if let Err(reply) = authorize(ctx, host, origin, token, is_write) {
+        return reply;
+    }
 
-    let exe = bin_path.or_else(|| {
-        env::current_exe()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string())
-    });
+    match (method, path) {
+        ("GET", "/") | ("GET", "/index.html") => Reply {
+            status: 200,
+            content_type: "text/html; charset=utf-8",
+            body: EMBEDDED_UI_HTML.replace(TOKEN_PLACEHOLDER, &ctx.token),
+        },
+        ("GET", "/api/state") => match state_snapshot(engine) {
+            Ok(v) => Reply::json(200, v),
+            Err(e) => Reply::error(500, e.to_string()),
+        },
+        ("GET", "/api/fsck") => match engine.cas.fsck() {
+            Ok(report) => Reply::json(
+                200,
+                json!({ "ok": report.corrupted_hashes.is_empty(), "report": report }),
+            ),
+            Err(e) => Reply::error(500, e.to_string()),
+        },
+        ("POST", "/api/move") => {
+            let req: MoveRequest = match parse_body(body) {
+                Ok(r) => r,
+                Err(reply) => return reply,
+            };
+            match engine.move_task(&req.task_id, &req.column_id, req.force) {
+                Ok(res) => Reply::json(200, json!({ "ok": true, "result": res })),
+                Err(e) => Reply::error(409, e.to_string()),
+            }
+        }
+        ("POST", "/api/task") => {
+            let req: NewTaskRequest = match parse_body(body) {
+                Ok(r) => r,
+                Err(reply) => return reply,
+            };
+            let default_priority = engine
+                .cas
+                .load_config()
+                .map(|c| c.default_priority)
+                .unwrap_or_else(|_| "medium".to_string());
+            let priority =
+                TaskPriority::from_str_lossy(req.priority.as_deref().unwrap_or(&default_priority));
+            let column = req.column_id.unwrap_or_else(|| "todo".to_string());
+            match engine.create_task(
+                &req.title,
+                "",
+                priority,
+                &column,
+                None,
+                None,
+                vec![],
+                vec![],
+                false,
+            ) {
+                Ok((task, hash, commit)) => Reply::json(
+                    200,
+                    json!({ "ok": true, "id": task.id, "hash": hash, "commit": commit }),
+                ),
+                Err(e) => Reply::error(409, e.to_string()),
+            }
+        }
+        ("POST", "/api/commit") => {
+            let req: CommitRequest = match parse_body(body) {
+                Ok(r) => r,
+                Err(reply) => return reply,
+            };
+            let message = if req.message.trim().is_empty() {
+                "Snapshot committed from clibm-web".to_string()
+            } else {
+                req.message
+            };
+            match engine.commit(&message, None) {
+                Ok(Some(commit)) => Reply::json(200, json!({ "ok": true, "commit": commit })),
+                Ok(None) => Reply::json(
+                    200,
+                    json!({ "ok": true, "commit": null, "message": "Nothing to commit: the working tree matches HEAD." }),
+                ),
+                Err(e) => Reply::error(409, e.to_string()),
+            }
+        }
+        _ => Reply::error(404, "Not found"),
+    }
+}
 
-    let manifest = PluginManifest {
-        name: "clibm-web".to_string(),
-        version: "0.1.0".to_string(),
-        description:
-            "Single-binary self-hosted local HTTP server & web workbench (127.0.0.1:7878)"
-                .to_string(),
-        enabled: true,
-        hooks: vec!["http-bridge".to_string(), "on-state-query".to_string()],
-        executable: exe.clone(),
-    };
+fn header_value(request: &tiny_http::Request, name: &str) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str().to_string())
+}
 
-    update_registry_file(&reg_file, &manifest)?;
-    if let Ok(cwd) = env::current_dir() {
-        if let Ok(cas) = ProjectCas::discover_ongoing(&cwd) {
-            let _ = update_registry_file(
-                &cas.clibm_dir.join("plugins").join("registry.json"),
-                &manifest,
-            );
+fn parse_port(args: &[String]) -> Result<u16> {
+    let mut port = DEFAULT_PORT;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--port" | "-p" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("--port needs a value\n\n{}", USAGE))?;
+                port = value
+                    .parse::<u16>()
+                    .map_err(|_| anyhow!("Invalid port '{}'", value))?;
+                i += 2;
+            }
+            other => bail!("Unknown argument '{}'\n\n{}", other, USAGE),
         }
     }
-    println!(
-        "Registered plugin 'clibm-web' in global CLIBM registry ({})",
-        reg_file.display()
-    );
-    Ok(())
+    Ok(port)
 }
 
 fn main() -> Result<()> {
-    let manifest_args: Vec<String> = env::args().skip(1).collect();
-    if manifest_args.iter().any(|a| a == "--manifest") {
-        println!("{}", manifest_json(&manifest_args));
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--manifest") {
+        println!("{}", manifest_json(&args));
         return Ok(());
     }
-    let args: Vec<String> = env::args().collect();
-    if args.iter().any(|a| a == "--contract") {
-        println!(
-            "{{\"contract\":\"CLIBM_PLUGIN_CONTRACT_V1\",\"name\":\"clibm-web\",\"version\":\"0.1.0\"}}"
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{}", USAGE);
+        return Ok(());
+    }
+    let port = match parse_port(&args) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(2);
+        }
+    };
+
+    let cwd = env::current_dir()?;
+    let engine = ClibmEngine::open(&cwd);
+    if !engine.cas.is_initialized() {
+        bail!(
+            "No CLIBM project (.clibm/) found in '{}' or its parent folders. Run `clibm init` first.",
+            cwd.display()
         );
-        return Ok(());
     }
-
-    if let Some(pos) = args.iter().position(|a| a == "--register") {
-        let custom_bin = args.get(pos + 1).cloned();
-        return register_plugin_globally(custom_bin);
-    }
-
-    let port = args
-        .iter()
-        .position(|a| a == "--port" || a == "-p")
-        .and_then(|i| args.get(i + 1))
-        .map(|s| s.as_str())
-        .unwrap_or("7878");
 
     let bind_addr = format!("127.0.0.1:{}", port);
-    let cwd = env::current_dir()?;
-    let cas = ProjectCas::discover_ongoing(&cwd)?;
-
     let server = Server::http(&bind_addr)
         .map_err(|e| anyhow!("Failed to bind local HTTP server on {}: {}", bind_addr, e))?;
+    let ctx = ServerCtx {
+        port,
+        token: generate_token(),
+    };
 
     println!("====================================================================");
-    println!("CLIBM-WEB v0.1.0 — Standalone Local Web Dashboard Server");
-    println!("Ongoing Project: {}", cas.project_root.display());
-    println!("CAS Repository:  {}", cas.clibm_dir.display());
-    println!("Listening:       http://{}", bind_addr);
-    println!("  • Web Dashboard : http://{}/", bind_addr);
+    println!("CLIBM-WEB v{} - local web dashboard", env!("CARGO_PKG_VERSION"));
+    println!("Project : {}", engine.cas.workspace_root().display());
+    println!("Open    : http://{}/  (also http://localhost:{}/)", bind_addr, port);
+    println!("Stop    : Ctrl+C");
     println!("====================================================================");
 
     for mut request in server.incoming_requests() {
+        let method = match request.method() {
+            Method::Get => "GET",
+            Method::Head => "HEAD",
+            Method::Post => "POST",
+            _ => "OTHER",
+        };
         let url = request.url().to_string();
-        let method = request.method().clone();
-
-        // Support CORS preflight
-        if method == Method::Options {
-            let mut resp = Response::empty(200);
-            for h in cors_headers() {
-                resp.add_header(h);
-            }
-            let _ = request.respond(resp);
-            continue;
-        }
-
-        // Handle root / and /index.html
-        if url == "/" || url == "/index.html" {
-            if method == Method::Get {
-                let _ = request.respond(Response::from_string(EMBEDDED_UI_HTML).with_header(html_header()));
-                continue;
-            }
-        }
-
-        if method == Method::Get && url == "/api/state" {
-            match build_state_snapshot(&cas) {
-                Ok(val) => {
-                    respond_json(request, serde_json::to_string(&val)?, 200);
-                }
-                Err(e) => {
-                    respond_json(request, json!({ "error": e.to_string() }).to_string(), 400);
-                }
-            }
-            continue;
-        }
-
-        if method == Method::Post && url == "/api/move" {
-            let mut body = String::new();
+        let host = header_value(&request, "Host");
+        let origin = header_value(&request, "Origin");
+        let token = header_value(&request, "X-Clibm-Token");
+        let mut body = String::new();
+        if method == "POST" {
             let _ = request.as_reader().read_to_string(&mut body);
-            if let Ok(req) = serde_json::from_str::<MoveRequest>(&body) {
-                if let Ok((_, mut tree)) = cas.load_working_tree() {
-                    if let Some(thash) = tree.tasks.get(&req.task_id).cloned() {
-                        if let Ok(mut task) = cas.get_typed::<TaskPayload>(&thash, OBJ_TASK) {
-                            task.column_id = req.column_id;
-                            task.updated_at = Utc::now().to_rfc3339();
-                            if let Ok(new_hash) = cas.put_object(OBJ_TASK, &task) {
-                                tree.tasks.insert(req.task_id, new_hash.clone());
-                                let _ = cas.save_working_tree(&tree);
-                                respond_json(
-                                    request,
-                                    json!({ "ok": true, "hash": new_hash }).to_string(),
-                                    200,
-                                );
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-            respond_json(
-                request,
-                json!({ "ok": false, "error": "Move failed" }).to_string(),
-                400,
+        }
+
+        let reply = handle_request(
+            &engine,
+            &ctx,
+            method,
+            &url,
+            host.as_deref(),
+            origin.as_deref(),
+            token.as_deref(),
+            &body,
+        );
+        let response = Response::from_string(reply.body)
+            .with_status_code(reply.status)
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], reply.content_type.as_bytes()).unwrap(),
+            )
+            .with_header(Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap())
+            .with_header(
+                Header::from_bytes(&b"X-Content-Type-Options"[..], &b"nosniff"[..]).unwrap(),
             );
-            continue;
-        }
-
-        if method == Method::Post && url == "/api/task" {
-            let mut body = String::new();
-            let _ = request.as_reader().read_to_string(&mut body);
-            if let Ok(req) = serde_json::from_str::<NewTaskRequest>(&body) {
-                if let Ok((_, mut tree)) = cas.load_working_tree() {
-                    let prj_id = tree.active_project_id.clone();
-                    let prj_code = tree
-                        .projects
-                        .get(&prj_id)
-                        .and_then(|h| cas.get_typed::<ProjectPayload>(h, OBJ_PROJECT).ok())
-                        .map(|p| p.code)
-                        .unwrap_or_else(|| "CLIBM".to_string());
-                    let board_id = tree
-                        .boards
-                        .keys()
-                        .next()
-                        .cloned()
-                        .unwrap_or_else(|| "BRD-01".to_string());
-                    let task_id = format!("{}-{}", prj_code, tree.tasks.len() + 101);
-                    let now = Utc::now().to_rfc3339();
-                    let new_task = TaskPayload {
-                        id: task_id.clone(),
-                        project_id: prj_id,
-                        board_id,
-                        column_id: req.column_id,
-                        title: req.title,
-                        description: "Created via self-hosted clibm-web".to_string(),
-                        priority: req.priority.to_lowercase(),
-                        assignee: None,
-                        due_date: None,
-                        created_at: now.clone(),
-                        updated_at: now,
-                        tags: vec!["web".to_string()],
-                        depends_on: Vec::new(),
-                        comments: Vec::new(),
-                        metadata: BTreeMap::new(),
-                    };
-                    if let Ok(thash) = cas.put_object(OBJ_TASK, &new_task) {
-                        tree.tasks.insert(task_id, thash);
-                        let _ = cas.save_working_tree(&tree);
-                    }
-                }
-            }
-            let snap = build_state_snapshot(&cas)?;
-            respond_json(request, serde_json::to_string(&snap)?, 200);
-            continue;
-        }
-
-        if method == Method::Post && url == "/api/commit" {
-            let mut body = String::new();
-            let _ = request.as_reader().read_to_string(&mut body);
-            if let Ok(req) = serde_json::from_str::<CommitRequest>(&body) {
-                if let Ok((tree_hash, _)) = cas.load_working_tree() {
-                    let parents = cas.resolve_head_commit().into_iter().collect();
-                    let payload = CommitPayload {
-                        tree_hash,
-                        parents,
-                        author: "Web Operator".to_string(),
-                        timestamp: Utc::now().to_rfc3339(),
-                        message: req.message,
-                    };
-                    if let Ok(commit_hash) = cas.put_object(OBJ_COMMIT, &payload) {
-                        if let Some(branch) = cas.current_branch() {
-                            let bfile = cas.clibm_dir.join("refs").join("heads").join(branch);
-                            let _ = fs::write(bfile, format!("{}\n", commit_hash));
-                        } else {
-                            let _ =
-                                fs::write(cas.clibm_dir.join("HEAD"), format!("{}\n", commit_hash));
-                        }
-                    }
-                }
-            }
-            let snap = build_state_snapshot(&cas)?;
-            respond_json(request, serde_json::to_string(&snap)?, 200);
-            continue;
-        }
-
-        let _ = request.respond(Response::from_string("Not Found").with_status_code(404));
+        let _ = request.respond(response);
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cors_headers_structure() {
-        let headers = cors_headers();
-        assert_eq!(headers.len(), 3);
-    }
 }
 
 /// `--manifest [--executable <path>] [--hooks a,b]`: prints this plugin's registry entry
@@ -725,4 +410,104 @@ fn manifest_json(args: &[String]) -> String {
         "tools": serde_json::json!([]),
     })
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx() -> ServerCtx {
+        ServerCtx {
+            port: 7878,
+            token: "secret-token".to_string(),
+        }
+    }
+
+    #[test]
+    fn authorize_checks_host_origin_and_token() {
+        let c = ctx();
+        // Same-origin page load and API reads.
+        assert!(authorize(&c, Some("127.0.0.1:7878"), None, None, false).is_ok());
+        assert!(authorize(&c, Some("localhost:7878"), Some("http://localhost:7878"), None, false).is_ok());
+        // DNS rebinding: a foreign host name pointing at 127.0.0.1.
+        assert_eq!(authorize(&c, Some("evil.example:7878"), None, None, false).unwrap_err().status, 403);
+        assert_eq!(authorize(&c, None, None, None, false).unwrap_err().status, 403);
+        // Another website posting to the local server.
+        assert_eq!(
+            authorize(&c, Some("127.0.0.1:7878"), Some("http://evil.example"), Some("secret-token"), true)
+                .unwrap_err()
+                .status,
+            403
+        );
+        // Writes need the token.
+        assert_eq!(authorize(&c, Some("127.0.0.1:7878"), None, None, true).unwrap_err().status, 403);
+        assert_eq!(authorize(&c, Some("127.0.0.1:7878"), None, Some("wrong"), true).unwrap_err().status, 403);
+        assert!(authorize(&c, Some("127.0.0.1:7878"), Some("http://127.0.0.1:7878"), Some("secret-token"), true).is_ok());
+    }
+
+    #[test]
+    fn tokens_are_random_and_injected_into_the_page() {
+        let a = generate_token();
+        let b = generate_token();
+        assert_eq!(a.len(), 32);
+        assert_ne!(a, b);
+        let dir = std::env::temp_dir().join(format!("clibm-web-page-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine = ClibmEngine::open_exact(&dir).without_hooks();
+        let page = handle_request(&engine, &ctx(), "GET", "/", Some("127.0.0.1:7878"), None, None, "");
+        assert_eq!(page.status, 200);
+        assert!(page.body.contains("secret-token"));
+        assert!(!page.body.contains(TOKEN_PLACEHOLDER));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn web_writes_produce_valid_core_objects() {
+        use clibm_core::versioning::VersioningEngine;
+
+        let dir = std::env::temp_dir().join(format!("clibm-web-writes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine = ClibmEngine::open_exact(&dir).without_hooks();
+        engine.init("ws", "APP", "App").unwrap();
+        let c = ctx();
+        let host = Some("127.0.0.1:7878");
+        let post = |url: &str, body: &str| {
+            handle_request(&engine, &c, "POST", url, host, Some("http://127.0.0.1:7878"), Some("secret-token"), body)
+        };
+
+        let created = post("/api/task", r#"{"title":"From the web","priority":"high"}"#);
+        assert_eq!(created.status, 200, "{}", created.body);
+        let moved = post("/api/move", r#"{"task_id":"101","column_id":"in-progress"}"#);
+        assert_eq!(moved.status, 200, "{}", moved.body);
+        // Core rules apply: unknown column -> 409 with the core's message.
+        let bad = post("/api/move", r#"{"task_id":"APP-101","column_id":"nowhere"}"#);
+        assert_eq!(bad.status, 409);
+        assert!(bad.body.contains("does not exist"), "{}", bad.body);
+        // Auto-commit is on, so a manual commit has nothing to do.
+        let commit = post("/api/commit", r#"{"message":"web"}"#);
+        assert!(commit.body.contains("Nothing to commit"), "{}", commit.body);
+
+        // Everything the web wrote is a valid core object and the history is readable.
+        let report = engine.cas.fsck().unwrap();
+        assert_eq!(report.verified_objects, report.total_objects);
+        assert!(report.corrupted_hashes.is_empty() && report.legacy_hashes.is_empty());
+        let log = VersioningEngine::log_history(&engine.cas, None).unwrap();
+        assert!(log.len() >= 3, "expected init + add + move commits, got {}", log.len());
+
+        let state = handle_request(&engine, &c, "GET", "/api/state", host, None, None, "");
+        let v: Value = serde_json::from_str(&state.body).unwrap();
+        assert_eq!(v["tasks"][0]["task"]["column_id"], "in-progress");
+        assert_eq!(v["project"]["code"], "APP");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn port_argument_parsing() {
+        assert_eq!(parse_port(&[]).unwrap(), DEFAULT_PORT);
+        assert_eq!(parse_port(&["--port".into(), "9000".into()]).unwrap(), 9000);
+        assert!(parse_port(&["--port".into()]).is_err());
+        assert!(parse_port(&["--bogus".into()]).is_err());
+    }
 }
