@@ -285,3 +285,15 @@ fn fsck_reports_legacy_plugin_objects_separately() {
 fn blake3_hex(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
+
+#[test]
+fn config_repairs_browser_style_repository_urls() {
+    let p = TempProject::new("repourl");
+    p.init();
+    p.ok(&["config", "set", "github_repo_url", "https://github.com/FelipeVandevelde/CLIBM/tree/dev/rust-clibm"]);
+    let cfg = p.json(&["config", "show"]);
+    assert_eq!(cfg["github_repo_url"], "https://github.com/FelipeVandevelde/CLIBM.git");
+    assert_eq!(cfg["update_branch"], "dev");
+    let err = p.fails(&["config", "set", "github_repo_url", "nonsense"]);
+    assert!(err.contains("not a repository URL"), "{}", err);
+}

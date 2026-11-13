@@ -565,73 +565,92 @@ clibm_resolve_local_source_dir() {
   return 1
 }
 
+CLIBM_LAST_BUILD_COMMIT=""
+
+clibm_git_source_url() {
+  printf '%s\n' "${CLIBM_GIT_URL:-https://github.com/FelipeVandevelde/CLIBM.git}"
+}
+
+clibm_git_source_ref() {
+  printf '%s\n' "${CLIBM_GIT_REF:-main}"
+}
+
+# Copies a freshly built binary over the installed one (atomic rename, so a running
+# copy keeps working until it exits).
+clibm_install_binary() {
+  local src="$1"
+  local dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  cp "$src" "${dest}.new.$$"
+  chmod +x "${dest}.new.$$"
+  mv -f "${dest}.new.$$" "$dest"
+}
+
+# Builds a CLIBM crate and installs its binary at <dest_binary>.
+# - Local mode (a clone of the repository is found): `cargo build --release -p <crate>`.
+# - Remote mode: `cargo install --git <CLIBM_GIT_URL> --branch <CLIBM_GIT_REF> --root <tmp>`,
+#   which builds the whole Cargo workspace correctly. Set CLIBM_FORCE_REMOTE=1 to skip
+#   local mode. Extra cargo flags come from CARGO_BUILD_FEATURES. The raw-base argument
+#   and source file list are accepted for older callers but unused.
+# Sets CLIBM_LAST_BUILD_COMMIT to the commit that was built (when known).
 clibm_build_and_stage() {
   local crate_name="$1"
   local remote_subpath="$2"
   local dest_binary="$3"
   local local_candidate_dir="$4"
-  local raw_base_override="$5"
-  shift 5
+  shift 4
+  if [ $# -gt 0 ]; then shift; fi
 
-  mkdir -p "$(dirname "$dest_binary")"
+  CLIBM_LAST_BUILD_COMMIT=""
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "ERROR: cargo was not found. Install Rust from https://rustup.rs, open a new terminal and run the installer again." >&2
+    return 1
+  fi
 
   local local_dir=""
-  if local_dir=$(clibm_resolve_local_source_dir "$crate_name" "$remote_subpath" "$local_candidate_dir"); then
+  if [ -z "${CLIBM_FORCE_REMOTE:-}" ] && local_dir=$(clibm_resolve_local_source_dir "$crate_name" "$remote_subpath" "$local_candidate_dir"); then
     echo "==> [Local Mode] Building ${crate_name} from local source (${local_dir})..."
     # shellcheck disable=SC2086
-    (cd "$local_dir" && cargo build --release ${CARGO_BUILD_FEATURES:-})
-    local candidate_bin=""
-    for cand in "${local_dir}/target/release/${crate_name}" \
-                "${local_dir}/../../target/release/${crate_name}" \
-                "${local_dir}/../target/release/${crate_name}"; do
-      if [ -f "$cand" ]; then
-        candidate_bin="$cand"
-        break
-      fi
-    done
-    if [ -z "$candidate_bin" ]; then
-      echo "Error: Compiled binary not found for ${crate_name}" >&2
+    if ! (cd "$local_dir" && cargo build --release -p "$crate_name" ${CARGO_BUILD_FEATURES:-}); then
+      echo "ERROR: cargo build failed for ${crate_name}" >&2
       return 1
     fi
-    cp "$candidate_bin" "$dest_binary"
-    chmod +x "$dest_binary"
+    local target_dir
+    target_dir=$(cd "$local_dir" && cargo metadata --no-deps --format-version 1 2>/dev/null | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p' || true)
+    if [ -z "$target_dir" ]; then
+      target_dir="${local_dir}/target"
+    fi
+    if [ ! -f "${target_dir}/release/${crate_name}" ]; then
+      echo "ERROR: compiled binary not found at ${target_dir}/release/${crate_name}" >&2
+      return 1
+    fi
+    clibm_install_binary "${target_dir}/release/${crate_name}" "$dest_binary"
+    CLIBM_LAST_BUILD_COMMIT=$(git -C "$local_dir" rev-parse HEAD 2>/dev/null || true)
     return 0
   fi
 
-  local base_url
-  if [ -n "$raw_base_override" ]; then
-    base_url="${raw_base_override%/}"
-  else
-    local root_base
-    root_base=$(clibm_raw_repo_base)
-    if [ -n "$remote_subpath" ]; then
-      base_url="${root_base}/${remote_subpath#/}"
-    else
-      base_url="$root_base"
-    fi
-  fi
-
-  local tmp_build_dir
-  tmp_build_dir=$(mktemp -d "${TMPDIR:-/tmp}/${crate_name}-build.XXXXXX")
-  echo "==> [Remote Mode] Fetching ${crate_name} source files from GitHub (${base_url})..."
-  local rel_file clean_rel
-  for rel_file in "$@"; do
-    clean_rel="${rel_file#/}"
-    if ! clibm_download_url "${base_url}/${clean_rel}" "${tmp_build_dir}/${clean_rel}"; then
-      rm -rf "$tmp_build_dir"
-      return 1
-    fi
-  done
-
-  echo "==> Building ${crate_name} (Release Mode)..."
+  local url ref tmp_root
+  url=$(clibm_git_source_url)
+  ref=$(clibm_git_source_ref)
+  tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/${crate_name}-build.XXXXXX")
+  echo "==> [Remote Mode] Building ${crate_name} from ${url} (branch ${ref})..."
   # shellcheck disable=SC2086
-  if ! (cd "$tmp_build_dir" && cargo build --release ${CARGO_BUILD_FEATURES:-}); then
-    rm -rf "$tmp_build_dir"
+  # With <tmp>/bin on PATH, cargo does not ask the user to add the temp folder to PATH.
+  if ! PATH="${tmp_root}/bin:${PATH}" cargo install --git "$url" --branch "$ref" --root "$tmp_root" --locked --force "$crate_name" ${CARGO_BUILD_FEATURES:-}; then
+    rm -rf "$tmp_root"
+    echo "ERROR: cargo install failed for ${crate_name}" >&2
     return 1
   fi
-  cp "${tmp_build_dir}/target/release/${crate_name}" "$dest_binary"
-  chmod +x "$dest_binary"
-  rm -rf "$tmp_build_dir"
+  if [ ! -f "${tmp_root}/bin/${crate_name}" ]; then
+    rm -rf "$tmp_root"
+    echo "ERROR: compiled binary not found for ${crate_name}" >&2
+    return 1
+  fi
+  clibm_install_binary "${tmp_root}/bin/${crate_name}" "$dest_binary"
+  if [ -f "${tmp_root}/.crates2.json" ]; then
+    CLIBM_LAST_BUILD_COMMIT=$(grep -o '#[0-9a-f]\{40\}' "${tmp_root}/.crates2.json" | awk 'NR == 1 { print substr($0, 2) }' || true)
+  fi
+  rm -rf "$tmp_root"
   return 0
 }
 
@@ -1114,25 +1133,16 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 
-clibm_build_and_stage \
-  "clibm" \
-  "" \
-  "${INSTALL_DIR}/clibm" \
-  "$SCRIPT_DIR" \
-  "$RAW_BASE_URL" \
-  "Cargo.toml" \
-  "scripts/env-path.ps1" \
-  "scripts/env-path.sh" \
-  "src/main.rs" \
-  "src/lib.rs" \
-  "src/cli.rs" \
-  "src/canonical.rs" \
-  "src/cas.rs" \
-  "src/models.rs" \
-  "src/index.rs" \
-  "src/versioning.rs" \
-  "src/plugin.rs" \
-  "src/engine.rs"
+clibm_build_and_stage "clibm" "" "${INSTALL_DIR}/clibm" "$SCRIPT_DIR" "$RAW_BASE_URL"
+BUILT_COMMIT="$CLIBM_LAST_BUILD_COMMIT"
+if [ -n "${CLIBM_FORCE_REMOTE:-}" ] || ! clibm_resolve_local_source_dir "clibm" "" "$SCRIPT_DIR" >/dev/null; then
+  SOURCE_REPO=$(clibm_git_source_url)
+  SOURCE_REF=$(clibm_git_source_ref)
+else
+  SOURCE_REPO="$SCRIPT_DIR"
+  SOURCE_REF=""
+fi
+CORE_VERSION=$("${INSTALL_DIR}/clibm" --version 2>/dev/null | awk '{ print $NF }' || true)
 
 echo "==> Installed pure clibm binary to ${INSTALL_DIR}/clibm"
 
@@ -1155,11 +1165,26 @@ echo "   User PATH      : $PATH_STATUS"
 echo "--------------------------------------------------------------------"
 
 # Persist global installation defaults in ~/.clibm/install-config.json (UTF-8)
-GLOBAL_CFG_DIR="${HOME}/.clibm"
+GLOBAL_CFG_DIR="${CLIBM_HOME:-${HOME}}/.clibm"
 mkdir -p "${GLOBAL_CFG_DIR}/plugins"
 
-printf '{\n  "install_profile": "%s",\n  "language": "%s",\n  "auto_commit": %s,\n  "install_path": "%s",\n  "path_entry_added": %s,\n  "mcp_transport": "both"\n}\n' \
-  "$PROFILE" "$LANGUAGE" "$AUTO_COMMIT" "$INSTALL_DIR" "$PATH_ENTRY_ADDED" > "${GLOBAL_CFG_DIR}/install-config.json"
+json_or_null() {
+  if [ -n "$1" ]; then printf '"%s"' "$(clibm_json_escape "$1")"; else printf 'null'; fi
+}
+{
+  printf '{\n'
+  printf '  "install_profile": "%s",\n' "$PROFILE"
+  printf '  "language": "%s",\n' "$LANGUAGE"
+  printf '  "auto_commit": %s,\n' "$AUTO_COMMIT"
+  printf '  "install_path": %s,\n' "$(json_or_null "$INSTALL_DIR")"
+  printf '  "path_entry_added": %s,\n' "$PATH_ENTRY_ADDED"
+  printf '  "mcp_transport": "stdio",\n'
+  printf '  "source_repo": %s,\n' "$(json_or_null "$SOURCE_REPO")"
+  printf '  "source_ref": %s,\n' "$(json_or_null "$SOURCE_REF")"
+  printf '  "source_commit": %s,\n' "$(json_or_null "$BUILT_COMMIT")"
+  printf '  "version": %s\n' "$(json_or_null "$CORE_VERSION")"
+  printf '}\n'
+} > "${GLOBAL_CFG_DIR}/install-config.json"
 
 if [ "$PROFILE" = "with-defaults" ]; then
   echo "==> Installing default standalone plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)..."

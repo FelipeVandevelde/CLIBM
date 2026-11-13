@@ -139,20 +139,27 @@ pub enum Commands {
         action: PluginCommands,
     },
 
-    /// Update CLIBM from the configured GitHub repository (via git pull or cargo install --git)
+    /// Rebuild CLIBM from GitHub (or a local clone) and replace the installed binary
     Update {
-        /// Override GitHub repository URL (defaults to .clibm/config.json `github_repo_url`)
+        /// Repository URL (defaults to the one recorded by the installer, then the official repository).
+        /// GitHub browser links such as .../CLIBM/tree/main/rust-clibm are accepted.
         #[arg(long)]
         repo: Option<String>,
-        /// Target branch or tag to pull from (defaults to .clibm/config.json `update_branch`)
+        /// Branch to build (defaults to the installer's branch, then "main")
         #[arg(long)]
         branch: Option<String>,
-        /// Also rebuild and update standalone plugins in ./plugins/
+        /// Build from a local clone instead of GitHub (repository root or its rust-clibm folder)
+        #[arg(long, conflicts_with_all = ["repo", "branch"])]
+        path: Option<String>,
+        /// Also rebuild every installed official plugin
         #[arg(long)]
         plugins: bool,
-        /// Only check for updates against the GitHub remote without installing
+        /// Only compare the installed build with the latest remote commit
         #[arg(long)]
         check: bool,
+        /// Skip the core binary (used with --plugins by the update scripts)
+        #[arg(long, hide = true)]
+        skip_core: bool,
     },
 
     /// Uninstallation assistant: scans and displays all installed binary paths, configuration folders,

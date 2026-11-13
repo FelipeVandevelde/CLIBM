@@ -32,7 +32,7 @@ import { getStagedTree, getTypedPayload } from '../core/clibmCore';
 import { RUST_PROJECT_FILES } from '../rust/rustSourceRegistry';
 import {
   stripUtf8BomForDisplay,
-  triggerUtf8BomFileDownload,
+  triggerUtf8FileDownload,
 } from '../rust/zipBuilder';
 
 interface ConfigurationViewProps {
@@ -194,7 +194,7 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   };
 
   const handleDownloadScript = (filename: string, content: string) => {
-    triggerUtf8BomFileDownload(content, filename);
+    triggerUtf8FileDownload(content, filename);
   };
 
   const generatedInstallCliCmd = `./install.sh ${
@@ -895,7 +895,7 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                 </h3>
               </div>
               <span className="text-[11px] font-mono text-zinc-400">
-                Linux &amp; Windows · UTF-8-BOM (EF BB BF)
+                Linux &amp; Windows · UTF-8 (no BOM)
               </span>
             </div>
 
@@ -943,7 +943,7 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                       className="px-2 py-1 rounded text-[11px] font-mono bg-zinc-100 hover:bg-white text-zinc-950 font-semibold flex items-center gap-1 cursor-pointer"
                     >
                       <Download className="w-3 h-3" />
-                      <span>Download (UTF-8-BOM)</span>
+                      <span>Download (UTF-8)</span>
                     </button>
                   </div>
                 </div>

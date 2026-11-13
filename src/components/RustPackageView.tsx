@@ -9,7 +9,7 @@ import {
 } from '../rust/rustSourceRegistry';
 import {
   stripUtf8BomForDisplay,
-  triggerUtf8BomFileDownload,
+  triggerUtf8FileDownload,
 } from '../rust/zipBuilder';
 
 export const RustPackageView: React.FC = () => {
@@ -41,7 +41,7 @@ export const RustPackageView: React.FC = () => {
       packageScope === 'core-only' && file.relativePath === 'Cargo.toml'
         ? CORE_ONLY_CARGO_TOML
         : file.content;
-    triggerUtf8BomFileDownload(content, filename);
+    triggerUtf8FileDownload(content, filename);
   };
 
   const totalLines = visibleFiles.reduce((acc, f) => acc + f.lines, 0);
@@ -325,7 +325,7 @@ clibm plugin run web -- --port 7878  # or run binary directly: clibm-web --port 
                 <span aria-hidden="true" className="text-zinc-600">·</span>
                 <span className="text-zinc-400">{selectedFile.category}</span>
                 <span aria-hidden="true" className="text-zinc-600">·</span>
-                <span className="text-zinc-400">UTF-8-BOM (EF BB BF)</span>
+                <span className="text-zinc-400">UTF-8 (no BOM)</span>
                 <span aria-hidden="true" className="text-zinc-600">·</span>
                 <span className="text-zinc-400 tabular-nums">
                   {displayedContent.split('\n').length} LOC
@@ -358,7 +358,7 @@ clibm plugin run web -- --port 7878  # or run binary directly: clibm-web --port 
                 className="px-3 py-1.5 text-xs font-mono bg-zinc-100 hover:bg-white text-zinc-950 font-semibold rounded transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Download File (UTF-8-BOM)</span>
+                <span>Download File (UTF-8)</span>
               </button>
             </div>
           </div>

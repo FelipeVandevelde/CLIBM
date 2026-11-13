@@ -10,6 +10,7 @@ use clibm_core::engine::{ClibmEngine, MutationResult, TaskEdit};
 use clibm_core::install::{clibm_home, InstallConfig};
 use clibm_core::models::*;
 use clibm_core::plugin::PluginManager;
+use clibm_core::update::{self, normalize_repo_url, official_plugin_folder, UpdateSource};
 use clibm_core::versioning::{MergeKind, MergeStrategy, VersioningEngine};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -361,7 +362,13 @@ fn main() -> Result<()> {
                     "cross_workspace_dependencies" => {
                         cfg.cross_workspace_dependencies = parse_bool(&value)?
                     }
-                    "github_repo_url" => cfg.github_repo_url = value.clone(),
+                    "github_repo_url" => {
+                        let repo = normalize_repo_url(&value)?;
+                        cfg.github_repo_url = repo.clone_url.clone();
+                        if let Some(b) = repo.branch_hint {
+                            cfg.update_branch = b;
+                        }
+                    }
                     "update_branch" => cfg.update_branch = value.clone(),
                     other => bail!("Unknown config key '{}'", other),
                 }
@@ -1008,48 +1015,90 @@ fn main() -> Result<()> {
         Commands::Update {
             repo,
             branch,
+            path,
             plugins,
             check,
+            skip_core,
         } => {
-            let cfg = engine.cas.load_config().unwrap_or_default();
-            let repo_url = repo.unwrap_or(cfg.github_repo_url);
-            let target_branch = branch.unwrap_or(cfg.update_branch);
-
-            println!("==> CLIBM GitHub Updater");
-            println!("    Repository : {}", repo_url);
-            println!("    Branch     : {}", target_branch);
+            let install = InstallConfig::load();
+            let project_cfg = if engine.cas.is_initialized() {
+                engine.cas.load_config().ok()
+            } else {
+                None
+            };
+            let source = UpdateSource::resolve(
+                repo.as_deref(),
+                branch.as_deref(),
+                path.as_deref(),
+                project_cfg.as_ref(),
+                &install,
+            )?;
 
             if check {
-                println!("    Mode       : --check (dry-run remote inspection)");
-                println!("    Status     : Local v0.1.0 is up to date with {}/{}", repo_url, target_branch);
+                let report = update::check(&source, &install)?;
+                if cli.json {
+                    return print_json(&report);
+                }
+                println!("Source         : {}", report.source);
+                println!(
+                    "Installed      : v{} ({})",
+                    report.installed_version,
+                    report
+                        .installed_commit
+                        .as_deref()
+                        .map(short)
+                        .unwrap_or("commit unknown: installed from a local build or an older installer")
+                );
+                println!(
+                    "Latest         : {}({})",
+                    report
+                        .latest_version
+                        .as_deref()
+                        .map(|v| format!("v{} ", v))
+                        .unwrap_or_default(),
+                    short(&report.latest_commit)
+                );
+                if report.update_available {
+                    println!("An update is available. Run `clibm update` (add --plugins to update plugins too).");
+                } else {
+                    println!("CLIBM is up to date.");
+                }
                 return Ok(());
             }
 
-            let status = std::process::Command::new("cargo")
-                .args([
-                    "install",
-                    "--git",
-                    &repo_url,
-                    "--branch",
-                    &target_branch,
-                    "--force",
-                ])
-                .status();
-
-            match status {
-                Ok(s) if s.success() => {
-                    println!("==> Successfully updated clibm core binary from {}", repo_url);
-                }
-                _ => {
-                    println!(
-                        "==> Executed update check against {} ({}). Use ./update.sh or .\\update.ps1 for local source clones.",
-                        repo_url, target_branch
-                    );
-                }
+            println!("==> CLIBM updater: {}", source.describe());
+            if !skip_core {
+                let commit = update::update_core(&source)?;
+                println!(
+                    "==> clibm updated{}",
+                    commit
+                        .as_deref()
+                        .map(|c| format!(" to commit {}", short(c)))
+                        .unwrap_or_default()
+                );
             }
-
             if plugins {
-                println!("==> Rebuilding standalone plugins in ./plugins/...");
+                let results = update::update_plugins(&source);
+                if results.is_empty() {
+                    println!("==> No installed plugins to update.");
+                }
+                let mut failed = false;
+                for r in &results {
+                    println!(
+                        "==> {} {}: {}",
+                        if r.updated { "[ok]  " } else { "[skip]" },
+                        r.name,
+                        r.message
+                    );
+                    if !r.updated && official_plugin_folder(&r.name).is_some() {
+                        failed = true;
+                    }
+                }
+                if failed {
+                    bail!("Some plugins could not be updated (see above).");
+                }
+            } else if !skip_core {
+                println!("    (Plugins were not touched; run `clibm update --plugins --skip-core` to update them.)");
             }
         }
 

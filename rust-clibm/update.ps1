@@ -1,72 +1,93 @@
 # ==============================================================================
-# CLIBM v0.1.0 -- GitHub Update Script (Windows PowerShell)
-# Encoding: UTF-8 (without BOM) for Windows PowerShell compatibility
+# CLIBM -- Update Script (Windows PowerShell 5.1 & 7+)
+# Encoding: UTF-8 (without BOM)
 # ==============================================================================
-# Pulls latest updates from the GitHub repository and reinstalls the core binary (and optional plugins).
+# Updates CLIBM with `clibm update`, which rebuilds it from GitHub (or from this
+# clone) and replaces the installed binary.
+#
 # Usage:
-#   .\update.ps1 [-Repo <github-url>] [-Branch <branch>] [-Plugins]
+#   iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/update.ps1)
+#   .\update.ps1 [-Plugins] [-Check] [-Repo <url>] [-Branch <name>]
+#
+# - Inside a clone of the repository: pulls the latest changes (git pull --ff-only)
+#   and builds from the clone.
+# - When clibm is not installed: runs the installer instead.
 
-param (
-    [string]$Repo = "https://github.com/FelipeVandevelde/CLIBM.git",
-    [string]$Branch = "main",
-    [switch]$Plugins = $false
-)
-
-$ErrorActionPreference = "Stop"
-
-if (Test-Path ".clibm\config.json") {
-    try {
-        $Cfg = Get-Content ".clibm\config.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($Cfg.github_repo_url -and $Repo -eq "https://github.com/FelipeVandevelde/CLIBM.git") {
-            $Repo = $Cfg.github_repo_url
-        }
-        if ($Cfg.update_branch -and $Branch -eq "main") {
-            $Branch = $Cfg.update_branch
-        }
-    } catch {}
-}
-
-Write-Host "============================================================"
-Write-Host " CLIBM GitHub Updater (Windows PowerShell - UTF-8-BOM)"
-Write-Host " Remote : $Repo"
-Write-Host " Branch : $Branch"
-Write-Host "============================================================"
-
-if ((Test-Path ".git") -and (Test-Path "Cargo.toml")) {
-    Write-Host "-> Detected local Git clone of CLIBM source repository."
-    Write-Host "-> Running: git fetch origin $Branch && git pull origin $Branch"
-    git fetch origin $Branch
-    git pull origin $Branch
-    Write-Host "-> Rebuilding and installing core binary..."
-    cargo install --path . --force
-} else {
-    Write-Host "-> Installing latest clibm core directly from GitHub repository..."
-    cargo install --git $Repo --branch $Branch --force
-}
-
-if ($Plugins -and (Test-Path "plugins")) {
-    Write-Host "-> Updating standalone plugins in .\plugins\..."
-    Get-ChildItem -Path "plugins" -Directory | ForEach-Object {
-        if ($_.Name -eq "plugin-template") { return }
-        $CargoFile = Join-Path $_.FullName "Cargo.toml"
-        $PluginInstallPs1 = Join-Path $_.FullName "install.ps1"
-        if (Test-Path $PluginInstallPs1) {
-            Write-Host "   * Building, installing, and registering plugin from $($_.Name)..."
-            Push-Location $_.FullName
-            try {
-                & .\install.ps1 -Yes
-            } finally {
-                Pop-Location
-            }
-        } elseif (Test-Path $CargoFile) {
-            Write-Host "   * Building and installing plugin from $($_.Name)..."
-            Push-Location $_.FullName
-            cargo install --path . --force
-            Pop-Location
-        }
+$Plugins = $false
+$Check = $false
+$Repo = ""
+$Branch = ""
+for ($i = 0; $i -lt $args.Count; $i++) {
+    switch -Regex ($args[$i]) {
+        '^-+(?i)Plugins$' { $Plugins = $true }
+        '^-+(?i)Check$'   { $Check = $true }
+        '^-+(?i)Repo$'    { $Repo = $args[++$i] }
+        '^-+(?i)Branch$'  { $Branch = $args[++$i] }
     }
 }
 
+$ErrorActionPreference = "Stop"
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { "" }
+$HomeDir = if ($env:CLIBM_HOME) { $env:CLIBM_HOME } elseif ($HOME) { $HOME } else { $env:USERPROFILE }
+
+function Find-ClibmBinary {
+    $Cmd = Get-Command clibm -ErrorAction SilentlyContinue
+    if ($Cmd) { return $Cmd.Source }
+    $Cfg = Join-Path (Join-Path $HomeDir '.clibm') 'install-config.json'
+    if (Test-Path -LiteralPath $Cfg) {
+        try {
+            $Parsed = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($Cfg).TrimStart([char]0xFEFF))
+            if ($Parsed.install_path) {
+                $Candidate = Join-Path ([string]$Parsed.install_path) 'clibm.exe'
+                if (Test-Path -LiteralPath $Candidate) { return $Candidate }
+            }
+        } catch {}
+    }
+    foreach ($D in @((Join-Path $HomeDir '.clibm-bin'), (Join-Path $HomeDir '.local\bin'), (Join-Path $HomeDir '.cargo\bin'))) {
+        $Candidate = Join-Path $D 'clibm.exe'
+        if (Test-Path -LiteralPath $Candidate) { return $Candidate }
+    }
+    return $null
+}
+
 Write-Host "============================================================"
-Write-Host " Update complete! Verify with: clibm --version"
+Write-Host " CLIBM Updater"
 Write-Host "============================================================"
+
+$Clibm = Find-ClibmBinary
+if (-not $Clibm) {
+    Write-Host "==> clibm is not installed; running the installer instead."
+    $Base = if ($env:CLIBM_RAW_BASE) { $env:CLIBM_RAW_BASE.TrimEnd('/') } else { 'https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm' }
+    $Installer = Join-Path ([System.IO.Path]::GetTempPath()) ("clibm-install-" + [guid]::NewGuid().ToString('N') + ".ps1")
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri "$Base/install.ps1" -OutFile $Installer -UseBasicParsing
+        & $Installer -Yes
+    } finally {
+        Remove-Item -LiteralPath $Installer -Force -ErrorAction SilentlyContinue
+    }
+    return
+}
+
+$UpdateArgs = @('update')
+$InClone = $ScriptDir -and (Test-Path -LiteralPath (Join-Path $ScriptDir 'Cargo.toml')) -and (Test-Path -LiteralPath (Join-Path $ScriptDir 'src\main.rs'))
+if ($InClone -and -not $Check -and -not $Repo -and -not $Branch) {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Write-Host "==> Updating the local clone (git pull --ff-only)..."
+        & git -C $ScriptDir pull --ff-only
+        if ($LASTEXITCODE -ne 0) { Write-Host "==> git pull failed; building the clone as it is." -ForegroundColor Yellow }
+    }
+    $UpdateArgs += @('--path', $ScriptDir)
+} else {
+    if ($Repo) { $UpdateArgs += @('--repo', $Repo) }
+    if ($Branch) { $UpdateArgs += @('--branch', $Branch) }
+}
+if ($Check) { $UpdateArgs += '--check' }
+if ($Plugins) { $UpdateArgs += '--plugins' }
+
+& $Clibm @UpdateArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "==> Update failed (exit code $LASTEXITCODE)." -ForegroundColor Red
+} else {
+    Write-Host "==> Done. Verify with: clibm --version"
+}

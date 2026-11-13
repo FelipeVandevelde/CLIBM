@@ -79,6 +79,17 @@ impl InstallConfig {
         serde_json::from_str(clean).ok()
     }
 
+    /// Writes `~/.clibm/install-config.json` (UTF-8, no BOM).
+    pub fn save(&self) -> anyhow::Result<()> {
+        let path = Self::path()
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine the home directory for ~/.clibm"))?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, serde_json::to_string_pretty(self)? + "\n")?;
+        Ok(())
+    }
+
     /// The configured install directory with `~` expanded, if any.
     pub fn install_dir(&self) -> Option<PathBuf> {
         self.install_path

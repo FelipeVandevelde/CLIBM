@@ -509,145 +509,126 @@ function Resolve-ClibmLocalSourceDir {
     return ''
 }
 
+function Get-ClibmGitSource {
+    $Url = if ($env:CLIBM_GIT_URL) { $env:CLIBM_GIT_URL } else { 'https://github.com/FelipeVandevelde/CLIBM.git' }
+    $Ref = if ($env:CLIBM_GIT_REF) { $env:CLIBM_GIT_REF } else { 'main' }
+    return [PSCustomObject]@{ Url = $Url; Ref = $Ref }
+}
+
+# Copies a freshly built binary over the installed one. A binary that Windows keeps
+# locked (it is running) is renamed out of the way first; leftovers from earlier
+# renames are deleted when possible.
+function Copy-ClibmBinary {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    $DestDir = Split-Path -Parent $Destination
+    if ($DestDir -and -not (Test-Path -LiteralPath $DestDir)) {
+        New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+    }
+    if (Test-Path -LiteralPath $Destination) {
+        try {
+            Remove-Item -LiteralPath $Destination -Force -ErrorAction Stop
+        } catch {
+            $Rotated = "$Destination.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)
+            Move-Item -LiteralPath $Destination -Destination $Rotated -Force -ErrorAction Stop
+        }
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+    $Leaf = Split-Path -Leaf $Destination
+    Get-ChildItem -LiteralPath $DestDir -Filter "$Leaf.old.*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Builds a CLIBM crate and installs its binary at DestinationBinary.
+# - Local mode (a clone of the repository is found): `cargo build --release -p <crate>`.
+# - Remote mode: `cargo install --git <CLIBM_GIT_URL> --branch <CLIBM_GIT_REF> --root <temp>`,
+#   which builds the whole Cargo workspace correctly. Set CLIBM_FORCE_REMOTE=1 to skip
+#   local mode. SourceFiles and RawBaseUrl are accepted for older callers but unused.
+# Sets $script:ClibmLastBuildCommit to the commit that was built (when known).
 function Invoke-ClibmBuildAndStage {
     param(
         [Parameter(Mandatory = $true)][string]$CrateName,
         [AllowEmptyString()][string]$RemoteSubPath = '',
-        [Parameter(Mandatory = $true)][string[]]$SourceFiles,
+        [AllowEmptyCollection()][string[]]$SourceFiles = @(),
         [Parameter(Mandatory = $true)][string]$DestinationBinary,
         [string]$LocalCandidateDir = '',
         [string]$RawBaseUrl = '',
         [AllowEmptyCollection()][string[]]$CargoFeatures = @()
     )
-    $DestDir = Split-Path -Parent $DestinationBinary
-    if ($DestDir -and -not (Test-Path -LiteralPath $DestDir)) {
-        New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        throw "cargo was not found. Install Rust from https://rustup.rs, open a new terminal and run the installer again."
+    }
+    $script:ClibmLastBuildCommit = ''
+
+    $LocalDir = ''
+    if (-not $env:CLIBM_FORCE_REMOTE) {
+        $LocalDir = Resolve-ClibmLocalSourceDir -CrateName $CrateName -RemoteSubPath $RemoteSubPath -CandidateDir $LocalCandidateDir
     }
 
-    $LocalDir = Resolve-ClibmLocalSourceDir -CrateName $CrateName -RemoteSubPath $RemoteSubPath -CandidateDir $LocalCandidateDir
     if (-not [string]::IsNullOrWhiteSpace($LocalDir)) {
         Write-Host "==> [Local Mode] Building $CrateName from local source ($LocalDir)..."
         Push-Location -LiteralPath $LocalDir
         try {
-            if ($env:OS -like "*Windows*" -or $IsWindows) {
-                Get-Process -Name $CrateName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                $PreBuildBins = @(
-                    (Join-Path $LocalDir "target\release\$CrateName.exe"),
-                    (Join-Path (Join-Path (Join-Path $LocalDir "..") "..") "target\release\$CrateName.exe"),
-                    (Join-Path (Join-Path $LocalDir "..") "target\release\$CrateName.exe")
-                )
-                foreach ($PBin in $PreBuildBins) {
-                    if (Test-Path -LiteralPath $PBin) {
-                        try {
-                            Remove-Item -LiteralPath $PBin -Force -ErrorAction Stop
-                        } catch {
-                            $Rotated = "$PBin.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)
-                            try { Move-Item -LiteralPath $PBin -Destination $Rotated -Force -ErrorAction SilentlyContinue } catch {}
-                        }
-                    }
+            $TargetDir = ''
+            try {
+                $Meta = (& cargo metadata --no-deps --format-version 1) | Out-String | ConvertFrom-Json
+                $TargetDir = [string]$Meta.target_directory
+            } catch {}
+            if (-not $TargetDir) { $TargetDir = Join-Path $LocalDir 'target' }
+            $BuiltBin = Join-Path $TargetDir "release\$CrateName.exe"
+            if (Test-Path -LiteralPath $BuiltBin) {
+                # A running copy (e.g. started from target\release) would block the linker.
+                try { Remove-Item -LiteralPath $BuiltBin -Force -ErrorAction Stop } catch {
+                    try { Move-Item -LiteralPath $BuiltBin -Destination ("$BuiltBin.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)) -Force -ErrorAction Stop } catch {}
                 }
             }
-            $CargoCmd = @("build", "--release")
-            if ($CargoFeatures -and $CargoFeatures.Count -gt 0) {
-                $CargoCmd += $CargoFeatures
-            }
-            & cargo @CargoCmd
+            $CargoArgs = @('build', '--release', '-p', $CrateName) + $CargoFeatures
+            & cargo @CargoArgs | Out-Host
             if ($LASTEXITCODE -ne 0) {
                 throw "cargo build --release failed for $CrateName (exit code $LASTEXITCODE)"
             }
-            $Candidates = @(
-                (Join-Path $LocalDir "target\release\$CrateName.exe"),
-                (Join-Path (Join-Path (Join-Path $LocalDir "..") "..") "target\release\$CrateName.exe"),
-                (Join-Path (Join-Path $LocalDir "..") "target\release\$CrateName.exe"),
-                (Join-Path (Get-Location).ProviderPath "target\release\$CrateName.exe")
-            )
-            $BuiltBin = $Candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-            if (-not $BuiltBin) {
-                try {
-                    $Meta = cargo metadata --no-deps --format-version 1 2>$null | ConvertFrom-Json
-                    if ($Meta.target_directory) {
-                        $MetaBin = Join-Path $Meta.target_directory "release\$CrateName.exe"
-                        if (Test-Path -LiteralPath $MetaBin) {
-                            $BuiltBin = $MetaBin
-                        }
-                    }
-                } catch {}
+            if (-not (Test-Path -LiteralPath $BuiltBin)) {
+                throw "Compiled binary not found at $BuiltBin"
             }
-            if (-not $BuiltBin) {
-                throw "Compiled binary not found at $(Join-Path $LocalDir "target\release\$CrateName.exe")"
+            Copy-ClibmBinary -Source $BuiltBin -Destination $DestinationBinary
+            if (Get-Command git -ErrorAction SilentlyContinue) {
+                $Sha = (& git -C $LocalDir rev-parse HEAD 2>$null | Out-String).Trim()
+                if ($Sha -match '^[0-9a-f]{40}$') { $script:ClibmLastBuildCommit = $Sha }
             }
-            if (Test-Path -LiteralPath $DestinationBinary) {
-                try {
-                    Remove-Item -LiteralPath $DestinationBinary -Force -ErrorAction Stop
-                } catch {
-                    $RotatedDest = "$DestinationBinary.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)
-                    try { Move-Item -LiteralPath $DestinationBinary -Destination $RotatedDest -Force -ErrorAction SilentlyContinue } catch {}
-                }
-            }
-            Copy-Item -LiteralPath $BuiltBin -Destination $DestinationBinary -Force
         } finally {
             Pop-Location
         }
         return 'local'
     }
 
-    $Base = if (-not [string]::IsNullOrWhiteSpace($RawBaseUrl)) {
-        $RawBaseUrl.TrimEnd('/')
-    } else {
-        $RootBase = Get-ClibmRawRepoBase
-        if ([string]::IsNullOrWhiteSpace($RemoteSubPath)) {
-            $RootBase
-        } else {
-            "$RootBase/$($RemoteSubPath.Trim('/'))"
-        }
-    }
-
-    $TempBuildDir = Join-Path ([System.IO.Path]::GetTempPath()) ("$CrateName-build-" + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Force -Path $TempBuildDir | Out-Null
-    Write-Host "==> [Remote Mode] Fetching $CrateName source files from GitHub ($Base)..."
+    $Src = Get-ClibmGitSource
+    $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("$CrateName-build-" + [guid]::NewGuid().ToString('N'))
+    Write-Host "==> [Remote Mode] Building $CrateName from $($Src.Url) (branch $($Src.Ref))..."
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        foreach ($RelFile in $SourceFiles) {
-            $CleanRel = $RelFile.TrimStart('/')
-            $DestFile = Join-Path $TempBuildDir ($CleanRel -replace '/', '\')
-            $DestParent = Split-Path -Parent $DestFile
-            if ($DestParent -and -not (Test-Path -LiteralPath $DestParent)) {
-                New-Item -ItemType Directory -Force -Path $DestParent | Out-Null
-            }
-            $FileUrl = "$Base/$CleanRel"
-            Invoke-WebRequest -Uri $FileUrl -OutFile $DestFile -UseBasicParsing
+        $CargoArgs = @('install', '--git', $Src.Url, '--branch', $Src.Ref, '--root', $TempRoot, '--locked', '--force', $CrateName) + $CargoFeatures
+        # With <temp>in on PATH, cargo does not ask the user to add the temp folder to PATH.
+        $SavedPath = $env:PATH
+        $env:PATH = (Join-Path $TempRoot 'bin') + [System.IO.Path]::PathSeparator + $env:PATH
+        try { & cargo @CargoArgs | Out-Host } finally { $env:PATH = $SavedPath }
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo install failed for $CrateName (exit code $LASTEXITCODE)"
         }
-
-        Write-Host "==> Building $CrateName (Release Mode)..."
-        Push-Location -LiteralPath $TempBuildDir
-        try {
-            $CargoCmd = @("build", "--release")
-            if ($CargoFeatures -and $CargoFeatures.Count -gt 0) {
-                $CargoCmd += $CargoFeatures
-            }
-            & cargo @CargoCmd
-            if ($LASTEXITCODE -ne 0) {
-                throw "cargo build --release failed for $CrateName (exit code $LASTEXITCODE)"
-            }
-            $BuiltBin = Join-Path $TempBuildDir "target\release\$CrateName.exe"
-            if (-not (Test-Path -LiteralPath $BuiltBin)) {
-                throw "Compiled binary not found at $BuiltBin"
-            }
-            if (Test-Path -LiteralPath $DestinationBinary) {
-                try {
-                    Remove-Item -LiteralPath $DestinationBinary -Force -ErrorAction Stop
-                } catch {
-                    $RotatedDest = "$DestinationBinary.old." + [guid]::NewGuid().ToString('N').Substring(0, 8)
-                    try { Move-Item -LiteralPath $DestinationBinary -Destination $RotatedDest -Force -ErrorAction SilentlyContinue } catch {}
-                }
-            }
-            Copy-Item -LiteralPath $BuiltBin -Destination $DestinationBinary -Force
-        } finally {
-            Pop-Location
+        $BuiltBin = Join-Path $TempRoot "bin\$CrateName.exe"
+        if (-not (Test-Path -LiteralPath $BuiltBin)) {
+            throw "Compiled binary not found at $BuiltBin"
+        }
+        Copy-ClibmBinary -Source $BuiltBin -Destination $DestinationBinary
+        $CratesJson = Join-Path $TempRoot '.crates2.json'
+        if (Test-Path -LiteralPath $CratesJson) {
+            $Raw = [System.IO.File]::ReadAllText($CratesJson)
+            if ($Raw -match '#([0-9a-f]{40})') { $script:ClibmLastBuildCommit = $Matches[1] }
         }
     } finally {
-        if (Test-Path -LiteralPath $TempBuildDir) {
-            Remove-Item -LiteralPath $TempBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $TempRoot) {
+            Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
     return 'remote'
@@ -1013,13 +994,13 @@ Write-Host "====================================================================
 
 if (-not $Hooks) {
     if ($Yes) {
-        $Hooks = "pre-move,pre-commit"
+        $Hooks = "pre-move"
     } else {
         Write-Host "[1/2] Select Hook Mode for clibm-workflow-lint:"
-        Write-Host "  1) Automatic Policy Enforcement (pre-move + pre-commit) [Default]"
+        Write-Host "  1) Automatic Policy Enforcement (pre-move) [Default]"
         Write-Host "  2) Manual Audit Only (run via 'clibm plugin run workflow-lint')"
         $c = Read-Host "Select option [1-2, default: 1]"
-        if ($c -eq "2") { $Hooks = "manual-run" } else { $Hooks = "pre-move,pre-commit" }
+        if ($c -eq "2") { $Hooks = "manual-run" } else { $Hooks = "pre-move" }
     }
 }
 

@@ -410,7 +410,7 @@ impl PluginManager {
         }
     }
 
-    fn binary_file_name(bin_name: &str) -> String {
+    pub fn binary_file_name(bin_name: &str) -> String {
         if cfg!(windows) && !bin_name.to_ascii_lowercase().ends_with(".exe") {
             format!("{}.exe", bin_name)
         } else {
@@ -507,239 +507,81 @@ impl PluginManager {
         false
     }
 
-    /// Resolves an official plugin's remote directory and source file list for raw GitHub installation.
-    fn official_remote_plugin_spec(raw_target: &str) -> Option<(&'static str, &'static str, Vec<&'static str>)> {
-        let leaf = Path::new(raw_target)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or(raw_target);
-        let norm = Self::normalize_plugin_name(leaf);
-        match norm.as_str() {
-            "clibm-mcp" => Some((
-                "clibm-mcp",
-                "plugins/clibm-mcp",
-                vec![
-                    "Cargo.toml",
-                    "src/main.rs",
-                    "src/config.rs",
-                    "src/error.rs",
-                    "src/protocol/mod.rs",
-                    "src/protocol/types.rs",
-                    "src/protocol/schema.rs",
-                    "src/backend/mod.rs",
-                    "src/backend/bridge.rs",
-                    "src/adapter/mod.rs",
-                    "src/adapter/dispatcher.rs",
-                    "src/adapter/permissions.rs",
-                    "src/adapter/tools.rs",
-                    "src/adapter/resources.rs",
-                    "src/adapter/prompts.rs",
-                    "src/transport/mod.rs",
-                    "src/transport/stdio.rs",
-                    "src/transport/http.rs",
-                ],
-            )),
-            "clibm-dep-audit" => Some(("clibm-dep-audit", "plugins/clibm-dep-audit", vec!["Cargo.toml", "src/main.rs"])),
-            "clibm-export-md" => Some(("clibm-export-md", "plugins/clibm-export-md", vec!["Cargo.toml", "src/main.rs"])),
-            "clibm-workflow-lint" => Some(("clibm-workflow-lint", "plugins/clibm-workflow-lint", vec!["Cargo.toml", "src/main.rs"])),
-            "clibm-tui" => Some(("clibm-tui", "plugins/clibm-tui", vec!["Cargo.toml", "src/main.rs"])),
-            "clibm-web" => Some(("clibm-web", "plugins/clibm-web", vec!["Cargo.toml", "src/main.rs", "src/ui.html"])),
-            "plugin-template" | "clibm-plugin-template" => Some((
-                "clibm-plugin-template",
-                "plugins/plugin-template",
-                vec!["Cargo.toml", "src/main.rs"],
-            )),
-            _ => None,
-        }
-    }
-
-    fn download_remote_file(url: &str, dest: &Path) -> Result<()> {
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let status = if cfg!(windows) {
-            Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    &format!(
-                        "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
-                        url.replace('\'', "''"),
-                        dest.display().to_string().replace('\'', "''")
-                    ),
-                ])
-                .status()
-                .context("Failed to invoke PowerShell Invoke-WebRequest")?
-        } else {
-            Command::new("curl")
-                .args(["-fsSL", url, "-o"])
-                .arg(dest)
-                .status()
-                .context("Failed to invoke curl for remote plugin source download")?
+    /// Reads `name` and `description` from a crate's `Cargo.toml`.
+    fn read_crate_identity(cargo_toml: &Path) -> Result<(String, String)> {
+        let toml_text = read_utf8_strip_bom(cargo_toml)?;
+        let field = |key: &str| {
+            toml_text.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix(key)
+                    .and_then(|r| r.trim().strip_prefix('='))
+                    .map(|v| v.trim().trim_matches('"').to_string())
+            })
         };
-        if !status.success() {
-            bail!("Failed to download remote plugin file from {}", url);
-        }
-        Ok(())
+        let name = field("name")
+            .ok_or_else(|| anyhow!("Could not parse package name from {}", cargo_toml.display()))?;
+        let description =
+            field("description").unwrap_or_else(|| format!("Installed CLIBM plugin ({})", name));
+        Ok((name, description))
     }
 
-    /// Builds and installs a standalone plugin from its own folder in `plugins/` (or fetches from
-    /// raw GitHub if not present locally), copies its binary to the configured `install_path`
-    /// (or `~/.local/bin` / `~/.clibm-bin`), and registers it in the plugin registry.
+    /// Builds and installs a plugin, then registers it globally from its own manifest.
+    ///
+    /// `target` is a folder containing the plugin's `Cargo.toml`, or the name of an
+    /// official plugin (`mcp`, `clibm-tui`, ...). Official plugins are built from a local
+    /// clone when the current directory is one, otherwise from the repository recorded
+    /// by the installer (default: the official GitHub repository).
     pub fn install_plugin_from_dir(
         cas: &CasStore,
-        plugin_dir: &Path,
+        target: &Path,
         mcp_transport: Option<&str>,
     ) -> Result<PluginManifest> {
-        let mut resolved_dir = plugin_dir.to_path_buf();
-        let mut temp_cleanup_dir: Option<PathBuf> = None;
+        use crate::update::{cargo_install, mcp_transport_args, official_plugin_folder, CrateLocation, UpdateSource};
 
-        if !resolved_dir.join("Cargo.toml").exists() {
-            let raw_str = plugin_dir.to_string_lossy();
-            if let Some((crate_name, remote_subpath, files)) = Self::official_remote_plugin_spec(&raw_str) {
-                let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let local_candidates = [
-                    cwd.join(remote_subpath),
-                    cwd.join("rust-clibm").join(remote_subpath),
-                ];
-                if let Some(found_local) = local_candidates.into_iter().find(|p| p.join("Cargo.toml").exists()) {
-                    resolved_dir = found_local;
-                } else {
-                    let raw_base = env::var("CLIBM_RAW_BASE").unwrap_or_else(|_| {
-                        "https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm".to_string()
-                    });
-                    let base_url = format!("{}/{}", raw_base.trim_end_matches('/'), remote_subpath);
-                    let tmp_dir = env::temp_dir().join(format!(
-                        "{}-remote-build-{}",
-                        crate_name,
-                        std::process::id()
-                    ));
-                    let _ = fs::remove_dir_all(&tmp_dir);
-                    fs::create_dir_all(&tmp_dir)?;
-                    println!(
-                        "==> [Remote Mode] Fetching '{}' from {}...",
-                        crate_name, base_url
-                    );
-                    for rel in files {
-                        let url = format!("{}/{}", base_url, rel);
-                        let dest = tmp_dir.join(rel);
-                        Self::download_remote_file(&url, &dest)?;
-                    }
-                    resolved_dir = tmp_dir.clone();
-                    temp_cleanup_dir = Some(tmp_dir);
-                }
-            }
-        }
-
-        let cargo_toml = resolved_dir.join("Cargo.toml");
-        if !cargo_toml.exists() {
-            bail!(
-                "No Cargo.toml found in '{}'. Provide a valid plugin folder path or an official plugin name (e.g. `clibm plugin install tui`).",
-                plugin_dir.display()
-            );
-        }
-
-        let toml_text = read_utf8_strip_bom(&cargo_toml)?;
-        let name = toml_text
-            .lines()
-            .find_map(|line| {
-                let trimmed = line.trim();
-                trimmed
-                    .strip_prefix("name")
-                    .and_then(|r| r.trim().strip_prefix('='))
-                    .map(|v| v.trim().trim_matches('"').to_string())
-            })
-            .ok_or_else(|| anyhow!("Could not parse package name from {}", cargo_toml.display()))?;
-
-        let description = toml_text
-            .lines()
-            .find_map(|line| {
-                let trimmed = line.trim();
-                trimmed
-                    .strip_prefix("description")
-                    .and_then(|r| r.trim().strip_prefix('='))
-                    .map(|v| v.trim().trim_matches('"').to_string())
-            })
-            .unwrap_or_else(|| format!("Installed CLIBM standalone plugin ({})", name));
-
-        println!("==> Building plugin '{}' in {}...", name, resolved_dir.display());
-        let mut cargo_args = vec!["build", "--release"];
-        if name == "clibm-mcp" {
-            match mcp_transport.unwrap_or("both") {
-                "stdio" => {
-                    cargo_args.push("--no-default-features");
-                    cargo_args.push("--features");
-                    cargo_args.push("transport-stdio");
-                }
-                "http" => {
-                    cargo_args.push("--no-default-features");
-                    cargo_args.push("--features");
-                    cargo_args.push("transport-http");
-                }
-                _ => {
-                    cargo_args.push("--features");
-                    cargo_args.push("transport-stdio,transport-http");
-                }
-            }
-        }
-        let status = Command::new("cargo")
-            .args(&cargo_args)
-            .current_dir(&resolved_dir)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status();
-
-        let status = match status {
-            Ok(s) => s,
-            Err(e) => {
-                if let Some(tmp) = &temp_cleanup_dir {
-                    let _ = fs::remove_dir_all(tmp);
-                }
-                return Err(e).context("Failed to invoke `cargo build --release` in plugin folder");
-            }
-        };
-
-        if !status.success() {
-            if let Some(tmp) = &temp_cleanup_dir {
-                let _ = fs::remove_dir_all(tmp);
-            }
-            bail!("Plugin build failed for '{}'", name);
-        }
-
-        let bin_filename = if cfg!(windows) {
-            format!("{}.exe", name)
+        let (name, description, location) = if target.join("Cargo.toml").is_file() {
+            let (name, description) = Self::read_crate_identity(&target.join("Cargo.toml"))?;
+            (name, description, CrateLocation::Dir(target.to_path_buf()))
         } else {
-            name.clone()
-        };
-        let candidates = [
-            resolved_dir.join("target").join("release").join(&bin_filename),
-            resolved_dir
-                .join("..")
-                .join("..")
-                .join("target")
-                .join("release")
-                .join(&bin_filename),
-            env::current_dir()
-                .unwrap_or_default()
-                .join("target")
-                .join("release")
-                .join(&bin_filename),
-        ];
-        let built_bin = match candidates.into_iter().find(|p| p.exists()) {
-            Some(p) => p,
-            None => {
-                if let Some(tmp) = &temp_cleanup_dir {
-                    let _ = fs::remove_dir_all(tmp);
+            let leaf = target
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            let name = Self::normalize_plugin_name(leaf);
+            let folder = official_plugin_folder(&name).ok_or_else(|| {
+                anyhow!(
+                    "No Cargo.toml found in '{}'. Pass a plugin folder or an official plugin name (mcp, tui, web, dep-audit, export-md, workflow-lint, template).",
+                    target.display()
+                )
+            })?;
+            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let local = [
+                cwd.join("plugins").join(folder),
+                cwd.join("rust-clibm").join("plugins").join(folder),
+            ]
+            .into_iter()
+            .find(|d| d.join("Cargo.toml").is_file());
+            match local {
+                Some(dir) => {
+                    let (_, description) = Self::read_crate_identity(&dir.join("Cargo.toml"))?;
+                    (name, description, CrateLocation::Dir(dir))
                 }
-                bail!(
-                    "Expected release binary '{}' not found in local or workspace target/release directories",
-                    bin_filename
-                );
+                None => {
+                    let source = UpdateSource::resolve(None, None, None, cas.load_config().ok().as_ref(), &InstallConfig::load())?;
+                    let location = match source {
+                        UpdateSource::Git { repo, branch } => CrateLocation::Git { url: repo.clone_url, branch },
+                        UpdateSource::Path(ws) => CrateLocation::Dir(ws.join("plugins").join(folder)),
+                    };
+                    (name.clone(), format!("Official CLIBM plugin {}", name), location)
+                }
             }
         };
+
+        let extra = if name == "clibm-mcp" {
+            mcp_transport_args(mcp_transport.unwrap_or("stdio"))
+        } else {
+            Vec::new()
+        };
+        let built = cargo_install(&location, &name, &extra)?;
 
         let install_dir = InstallConfig::load().install_dir().unwrap_or_else(|| {
             let cfg = cas.load_config().unwrap_or_default();
@@ -754,27 +596,9 @@ impl PluginManager {
         });
 
         fs::create_dir_all(&install_dir)?;
+        let bin_filename = Self::binary_file_name(&name);
         let installed_bin = install_dir.join(&bin_filename);
-        replace_binary(&built_bin, &installed_bin)?;
-
-        if let Some(tmp) = temp_cleanup_dir {
-            let _ = fs::remove_dir_all(tmp);
-        } else {
-            // Post-install space optimization: clean build artifacts to save disk space
-            let local_target = resolved_dir.join("target");
-            if local_target.exists() && local_target.is_dir() {
-                let _ = fs::remove_dir_all(&local_target);
-                println!(
-                    "==> [Space Optimization] Cleaned intermediate build artifacts in {}",
-                    local_target.display()
-                );
-            } else {
-                let _ = Command::new("cargo")
-                    .args(["clean", "-p", &name, "--release"])
-                    .current_dir(&resolved_dir)
-                    .status();
-            }
-        }
+        replace_binary(&built.path, &installed_bin)?;
 
         if !Self::is_dir_on_env_path(&install_dir) {
             println!(
@@ -1504,7 +1328,7 @@ fn run_plugin_process(
     Ok((status.success(), String::from_utf8_lossy(&out).to_string()))
 }
 
-fn unique_suffix() -> String {
+pub(crate) fn unique_suffix() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -1526,7 +1350,7 @@ fn cleanup_rotated_binaries(dir: &Path, exe_name: &str) {
 
 /// Copies `src` over `dest`. When Windows keeps `dest` locked (the binary is running),
 /// the old file is renamed out of the way first.
-fn replace_binary(src: &Path, dest: &Path) -> Result<()> {
+pub fn replace_binary(src: &Path, dest: &Path) -> Result<()> {
     if dest.exists() && fs::remove_file(dest).is_err() {
         let name = dest
             .file_name()
