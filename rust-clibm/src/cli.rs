@@ -353,8 +353,8 @@ pub enum PluginCommands {
         /// Path to the plugin folder containing Cargo.toml (defaults to current directory '.')
         #[arg(default_value = ".")]
         path: String,
-        /// For clibm-mcp: select transport mode during installation ('both' [default], 'stdio', or 'http')
-        #[arg(long, default_value = "both")]
+        /// For clibm-mcp: transport to build in ('stdio' [default], 'both' or 'http')
+        #[arg(long, default_value = "stdio")]
         transport: String,
     },
     /// Enable a plugin

@@ -6,7 +6,7 @@ use crate::adapter::resources::ResourceRegistry;
 use crate::adapter::tools::ToolRegistry;
 use crate::backend::ClibmBridge;
 use crate::config::McpConfig;
-use crate::error::JsonRpcError;
+use crate::error::{JsonRpcError, TOOL_EXECUTION_ERROR};
 use crate::protocol::{JsonRpcRequest, JsonRpcResponse, PROTOCOL_VERSION};
 use serde_json::{json, Value};
 use std::sync::RwLock;
@@ -49,11 +49,15 @@ impl RequestDispatcher {
                     let _ = lock.check_and_reload(bridge.project_root());
                 }
                 let lock = tools.read().unwrap();
-                let tool_name = req
-                    .params
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("clibm_status");
+                let tool_name = match req.params.get("name").and_then(|v| v.as_str()) {
+                    Some(n) => n,
+                    None => {
+                        return JsonRpcResponse::error(
+                            id,
+                            JsonRpcError::invalid_params("Missing required 'name' parameter"),
+                        )
+                    }
+                };
                 let args = req.params.get("arguments").unwrap_or(&Value::Null);
 
                 match lock.execute(tool_name, args, bridge, permissions) {
@@ -63,6 +67,17 @@ impl RequestDispatcher {
                             "content": [
                                 { "type": "text", "text": output }
                             ]
+                        }),
+                    ),
+                    // The tool ran but failed (e.g. a move blocked by a dependency): report
+                    // it as a tool result so the agent can read the reason and react.
+                    Err(err) if err.code == TOOL_EXECUTION_ERROR => JsonRpcResponse::success(
+                        id,
+                        json!({
+                            "content": [
+                                { "type": "text", "text": err.message }
+                            ],
+                            "isError": true
                         }),
                     ),
                     Err(err) => JsonRpcResponse::error(id, err),
@@ -134,14 +149,14 @@ impl RequestDispatcher {
             "protocolVersion": PROTOCOL_VERSION,
             "serverInfo": {
                 "name": "clibm-mcp",
-                "version": "0.2.0",
+                "version": env!("CARGO_PKG_VERSION"),
                 "configuredTransport": config.transport.as_str(),
                 "readOnly": config.read_only,
                 "documentation": "https://github.com/FelipeVandevelde/CLIBM/blob/main/rust-clibm/plugins/clibm-mcp/README.md#ai-agent-mcp-configuration-json"
             },
             "capabilities": {
-                "tools": { "listChanged": true },
-                "resources": { "subscribe": true, "listChanged": true },
+                "tools": { "listChanged": false },
+                "resources": { "subscribe": false, "listChanged": false },
                 "prompts": { "listChanged": false }
             }
         })

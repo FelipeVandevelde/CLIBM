@@ -1410,10 +1410,13 @@ fn main() -> Result<()> {
             let bundle = engine.export_bundle()?;
             fs::write(&output, serde_json::to_string_pretty(&bundle)?)?;
             if let Some(tree_hash) = bundle.staged_tree_hash.as_deref() {
+                let absolute = fs::canonicalize(&output)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| output.clone());
                 engine.fire_hook(
                     "on-export",
                     tree_hash,
-                    serde_json::json!({ "output": output, "objects": bundle.objects.len() }),
+                    serde_json::json!({ "output": absolute, "objects": bundle.objects.len() }),
                 )?;
             }
             println!(

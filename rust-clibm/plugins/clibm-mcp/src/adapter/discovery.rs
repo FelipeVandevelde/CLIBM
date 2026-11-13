@@ -112,89 +112,65 @@ impl PluginToolDiscovery {
             }
         }
 
-        // 2. Identify native tool names to prevent conflicts
-        let native_tool_names: HashSet<&'static str> = [
-            "clibm_status",
-            "clibm_task_list",
-            "clibm_task_add",
-            "clibm_board_move",
-            "clibm_workspace_switch",
-        ]
-        .into_iter()
-        .collect();
-
+        // 2. Build tools. Names are always `<plugin>__<tool>` (letters, digits, '_' and
+        //    '-' only, at most 64 characters), so a plugin can neither shadow a native
+        //    tool nor claim another plugin's tool name.
         let mut discovered = Vec::new();
         let mut registered_names: HashSet<String> = HashSet::new();
 
-        // 3. Process eligible plugins
         for (plugin_name, manifest) in plugins_by_name {
-            // Must be enabled and installed (has executable)
-            if !manifest.enabled || manifest.executable.is_none() {
+            if !manifest.enabled {
+                continue;
+            }
+            // Only installed plugins: the executable must exist.
+            let installed = manifest
+                .executable
+                .as_deref()
+                .map(|e| Path::new(e).is_file())
+                .unwrap_or(false);
+            if !installed {
                 continue;
             }
 
-            // Collect tools from both direct `tools` array and `mcp.tools`
             let mut raw_tools = manifest.tools.clone();
             if let Some(mcp) = manifest.mcp {
                 raw_tools.extend(mcp.tools);
             }
-
-            if raw_tools.is_empty() {
-                continue;
-            }
-
             let plugin_prefix = Self::clean_plugin_prefix(&plugin_name);
 
             for tool_decl in raw_tools {
-                if tool_decl.name.trim().is_empty() {
+                let tool_part = Self::sanitize_name(tool_decl.name.trim());
+                if tool_part.is_empty() || plugin_prefix.is_empty() {
                     continue;
                 }
-
-                // Deterministic namespacing
-                let qualified_name = if tool_decl.name.contains('.') {
-                    tool_decl.name.trim().to_string()
-                } else {
-                    format!("{}.{}", plugin_prefix, tool_decl.name.trim())
-                };
-
-                // Conflict check 1: Native tools cannot be overwritten
-                if native_tool_names.contains(qualified_name.as_str())
-                    || native_tool_names.contains(tool_decl.name.as_str())
-                {
+                let qualified_name = format!("{}__{}", plugin_prefix, tool_part);
+                if qualified_name.len() > 64 {
                     eprintln!(
-                        "[clibm-mcp] Warning: Plugin '{}' attempted to overwrite native tool '{}'; skipping.",
-                        plugin_name, qualified_name
+                        "[clibm-mcp] Warning: tool name '{}' from plugin '{}' is longer than 64 characters; skipping.",
+                        qualified_name, plugin_name
                     );
                     continue;
                 }
-
-                // Conflict check 2: Prevent cross-plugin duplicate registrations
-                if registered_names.contains(&qualified_name) {
+                if !registered_names.insert(qualified_name.clone()) {
                     eprintln!(
-                        "[clibm-mcp] Warning: Duplicate tool name '{}' declared by plugin '{}'; skipping.",
+                        "[clibm-mcp] Warning: duplicate tool name '{}' from plugin '{}'; skipping.",
                         qualified_name, plugin_name
                     );
                     continue;
                 }
 
-                registered_names.insert(qualified_name.clone());
+                let description = tool_decl.description.unwrap_or_else(|| {
+                    format!("Tool '{}' provided by plugin '{}'", tool_part, plugin_name)
+                });
 
-                let description = tool_decl
-                    .description
-                    .unwrap_or_else(|| {
-                        format!("Tool '{}' provided by plugin '{}'", qualified_name, plugin_name)
-                    });
-
-                let tool_def = Self::build_tool_definition(
+                discovered.push(Self::build_tool_definition(
                     qualified_name,
                     description,
                     tool_decl.input_schema,
                     tool_decl.is_mutating,
                     plugin_name.clone(),
                     tool_decl.execution_ref,
-                );
-
-                discovered.push(tool_def);
+                ));
             }
         }
 
@@ -208,7 +184,15 @@ impl PluginToolDiscovery {
     pub fn clean_plugin_prefix(name: &str) -> String {
         let trimmed = name.trim();
         let stripped = trimmed.strip_prefix("clibm-").unwrap_or(trimmed);
-        stripped.replace('-', "_")
+        Self::sanitize_name(stripped).replace('-', "_")
+    }
+
+    /// Keeps letters, digits, '_' and '-' (MCP clients accept `^[a-zA-Z0-9_-]{1,64}$`);
+    /// anything else becomes '_'.
+    pub fn sanitize_name(name: &str) -> String {
+        name.chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .collect()
     }
 
     /// Builds a ToolDefinition with the dispatch closure.

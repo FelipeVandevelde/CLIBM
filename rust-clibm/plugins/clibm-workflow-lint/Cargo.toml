@@ -11,6 +11,8 @@ name = "clibm-workflow-lint"
 path = "src/main.rs"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
+# The CLIBM core library (project state, models and the plugin SDK).
+clibm_core = { package = "clibm", path = "../.." }
 serde_json = "1.0"
 anyhow = "1.0"
+chrono = "0.4"

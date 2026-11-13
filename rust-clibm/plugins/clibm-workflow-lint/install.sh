@@ -1004,15 +1004,15 @@ echo "===================================================================="
 
 if [ -z "$HOOK_MODE" ]; then
   if [ "$NON_INTERACTIVE" = true ]; then
-    HOOK_MODE="pre-move"
+    HOOK_MODE="post-commit"
   else
     echo "[1/2] Select Hook Mode for clibm-workflow-lint:"
-    echo "  1) Automatic Policy Enforcement (pre-move) [Default]"
+    echo "  1) Automatic check after each change (post-commit) [Default]"
     echo "  2) Manual Audit Only (run via 'clibm plugin run workflow-lint')"
     clibm_prompt "Select option [1-2, default: 1]: " c
     case "${c:-1}" in
       2|manual) HOOK_MODE="manual-run" ;;
-      *) HOOK_MODE="pre-move" ;;
+      *) HOOK_MODE="post-commit" ;;
     esac
   fi
 fi

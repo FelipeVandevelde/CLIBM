@@ -50,15 +50,17 @@ impl ResourceRegistry {
         self.register(ResourceDefinition {
             info: McpResourceInfo {
                 uri: "clibm://tree/staged".to_string(),
-                name: "Staged BLAKE3 Tree Snapshot".to_string(),
-                description: Some("Current snapshot of staged BLAKE3 CAS objects and manifest trees".to_string()),
+                name: "Staged tree snapshot".to_string(),
+                description: Some("The current (staged) tree object: IDs of workspaces, projects, boards and tasks mapped to their object hashes".to_string()),
                 mime_type: Some("application/json".to_string()),
             },
             reader: Arc::new(|uri, bridge| {
-                let content = bridge
-                    .read_repo_file(".clibm/staging.json")
-                    .or_else(|_| bridge.read_repo_file(".clibm/index.json"))
-                    .or_else(|_| bridge.execute(&["status"]))?;
+                let staged = bridge.read_repo_file(".clibm/STAGE_TREE")?;
+                let hash = staged.trim();
+                if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(JsonRpcError::resource_not_found("no staged tree recorded in .clibm/STAGE_TREE"));
+                }
+                let content = bridge.execute(&["cat-object", hash])?;
                 Ok(McpResourceContent {
                     uri: uri.to_string(),
                     mime_type: Some("application/json".to_string()),

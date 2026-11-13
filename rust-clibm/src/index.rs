@@ -121,7 +121,8 @@ impl ComputedIndex {
     }
 }
 
-fn detect_cycles(tasks: &BTreeMap<String, TaskPayload>) -> Vec<Vec<String>> {
+/// Dependency cycles among `tasks` (each cycle lists its task IDs and repeats the first one).
+pub fn detect_cycles(tasks: &BTreeMap<String, TaskPayload>) -> Vec<Vec<String>> {
     let mut cycles = Vec::new();
     let mut visited = BTreeSet::new();
     let mut on_stack = BTreeSet::new();

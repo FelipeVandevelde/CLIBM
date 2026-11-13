@@ -4,10 +4,10 @@
 # ==============================================================================
 # Presents interactive configuration choices to the user during installation:
 #   [1/3] Transport Mode:
-#     1) both  (Default: stdio JSON-RPC 2.0 + Local HTTP SSE Server)
-#     2) stdio (stdio JSON-RPC 2.0 only)
-#     3) http  (Local HTTP SSE Server 127.0.0.1:7879 only)
-#   [2/3] HTTP SSE Server Port (default: 7879)
+#     1) stdio (Default: JSON-RPC over stdin/stdout, what AI clients launch)
+#     2) both  (stdio + local HTTP endpoint POST http://127.0.0.1:<port>/mcp)
+#     3) http  (local HTTP endpoint only)
+#   [2/3] Local HTTP port (default: 7879, asked only for both/http)
 #   [3/3] Installation Target Directory (default: ~\.clibm-bin)
 
 $Transport = ""
@@ -1007,20 +1007,20 @@ Write-Host "====================================================================
 
 if (-not $Transport) {
     if ($Yes) {
-        $Transport = "both"
+        $Transport = "stdio"
     } else {
         Write-Host ""
         Write-Host "[1/3] Select MCP Transport Mode for clibm-mcp:"
-        Write-Host "  1) both  -- Enable BOTH stdio JSON-RPC 2.0 and Local HTTP SSE Server [Default]"
-        Write-Host "  2) stdio -- Enable ONLY stdio JSON-RPC 2.0 (Claude Desktop / Cursor / Windsurf)"
-        Write-Host "  3) http  -- Enable ONLY Local HTTP + SSE Server"
+        Write-Host "  1) stdio -- JSON-RPC over stdin/stdout, what AI clients launch (Claude, Cursor, Windsurf) [Default]"
+        Write-Host "  2) both  -- stdio plus a local HTTP endpoint (POST http://127.0.0.1:<port>/mcp)"
+        Write-Host "  3) http  -- Only the local HTTP endpoint"
         $c = Read-Host "Select option [1-3, default: 1]"
         switch ($c) {
-            "2" { $Transport = "stdio" }
-            "stdio" { $Transport = "stdio" }
+            "2" { $Transport = "both" }
+            "both" { $Transport = "both" }
             "3" { $Transport = "http" }
             "http" { $Transport = "http" }
-            default { $Transport = "both" }
+            default { $Transport = "stdio" }
         }
     }
 }
@@ -1030,7 +1030,7 @@ if ($Port -le 0) {
         $Port = 7879
     } else {
         Write-Host ""
-        $p = Read-Host "[2/3] Specify HTTP SSE Server Port [default: 7879]"
+        $p = Read-Host "[2/3] Specify the local HTTP port [default: 7879]"
         if ([string]::IsNullOrWhiteSpace($p)) { $Port = 7879 } else { $Port = [int]$p }
     }
 }
@@ -1057,28 +1057,6 @@ $GlobalCfgDir = Join-Path $HomeDir ".clibm"
 New-Item -ItemType Directory -Force -Path $GlobalCfgDir | Out-Null
 
 $InstalledExe = Join-Path $InstallDir "clibm-mcp.exe"
-$McpSourceFiles = @(
-    "Cargo.toml",
-    "src/main.rs",
-    "src/config.rs",
-    "src/error.rs",
-    "src/protocol/mod.rs",
-    "src/protocol/types.rs",
-    "src/protocol/schema.rs",
-    "src/backend/mod.rs",
-    "src/backend/bridge.rs",
-    "src/adapter/mod.rs",
-    "src/adapter/discovery.rs",
-    "src/adapter/dispatcher.rs",
-    "src/adapter/permissions.rs",
-    "src/adapter/prompts.rs",
-    "src/adapter/resources.rs",
-    "src/adapter/tools.rs",
-    "src/adapter/validator.rs",
-    "src/transport/mod.rs",
-    "src/transport/stdio.rs",
-    "src/transport/http.rs"
-)
 $CargoFeatureArgs = switch ($Transport) {
     "stdio" { @("--no-default-features", "--features", "transport-stdio") }
     "http"  { @("--no-default-features", "--features", "transport-http") }
@@ -1088,7 +1066,6 @@ $CargoFeatureArgs = switch ($Transport) {
 $InstallMode = Invoke-ClibmBuildAndStage `
     -CrateName "clibm-mcp" `
     -RemoteSubPath "plugins/clibm-mcp" `
-    -SourceFiles $McpSourceFiles `
     -DestinationBinary $InstalledExe `
     -LocalCandidateDir $ScriptDir `
     -RawBaseUrl $RawBaseUrl `
@@ -1105,13 +1082,13 @@ $McpCfg = @{
 [System.IO.File]::WriteAllText((Join-Path $GlobalCfgDir "mcp-config.json"), $McpCfg, $Utf8NoBomEncoding)
 
 $McpHooks = switch ($Transport) {
-    "stdio" { @("mcp-stdio", "on-ai-tool-call") }
-    "http"  { @("mcp-http-sse", "on-ai-tool-call") }
-    default { @("mcp-stdio", "mcp-http-sse", "on-ai-tool-call") }
+    "stdio" { @("mcp-stdio") }
+    "http"  { @("mcp-http") }
+    default { @("mcp-stdio", "mcp-http") }
 }
 Register-ClibmGlobalPlugin `
     -Name "clibm-mcp" `
-    -Description "Self-hosted Model Context Protocol (MCP) server plugin for AI agents over stdio JSON-RPC 2.0 and HTTP SSE" `
+    -Description "Model Context Protocol (MCP) server that exposes a CLIBM project to AI agents" `
     -Hooks $McpHooks `
     -Executable $InstalledExe `
     -ProjectDir $CallerDir `
@@ -1126,4 +1103,4 @@ if (-not $NoModifyPath) {
 
 Write-Host "==> Installed clibm-mcp.exe ($InstallMode mode) to $InstalledExe"
 Write-Host "==> Saved MCP transport preference ('$Transport', port $Port) to ~/.clibm/mcp-config.json"
-Write-Host "==> Run inside any ongoing project via: clibm plugin run mcp"
+Write-Host "==> MCP client configuration (.mcp.json): clibm-mcp --print-config"

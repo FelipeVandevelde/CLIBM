@@ -994,13 +994,13 @@ Write-Host "====================================================================
 
 if (-not $Hooks) {
     if ($Yes) {
-        $Hooks = "pre-move"
+        $Hooks = "post-commit"
     } else {
         Write-Host "[1/2] Select Hook Mode for clibm-workflow-lint:"
-        Write-Host "  1) Automatic Policy Enforcement (pre-move) [Default]"
+        Write-Host "  1) Automatic check after each change (post-commit) [Default]"
         Write-Host "  2) Manual Audit Only (run via 'clibm plugin run workflow-lint')"
         $c = Read-Host "Select option [1-2, default: 1]"
-        if ($c -eq "2") { $Hooks = "manual-run" } else { $Hooks = "pre-move" }
+        if ($c -eq "2") { $Hooks = "manual-run" } else { $Hooks = "post-commit" }
     }
 }
 

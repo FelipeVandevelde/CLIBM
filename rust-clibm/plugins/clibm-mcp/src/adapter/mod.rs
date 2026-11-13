@@ -89,6 +89,19 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Writes a registry whose `C:/dummy/<file>` executables are replaced by real
+    /// (empty) files in `bin_dir`, because only installed plugins expose tools.
+    fn write_registry(reg_file: &std::path::Path, value: &serde_json::Value, bin_dir: &std::path::Path) {
+        std::fs::create_dir_all(bin_dir).unwrap();
+        let text = serde_json::to_string_pretty(value).unwrap();
+        for part in text.split("C:/dummy/").skip(1) {
+            let file = part.split('"').next().unwrap();
+            std::fs::write(bin_dir.join(file), b"stub").unwrap();
+        }
+        let prefix = format!("{}/", bin_dir.to_string_lossy().replace('\\', "/"));
+        std::fs::write(reg_file, text.replace("C:/dummy/", &prefix)).unwrap();
+    }
+
     #[test]
     fn test_initialize_and_capabilities() {
         let adapter = McpAdapter::new(McpConfig::default());
@@ -260,14 +273,14 @@ mod tests {
                 ]
             }
         ]);
-        std::fs::write(&reg_file, serde_json::to_string_pretty(&initial_json).unwrap()).unwrap();
+        write_registry(&reg_file, &initial_json, &temp_dir.join("bin"));
 
         let mut cfg = McpConfig::default();
         cfg.project_root = temp_dir.clone();
         cfg.home_dir = Some(temp_dir.join("home"));
         let adapter = McpAdapter::new(cfg);
 
-        // Verify tools/list contains dep_audit.audit_dependencies but not ignored_tool
+        // Verify tools/list contains dep_audit__audit_dependencies but not ignored_tool
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(json!(8)),
@@ -277,7 +290,7 @@ mod tests {
         let resp = adapter.handle_request(req);
         assert!(resp.error.is_none());
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        assert!(tools.iter().any(|t| t["name"] == "dep_audit.audit_dependencies"));
+        assert!(tools.iter().any(|t| t["name"] == "dep_audit__audit_dependencies"));
         assert!(!tools.iter().any(|t| t["name"] == "ignored_tool"));
 
         // 2. Live reload: Add another tool to registry file without recreating adapter
@@ -311,9 +324,9 @@ mod tests {
                 ]
             }
         ]);
-        std::fs::write(&reg_file, serde_json::to_string_pretty(&updated_json).unwrap()).unwrap();
+        write_registry(&reg_file, &updated_json, &temp_dir.join("bin"));
 
-        // Next tools/list call should dynamically discover export_md.export_project
+        // Next tools/list call should dynamically discover export_md__export_project
         let req2 = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(json!(9)),
@@ -323,8 +336,8 @@ mod tests {
         let resp2 = adapter.handle_request(req2);
         assert!(resp2.error.is_none());
         let tools2 = resp2.result.unwrap()["tools"].as_array().unwrap().clone();
-        assert!(tools2.iter().any(|t| t["name"] == "dep_audit.audit_dependencies"));
-        assert!(tools2.iter().any(|t| t["name"] == "export_md.export_project"));
+        assert!(tools2.iter().any(|t| t["name"] == "dep_audit__audit_dependencies"));
+        assert!(tools2.iter().any(|t| t["name"] == "export_md__export_project"));
 
         // 3. Live reload: Disable clibm-dep-audit
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -356,7 +369,7 @@ mod tests {
                 ]
             }
         ]);
-        std::fs::write(&reg_file, serde_json::to_string_pretty(&disabled_json).unwrap()).unwrap();
+        write_registry(&reg_file, &disabled_json, &temp_dir.join("bin"));
 
         let req3 = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -367,10 +380,49 @@ mod tests {
         let resp3 = adapter.handle_request(req3);
         assert!(resp3.error.is_none());
         let tools3 = resp3.result.unwrap()["tools"].as_array().unwrap().clone();
-        assert!(!tools3.iter().any(|t| t["name"] == "dep_audit.audit_dependencies"));
-        assert!(tools3.iter().any(|t| t["name"] == "export_md.export_project"));
+        assert!(!tools3.iter().any(|t| t["name"] == "dep_audit__audit_dependencies"));
+        assert!(tools3.iter().any(|t| t["name"] == "export_md__export_project"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_tools_of_missing_binaries_are_hidden() {
+        let temp_dir = std::env::temp_dir().join(format!("clibm_test_missing_bin_{}", std::process::id()));
+        let plugins_dir = temp_dir.join("home").join(".clibm").join("plugins");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        let reg = json!([{
+            "name": "clibm-gone", "enabled": true,
+            "executable": temp_dir.join("nope.exe").to_string_lossy().replace('\\', "/"),
+            "tools": [{ "name": "ghost" }]
+        }]);
+        std::fs::write(plugins_dir.join("registry.json"), reg.to_string()).unwrap();
+        let mut cfg = McpConfig::default();
+        cfg.project_root = temp_dir.clone();
+        cfg.home_dir = Some(temp_dir.join("home"));
+        let adapter = McpAdapter::new(cfg);
+        let resp = adapter.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(20)),
+            method: "tools/list".to_string(),
+            params: json!({}),
+        });
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        assert!(!tools.iter().any(|t| t["name"] == "gone__ghost"));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_tool_call_without_name_is_invalid() {
+        let adapter = McpAdapter::new(McpConfig::default());
+        let resp = adapter.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(21)),
+            method: "tools/call".to_string(),
+            params: json!({}),
+        });
+        assert_eq!(resp.error.expect("error").code, -32602);
     }
 
     #[test]
@@ -409,7 +461,7 @@ mod tests {
                 ]
             }
         ]);
-        std::fs::write(&reg_file, serde_json::to_string_pretty(&collision_json).unwrap()).unwrap();
+        write_registry(&reg_file, &collision_json, &temp_dir.join("bin"));
 
         let mut cfg = McpConfig::default();
         cfg.project_root = temp_dir.clone();
@@ -427,11 +479,13 @@ mod tests {
 
         // Native clibm_status must be preserved with its original description
         let status_tool = tools.iter().find(|t| t["name"] == "clibm_status").unwrap();
-        assert!(status_tool["description"].as_str().unwrap().contains("Inspect active workspace"));
+        assert!(status_tool["description"].as_str().unwrap().starts_with("Project status"));
 
-        // Only 1 evil_plugin.my_tool should exist
-        let count_my_tool = tools.iter().filter(|t| t["name"] == "evil_plugin.my_tool").count();
+        // Plugin tools are always namespaced by their own plugin: no hijacking.
+        let count_my_tool = tools.iter().filter(|t| t["name"] == "evil_plugin__my_tool").count();
         assert_eq!(count_my_tool, 1);
+        assert!(tools.iter().any(|t| t["name"] == "evil_plugin__clibm_status"));
+        assert!(tools.iter().any(|t| t["name"] == "other_plugin__evil_plugin_my_tool"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -465,7 +519,7 @@ mod tests {
                 ]
             }
         ]);
-        std::fs::write(&reg_file, serde_json::to_string_pretty(&schema_json).unwrap()).unwrap();
+        write_registry(&reg_file, &schema_json, &temp_dir.join("bin"));
 
         // Case 1: Schema validation failure (missing required parameter)
         let mut cfg = McpConfig::default();
@@ -478,7 +532,7 @@ mod tests {
             id: Some(json!(12)),
             method: "tools/call".to_string(),
             params: json!({
-                "name": "custom_ops.deploy",
+                "name": "custom_ops__deploy",
                 "arguments": {}
             }),
         };
@@ -500,7 +554,7 @@ mod tests {
             id: Some(json!(13)),
             method: "tools/call".to_string(),
             params: json!({
-                "name": "custom_ops.deploy",
+                "name": "custom_ops__deploy",
                 "arguments": { "environment": "production" }
             }),
         };

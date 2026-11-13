@@ -11,5 +11,6 @@ pub mod index;
 pub mod install;
 pub mod models;
 pub mod plugin;
+pub mod plugin_sdk;
 pub mod update;
 pub mod versioning;

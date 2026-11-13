@@ -225,7 +225,7 @@ name = "clibm-dep-audit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde",
+ "clibm",
  "serde_json",
 ]
 
@@ -234,7 +234,8 @@ name = "clibm-export-md"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde",
+ "chrono",
+ "clibm",
  "serde_json",
 ]
 
@@ -286,7 +287,8 @@ name = "clibm-workflow-lint"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde",
+ "chrono",
+ "clibm",
  "serde_json",
 ]
 

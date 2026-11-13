@@ -5,10 +5,10 @@
 # ==============================================================================
 # Presents interactive configuration choices to the user during installation:
 #   [1/3] Transport Mode:
-#     1) both  (Default: stdio JSON-RPC 2.0 + Local HTTP SSE Server)
-#     2) stdio (stdio JSON-RPC 2.0 only)
-#     3) http  (Local HTTP SSE Server 127.0.0.1:7879 only)
-#   [2/3] HTTP SSE Server Port (default: 7879)
+#     1) stdio (Default: JSON-RPC over stdin/stdout, what AI clients launch)
+#     2) both  (stdio + local HTTP endpoint POST http://127.0.0.1:<port>/mcp)
+#     3) http  (local HTTP endpoint only)
+#   [2/3] Local HTTP port (default: 7879, asked only for both/http)
 #   [3/3] Installation Target Directory (default: ~/.local/bin)
 
 set -euo pipefail
@@ -1034,18 +1034,18 @@ echo "===================================================================="
 
 if [ -z "$TRANSPORT" ]; then
   if [ "$NON_INTERACTIVE" = true ]; then
-    TRANSPORT="both"
+    TRANSPORT="stdio"
   else
     echo ""
     echo "[1/3] Select MCP Transport Mode for clibm-mcp:"
-    echo "  1) both  -- Enable BOTH stdio JSON-RPC 2.0 and Local HTTP SSE Server [Default]"
-    echo "  2) stdio -- Enable ONLY stdio JSON-RPC 2.0 (Claude Desktop / Cursor / Windsurf)"
-    echo "  3) http  -- Enable ONLY Local HTTP + SSE Server"
+    echo "  1) stdio -- JSON-RPC over stdin/stdout, what AI clients launch (Claude, Cursor, Windsurf) [Default]"
+    echo "  2) both  -- stdio plus a local HTTP endpoint (POST http://127.0.0.1:<port>/mcp)"
+    echo "  3) http  -- Only the local HTTP endpoint"
     clibm_prompt "Select option [1-3, default: 1]: " choice_tr
     case "${choice_tr:-1}" in
-      2|stdio) TRANSPORT="stdio" ;;
+      2|both) TRANSPORT="both" ;;
       3|http) TRANSPORT="http" ;;
-      *) TRANSPORT="both" ;;
+      *) TRANSPORT="stdio" ;;
     esac
   fi
 fi
@@ -1055,7 +1055,7 @@ if [ -z "$PORT" ]; then
     PORT="7879"
   else
     echo ""
-    clibm_prompt "[2/3] Specify HTTP SSE Server Port [default: 7879]: " input_port
+    clibm_prompt "[2/3] Specify the local HTTP port [default: 7879]: " input_port
     PORT="${input_port:-7879}"
   fi
 fi
@@ -1117,11 +1117,11 @@ printf '{\n  "plugin": "clibm-mcp",\n  "version": "0.2.0",\n  "transport": "%s",
   "$TRANSPORT" "$PORT" > "${HOME}/.clibm/mcp-config.json"
 
 case "$TRANSPORT" in
-  stdio) MCP_HOOKS="mcp-stdio,on-ai-tool-call" ;;
-  http)  MCP_HOOKS="mcp-http-sse,on-ai-tool-call" ;;
-  *)     MCP_HOOKS="mcp-stdio,mcp-http-sse,on-ai-tool-call" ;;
+  stdio) MCP_HOOKS="mcp-stdio" ;;
+  http)  MCP_HOOKS="mcp-http" ;;
+  *)     MCP_HOOKS="mcp-stdio,mcp-http" ;;
 esac
-clibm_register_global_plugin "clibm-mcp" "Self-hosted Model Context Protocol (MCP) server plugin for AI agents over stdio JSON-RPC 2.0 and HTTP SSE" "$MCP_HOOKS" "${TARGET_DIR}/clibm-mcp" "0.2.0" "global" "$CALLER_DIR" "$TARGET_DIR"
+clibm_register_global_plugin "clibm-mcp" "Model Context Protocol (MCP) server that exposes a CLIBM project to AI agents" "$MCP_HOOKS" "${TARGET_DIR}/clibm-mcp" "0.2.0" "global" "$CALLER_DIR" "$TARGET_DIR"
 
 if [ "$NO_MODIFY_PATH" = false ]; then
   clibm_path_add "clibm-mcp" "$TARGET_DIR"
