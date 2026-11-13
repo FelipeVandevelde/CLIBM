@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
-# clibm-plugin-template — Standalone Plugin Installer (Linux / macOS)
-# Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
+# clibm-plugin-template -- Standalone Plugin Installer (Linux / macOS)
+# Encoding: UTF-8 (without BOM) for cross-platform compatibility
 # ==============================================================================
 # Presents interactive configuration choices to the user during installation:
 #   [1/3] Hook Subscription Profile (default-hooks, manual-only, or all-hooks)
@@ -92,8 +92,8 @@ clibm_init_env_path_helper() {
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
 # clibm-env-path-version: 5
 # ==============================================================================
-# CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
-# Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
+# CLIBM Shared User PATH Helper (Linux / macOS -- Bash 3.2+)
+# Encoding: UTF-8 (without BOM) in repository; LF-clean when sourced
 # Manages user-scope PATH marker blocks in shell profiles and reference-counted
 # ownership in ~/.clibm/path-ledger without touching system-wide profiles.
 # ==============================================================================
@@ -705,7 +705,7 @@ clibm_update_registry_file() {
   mkdir -p "$(dirname "$reg_file")"
 
   if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
-    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
+    printf '[\n  %s\n]\n' "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -717,7 +717,7 @@ clibm_update_registry_file() {
      ! printf '%s\n' "$clean_content" | grep -Fq "\"name\":\"${name}\"" 2>/dev/null; then
     local body
     body=$(printf '%s\n' "$clean_content" | sed '$d')
-    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+    printf '%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -762,7 +762,7 @@ clibm_update_registry_file() {
   ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-  printf '\xEF\xBB\xBF' > "$reg_file"
+  printf '' > "$reg_file"
   cat "$tmp_file" >> "$reg_file"
   rm -f "$tmp_file"
 }
@@ -904,7 +904,7 @@ ${extra_d%/}/registry.json"
     ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-    printf '\xEF\xBB\xBF' > "$rfile"
+    printf '' > "$rfile"
     cat "$tmp_file" >> "$rfile"
     rm -f "$tmp_file"
     echo "==> Removed ${name} from plugin registry: ${rfile}"
@@ -921,7 +921,7 @@ clibm_init_env_path_helper
 # <<< clibm-env-path (generated) <<<
 
 echo "===================================================================="
-echo " ${BIN_NAME} — Standalone Plugin Installer (UTF-8-BOM)"
+echo " ${BIN_NAME} -- Standalone Plugin Installer (UTF-8)"
 echo "===================================================================="
 
 if [ -z "$HOOK_MODE" ]; then
@@ -930,9 +930,9 @@ if [ -z "$HOOK_MODE" ]; then
   else
     echo ""
     echo "[1/3] Select Contract Hook Subscription Profile for ${BIN_NAME}:"
-    echo "  1) default-hooks — Subscribe to pre-commit & on-task-move [Default]"
-    echo "  2) manual-only   — Run only when invoked via 'clibm plugin run ${BIN_NAME}'"
-    echo "  3) all-hooks     — Subscribe to pre-commit, post-commit, on-task-move, on-workspace-switch, on-export"
+    echo "  1) default-hooks -- Subscribe to pre-commit & on-task-move [Default]"
+    echo "  2) manual-only   -- Run only when invoked via 'clibm plugin run ${BIN_NAME}'"
+    echo "  3) all-hooks     -- Subscribe to pre-commit, post-commit, on-task-move, on-workspace-switch, on-export"
     clibm_prompt "Select option [1-3, default: 1]: " choice_hk
     case "${choice_hk:-1}" in
       2|manual|manual-only) HOOK_MODE="manual-only" ;;
@@ -948,8 +948,8 @@ if [ -z "$SCOPE" ]; then
   else
     echo ""
     echo "[2/3] Select Plugin Registration Scope:"
-    echo "  1) global       — Available across all ongoing CLIBM projects (~/.clibm/plugins) [Default]"
-    echo "  2) project-only — Register only in the active local .clibm repository"
+    echo "  1) global       -- Available across all ongoing CLIBM projects (~/.clibm/plugins) [Default]"
+    echo "  2) project-only -- Register only in the active local .clibm repository"
     clibm_prompt "Select option [1-2, default: 1]: " choice_sc
     case "${choice_sc:-1}" in
       2|project|project-only) SCOPE="project-only" ;;
@@ -991,7 +991,7 @@ clibm_build_and_stage \
   "Cargo.toml" \
   "src/main.rs"
 
-printf '\xEF\xBB\xBF{\n  "plugin": "%s",\n  "hook_mode": "%s",\n  "scope": "%s",\n  "install_dir": "%s",\n  "encoding": "UTF-8-BOM"\n}\n' \
+printf '{\n  "plugin": "%s",\n  "hook_mode": "%s",\n  "scope": "%s",\n  "install_dir": "%s",\n  "encoding": "UTF-8"\n}\n' \
   "$BIN_NAME" "$HOOK_MODE" "$SCOPE" "$INSTALL_DIR" > "${HOME}/.clibm/${BIN_NAME}-config.json"
 
 case "$HOOK_MODE" in

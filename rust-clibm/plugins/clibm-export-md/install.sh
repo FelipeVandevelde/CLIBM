@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
-# clibm-export-md — Standalone Plugin Installer with Interactive Choices
-# Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
+# clibm-export-md -- Standalone Plugin Installer with Interactive Choices
+# Encoding: UTF-8 (without BOM) for cross-platform compatibility
 # ==============================================================================
 set -euo pipefail
 CALLER_DIR="$(pwd)"
@@ -51,8 +51,8 @@ clibm_init_env_path_helper() {
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
 # clibm-env-path-version: 5
 # ==============================================================================
-# CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
-# Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
+# CLIBM Shared User PATH Helper (Linux / macOS -- Bash 3.2+)
+# Encoding: UTF-8 (without BOM) in repository; LF-clean when sourced
 # Manages user-scope PATH marker blocks in shell profiles and reference-counted
 # ownership in ~/.clibm/path-ledger without touching system-wide profiles.
 # ==============================================================================
@@ -664,7 +664,7 @@ clibm_update_registry_file() {
   mkdir -p "$(dirname "$reg_file")"
 
   if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
-    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
+    printf '[\n  %s\n]\n' "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -676,7 +676,7 @@ clibm_update_registry_file() {
      ! printf '%s\n' "$clean_content" | grep -Fq "\"name\":\"${name}\"" 2>/dev/null; then
     local body
     body=$(printf '%s\n' "$clean_content" | sed '$d')
-    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+    printf '%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -721,7 +721,7 @@ clibm_update_registry_file() {
   ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-  printf '\xEF\xBB\xBF' > "$reg_file"
+  printf '' > "$reg_file"
   cat "$tmp_file" >> "$reg_file"
   rm -f "$tmp_file"
 }
@@ -863,7 +863,7 @@ ${extra_d%/}/registry.json"
     ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-    printf '\xEF\xBB\xBF' > "$rfile"
+    printf '' > "$rfile"
     cat "$tmp_file" >> "$rfile"
     rm -f "$tmp_file"
     echo "==> Removed ${name} from plugin registry: ${rfile}"
@@ -880,7 +880,7 @@ clibm_init_env_path_helper
 # <<< clibm-env-path (generated) <<<
 
 echo "===================================================================="
-echo " CLIBM-EXPORT-MD v0.1.0 — Markdown Exporter Installer (UTF-8-BOM)"
+echo " CLIBM-EXPORT-MD v0.1.0 -- Markdown Exporter Installer (UTF-8)"
 echo "===================================================================="
 
 if [ -z "$HOOK_MODE" ]; then

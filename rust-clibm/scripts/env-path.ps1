@@ -1,7 +1,7 @@
-﻿# clibm-env-path-version: 5
+# clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
-# Encoding: UTF-8 with BOM (EF BB BF)
+# Encoding: UTF-8 (without BOM)
 # Manages user-scope PATH entries and reference-counted ownership in
 # ~/.clibm/path-ledger without touching machine/system environment variables.
 # ==============================================================================

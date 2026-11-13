@@ -1,10 +1,10 @@
-﻿# ==============================================================================
+# ==============================================================================
 # CLIBM Shared PATH Helper Synchronizer (Windows PowerShell 5.1 & 7+)
-# Encoding: UTF-8 with BOM (EF BB BF)
+# Encoding: UTF-8 without BOM (pure ASCII / UTF-8)
 # Syncs rust-clibm/scripts/env-path.{ps1,sh} into the embedded marker blocks of
 # all standalone plugin scripts and verifies src/plugin.rs scaffolding.
 # Usage:
-#   .\scripts\sync-env-path.ps1          # Update embedded blocks + ensure BOM
+#   .\scripts\sync-env-path.ps1          # Update embedded blocks (UTF-8 without BOM)
 #   .\scripts\sync-env-path.ps1 -Check   # Fail (exit 1) if any copy drifted
 # ==============================================================================
 
@@ -18,7 +18,7 @@ $ScriptsDir = $PSScriptRoot
 $RustRoot = Split-Path -Parent $ScriptsDir
 $Ps1HelperPath = Join-Path $ScriptsDir 'env-path.ps1'
 $ShHelperPath  = Join-Path $ScriptsDir 'env-path.sh'
-$Utf8Bom = New-Object System.Text.UTF8Encoding($true)
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Read-CleanText {
     param([string]$FilePath)
@@ -91,8 +91,8 @@ $Ps1BlockLf = @(
     '    }'
     '    if ($NeedsWrite) {'
     '        New-Item -ItemType Directory -Force -Path $LibDir | Out-Null'
-    '        $Utf8Bom = New-Object System.Text.UTF8Encoding($true)'
-    '        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8Bom)'
+    '        $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)'
+    '        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8NoBom)'
     '    }'
     '    return $HelperFile'
     '}'
@@ -134,7 +134,7 @@ $ShBlockLf = @(
 $DriftedFiles = @()
 $UpdatedFiles = @()
 
-# Ensure canonical scripts & core lifecycle scripts have UTF-8 BOM
+# Ensure canonical scripts & core lifecycle scripts are UTF-8 without BOM
 $CoreScripts = @(
     $Ps1HelperPath,
     $ShHelperPath,
@@ -148,13 +148,13 @@ $CoreScripts = @(
 )
 foreach ($CS in $CoreScripts) {
     if (Test-Path -LiteralPath $CS) {
-        if (-not (Test-HasUtf8Bom $CS)) {
+        if (Test-HasUtf8Bom $CS) {
             if ($Check) {
-                $DriftedFiles += "$CS (missing UTF-8 BOM)"
+                $DriftedFiles += "$CS (unexpected UTF-8 BOM)"
             } else {
                 $Txt = [System.IO.File]::ReadAllText($CS, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF)
-                [System.IO.File]::WriteAllText($CS, $Txt, $Utf8Bom)
-                $UpdatedFiles += "$CS (added UTF-8 BOM)"
+                [System.IO.File]::WriteAllText($CS, $Txt, $Utf8NoBom)
+                $UpdatedFiles += "$CS (removed UTF-8 BOM)"
             }
         }
     }
@@ -195,11 +195,11 @@ foreach ($FilePath in $TargetFiles) {
     $FinalText = if ($UsesCrlf) { $ReplacedLf -replace "`n", "`r`n" } else { $ReplacedLf }
     $HasBom = Test-HasUtf8Bom $FilePath
 
-    if (($ReplacedLf -cne $NormLf) -or (-not $HasBom)) {
+    if (($ReplacedLf -cne $NormLf) -or $HasBom) {
         if ($Check) {
             $DriftedFiles += $FilePath
         } else {
-            [System.IO.File]::WriteAllText($FilePath, $FinalText, $Utf8Bom)
+            [System.IO.File]::WriteAllText($FilePath, $FinalText, $Utf8NoBom)
             $UpdatedFiles += $FilePath
         }
     }

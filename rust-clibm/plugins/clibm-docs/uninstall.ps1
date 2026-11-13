@@ -1,6 +1,6 @@
-﻿# ==============================================================================
-# clibm-docs — Uninstallation Script (Windows PowerShell)
-# Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
+# ==============================================================================
+# clibm-docs -- Uninstallation Script (Windows PowerShell)
+# Encoding: UTF-8 (without BOM) for Windows PowerShell compatibility
 # ==============================================================================
 param (
     [switch]$Purge = $false,
@@ -21,7 +21,7 @@ function Initialize-ClibmEnvPathHelper {
 # clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
-# Encoding: UTF-8 with BOM (EF BB BF)
+# Encoding: UTF-8 (without BOM)
 # Manages user-scope PATH entries and reference-counted ownership in
 # ~/.clibm/path-ledger without touching machine/system environment variables.
 # ==============================================================================
@@ -940,8 +940,8 @@ function Unregister-ClibmPlugin {
     }
     if ($NeedsWrite) {
         New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
-        $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
-        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8Bom)
+        $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8NoBom)
     }
     return $HelperFile
 }
@@ -949,7 +949,7 @@ try { . (Initialize-ClibmEnvPathHelper) } catch { Invoke-Expression $script:Clib
 # <<< clibm-env-path (generated) <<<
 
 Write-Host "===================================================================="
-Write-Host " CLIBM-DOCS v0.1.0 — Plugin Uninstaller (Windows PowerShell · UTF-8-BOM)"
+Write-Host " CLIBM-DOCS v0.1.0 -- Plugin Uninstaller (Windows PowerShell - UTF-8-BOM)"
 Write-Host "===================================================================="
 
 if (-not $Purge -and -not $Keep -and -not $Yes) {

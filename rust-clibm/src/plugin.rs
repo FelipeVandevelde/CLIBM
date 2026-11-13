@@ -75,8 +75,8 @@ function Initialize-ClibmEnvPathHelper {{\n\
     }}\n\
     if ($NeedsWrite) {{\n\
         New-Item -ItemType Directory -Force -Path $LibDir | Out-Null\n\
-        $Utf8Bom = New-Object System.Text.UTF8Encoding($true)\n\
-        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8Bom)\n\
+        $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)\n\
+        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8NoBom)\n\
     }}\n\
     return $HelperFile\n\
 }}\n\
@@ -124,10 +124,9 @@ clibm_init_env_path_helper\n\
     )
 }
 
-fn write_utf8_bom_file(path: &Path, content: &str) -> Result<()> {
+fn write_utf8_file(path: &Path, content: &str) -> Result<()> {
     let clean = content.strip_prefix(UTF8_BOM).unwrap_or(content);
-    let with_bom = format!("{}{}", UTF8_BOM, clean);
-    fs::write(path, with_bom.as_bytes())?;
+    fs::write(path, clean.as_bytes())?;
     Ok(())
 }
 
@@ -459,7 +458,7 @@ impl PluginManager {
         if cas.is_initialized() {
             let _ = fs::create_dir_all(cas.plugins_dir());
             let reg_file = cas.plugins_dir().join("registry.json");
-            write_utf8_bom_file(&reg_file, &serde_json::to_string_pretty(plugins)?)?;
+            write_utf8_file(&reg_file, &serde_json::to_string_pretty(plugins)?)?;
         }
         Ok(())
     }
@@ -482,7 +481,7 @@ impl PluginManager {
         } else {
             list.push(manifest.clone());
         }
-        write_utf8_bom_file(reg_file, &serde_json::to_string_pretty(&list)?)?;
+        write_utf8_file(reg_file, &serde_json::to_string_pretty(&list)?)?;
         Ok(())
     }
 
@@ -831,7 +830,7 @@ impl PluginManager {
 
     /// Scaffolds a new standalone plugin crate in `plugins/<crate_name>` using the official
     /// CLIBM plugin template (`Cargo.toml`, `src/main.rs`, `README.md`, `install.sh`, `install.ps1`, `uninstall.sh`, `uninstall.ps1`)
-    /// with UTF-8-BOM (`EF BB BF`) encoding and registers it in the active repository's plugin registry.
+    /// with UTF-8 encoding and registers it in the active repository's plugin registry.
     pub fn scaffold_plugin_template(
         cas: &CasStore,
         raw_name: &str,
@@ -872,7 +871,7 @@ serde_json = "1.0"
 anyhow = "1.0"
 "#
         );
-        write_utf8_bom_file(&plugin_dir.join("Cargo.toml"), &cargo_toml)?;
+        write_utf8_file(&plugin_dir.join("Cargo.toml"), &cargo_toml)?;
 
         let main_rs = format!(
             r#"//! Standalone CLIBM Plugin: `{crate_name}`
@@ -893,12 +892,12 @@ fn main() -> Result<()> {{
 "#,
             hooks
         );
-        write_utf8_bom_file(&src_dir.join("main.rs"), &main_rs)?;
+        write_utf8_file(&src_dir.join("main.rs"), &main_rs)?;
 
         let readme = format!(
-            "# {crate_name}\n\n{description}\n\n- **Encoding:** UTF-8 with BOM (`EF BB BF`)\n\n## Quick Install\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.ps1)\n```\n\n## Quick Uninstall\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.ps1)\n```\n\n## Local Build & Install (From This Folder)\n\n```bash\ncd plugins/{crate_name}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n```\n\n## Run in Any Ongoing CLIBM Project\n\n```bash\nclibm plugin run {crate_name}\n```\n\n## Local Uninstall\n\n```bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n```\n"
+            "# {crate_name}\n\n{description}\n\n- **Encoding:** UTF-8\n\n## Quick Install\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.ps1)\n```\n\n## Quick Uninstall\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.ps1)\n```\n\n## Local Build & Install (From This Folder)\n\n```bash\ncd plugins/{crate_name}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n```\n\n## Run in Any Ongoing CLIBM Project\n\n```bash\nclibm plugin run {crate_name}\n```\n\n## Local Uninstall\n\n```bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n```\n"
         );
-        write_utf8_bom_file(&plugin_dir.join("README.md"), &readme)?;
+        write_utf8_file(&plugin_dir.join("README.md"), &readme)?;
 
         let ps1_helper_block = build_embedded_ps1_helper_block();
         let sh_helper_block = build_embedded_sh_helper_block();
@@ -916,7 +915,7 @@ fn main() -> Result<()> {{
 
         let install_sh = format!(
             "#!/usr/bin/env bash\n\
-# Encoding: UTF-8 with BOM (EF BB BF)\n\
+# Encoding: UTF-8 (without BOM)\n\
 set -euo pipefail\n\
 CALLER_DIR=\"$(pwd)\"\n\
 if [ -n \"${{BASH_SOURCE[0]:-}}\" ] && [ -f \"${{BASH_SOURCE[0]}}\" ]; then\n\
@@ -995,10 +994,10 @@ else\n\
 fi\n\
 echo \"Installed {crate_name} to $INSTALL_DIR/{crate_name} (hooks: $HOOK_MODE, scope: $SCOPE)\"\n"
         );
-        write_utf8_bom_file(&plugin_dir.join("install.sh"), &install_sh)?;
+        write_utf8_file(&plugin_dir.join("install.sh"), &install_sh)?;
 
         let install_ps1 = format!(
-            "# Encoding: UTF-8 with BOM (EF BB BF)\n\
+            "# Encoding: UTF-8 (without BOM)\n\
 $Hooks = \"\"\n\
 $Scope = \"\"\n\
 $InstallDir = \"\"\n\
@@ -1062,11 +1061,11 @@ if (-not $NoModifyPath) {{\n\
 }}\n\
 Write-Host \"Installed {crate_name}.exe to $InstallDir (hooks: $Hooks, scope: $Scope)\"\n"
         );
-        write_utf8_bom_file(&plugin_dir.join("install.ps1"), &install_ps1)?;
+        write_utf8_file(&plugin_dir.join("install.ps1"), &install_ps1)?;
 
         let uninstall_sh = format!(
             "#!/usr/bin/env bash\n\
-# Encoding: UTF-8 with BOM (EF BB BF)\n\
+# Encoding: UTF-8 (without BOM)\n\
 set -euo pipefail\n\
 {sh_helper_block}\n\
 OWNER_DIRS=$(clibm_path_owner_dirs \"{crate_name}\" || true)\n\
@@ -1100,10 +1099,10 @@ EOF\n\
 fi\n\
 echo \"Uninstalled {crate_name}\"\n"
         );
-        write_utf8_bom_file(&plugin_dir.join("uninstall.sh"), &uninstall_sh)?;
+        write_utf8_file(&plugin_dir.join("uninstall.sh"), &uninstall_sh)?;
 
         let uninstall_ps1 = format!(
-            "# Encoding: UTF-8 with BOM (EF BB BF)\n\
+            "# Encoding: UTF-8 (without BOM)\n\
 $ErrorActionPreference = \"Stop\"\n\
 {ps1_helper_block}\n\
 $OwnerDirs = @(Get-ClibmOwnerDirs -Owner \"{crate_name}\")\n\
@@ -1131,7 +1130,7 @@ foreach ($RDir in $RemovedPathDirs) {{\n\
 }}\n\
 Write-Host \"Uninstalled {crate_name}.exe\"\n"
         );
-        write_utf8_bom_file(&plugin_dir.join("uninstall.ps1"), &uninstall_ps1)?;
+        write_utf8_file(&plugin_dir.join("uninstall.ps1"), &uninstall_ps1)?;
 
         let manifest = PluginManifest {
             name: crate_name.clone(),

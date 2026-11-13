@@ -1,6 +1,6 @@
-﻿# ==============================================================================
-# clibm-mcp — Standalone Plugin Installer with Interactive Choices (Windows PowerShell)
-# Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
+# ==============================================================================
+# clibm-mcp -- Standalone Plugin Installer with Interactive Choices (Windows PowerShell)
+# Encoding: UTF-8 (without BOM) for Windows PowerShell compatibility
 # ==============================================================================
 # Presents interactive configuration choices to the user during installation:
 #   [1/3] Transport Mode:
@@ -48,7 +48,7 @@ function Initialize-ClibmEnvPathHelper {
 # clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
-# Encoding: UTF-8 with BOM (EF BB BF)
+# Encoding: UTF-8 (without BOM)
 # Manages user-scope PATH entries and reference-counted ownership in
 # ~/.clibm/path-ledger without touching machine/system environment variables.
 # ==============================================================================
@@ -967,8 +967,8 @@ function Unregister-ClibmPlugin {
     }
     if ($NeedsWrite) {
         New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
-        $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
-        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8Bom)
+        $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8NoBom)
     }
     return $HelperFile
 }
@@ -976,7 +976,7 @@ try { . (Initialize-ClibmEnvPathHelper) } catch { Invoke-Expression $script:Clib
 # <<< clibm-env-path (generated) <<<
 
 Write-Host "===================================================================="
-Write-Host " CLIBM-MCP v0.1.0 — Self-Hosted AI MCP Plugin Installer (UTF-8-BOM)"
+Write-Host " CLIBM-MCP v0.1.0 -- Self-Hosted AI MCP Plugin Installer (UTF-8)"
 Write-Host "===================================================================="
 
 if (-not $Transport) {
@@ -985,9 +985,9 @@ if (-not $Transport) {
     } else {
         Write-Host ""
         Write-Host "[1/3] Select MCP Transport Mode for clibm-mcp:"
-        Write-Host "  1) both  — Enable BOTH stdio JSON-RPC 2.0 and Local HTTP SSE Server [Default]"
-        Write-Host "  2) stdio — Enable ONLY stdio JSON-RPC 2.0 (Claude Desktop / Cursor / Windsurf)"
-        Write-Host "  3) http  — Enable ONLY Local HTTP + SSE Server"
+        Write-Host "  1) both  -- Enable BOTH stdio JSON-RPC 2.0 and Local HTTP SSE Server [Default]"
+        Write-Host "  2) stdio -- Enable ONLY stdio JSON-RPC 2.0 (Claude Desktop / Cursor / Windsurf)"
+        Write-Host "  3) http  -- Enable ONLY Local HTTP + SSE Server"
         $c = Read-Host "Select option [1-3, default: 1]"
         switch ($c) {
             "2" { $Transport = "stdio" }
@@ -1074,7 +1074,7 @@ $McpCfg = @{
     version   = "0.2.0"
     transport = $Transport
     http_port = $Port
-    encoding  = "UTF-8-BOM"
+    encoding = "UTF-8"
 } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $GlobalCfgDir "mcp-config.json"), $McpCfg, $Utf8BomEncoding)
 

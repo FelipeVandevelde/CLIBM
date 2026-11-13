@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
-# clibm-mcp — Standalone Plugin Installer with Interactive Choices (Linux/macOS)
-# Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
+# clibm-mcp -- Standalone Plugin Installer with Interactive Choices (Linux/macOS)
+# Encoding: UTF-8 (without BOM) for cross-platform compatibility
 # ==============================================================================
 # Presents interactive configuration choices to the user during installation:
 #   [1/3] Transport Mode:
@@ -81,8 +81,8 @@ clibm_init_env_path_helper() {
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
 # clibm-env-path-version: 5
 # ==============================================================================
-# CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
-# Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
+# CLIBM Shared User PATH Helper (Linux / macOS -- Bash 3.2+)
+# Encoding: UTF-8 (without BOM) in repository; LF-clean when sourced
 # Manages user-scope PATH marker blocks in shell profiles and reference-counted
 # ownership in ~/.clibm/path-ledger without touching system-wide profiles.
 # ==============================================================================
@@ -694,7 +694,7 @@ clibm_update_registry_file() {
   mkdir -p "$(dirname "$reg_file")"
 
   if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
-    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
+    printf '[\n  %s\n]\n' "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -706,7 +706,7 @@ clibm_update_registry_file() {
      ! printf '%s\n' "$clean_content" | grep -Fq "\"name\":\"${name}\"" 2>/dev/null; then
     local body
     body=$(printf '%s\n' "$clean_content" | sed '$d')
-    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+    printf '%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -751,7 +751,7 @@ clibm_update_registry_file() {
   ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-  printf '\xEF\xBB\xBF' > "$reg_file"
+  printf '' > "$reg_file"
   cat "$tmp_file" >> "$reg_file"
   rm -f "$tmp_file"
 }
@@ -893,7 +893,7 @@ ${extra_d%/}/registry.json"
     ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-    printf '\xEF\xBB\xBF' > "$rfile"
+    printf '' > "$rfile"
     cat "$tmp_file" >> "$rfile"
     rm -f "$tmp_file"
     echo "==> Removed ${name} from plugin registry: ${rfile}"
@@ -910,7 +910,7 @@ clibm_init_env_path_helper
 # <<< clibm-env-path (generated) <<<
 
 echo "===================================================================="
-echo " CLIBM-MCP v0.1.0 — Self-Hosted AI MCP Plugin Installer (UTF-8-BOM)"
+echo " CLIBM-MCP v0.1.0 -- Self-Hosted AI MCP Plugin Installer (UTF-8)"
 echo "===================================================================="
 
 if [ -z "$TRANSPORT" ]; then
@@ -919,9 +919,9 @@ if [ -z "$TRANSPORT" ]; then
   else
     echo ""
     echo "[1/3] Select MCP Transport Mode for clibm-mcp:"
-    echo "  1) both  — Enable BOTH stdio JSON-RPC 2.0 and Local HTTP SSE Server [Default]"
-    echo "  2) stdio — Enable ONLY stdio JSON-RPC 2.0 (Claude Desktop / Cursor / Windsurf)"
-    echo "  3) http  — Enable ONLY Local HTTP + SSE Server"
+    echo "  1) both  -- Enable BOTH stdio JSON-RPC 2.0 and Local HTTP SSE Server [Default]"
+    echo "  2) stdio -- Enable ONLY stdio JSON-RPC 2.0 (Claude Desktop / Cursor / Windsurf)"
+    echo "  3) http  -- Enable ONLY Local HTTP + SSE Server"
     clibm_prompt "Select option [1-3, default: 1]: " choice_tr
     case "${choice_tr:-1}" in
       2|stdio) TRANSPORT="stdio" ;;
@@ -994,7 +994,7 @@ clibm_build_and_stage \
   "src/transport/stdio.rs" \
   "src/transport/http.rs"
 
-printf '\xEF\xBB\xBF{\n  "plugin": "clibm-mcp",\n  "version": "0.2.0",\n  "transport": "%s",\n  "http_port": %s,\n  "encoding": "UTF-8-BOM"\n}\n' \
+printf '{\n  "plugin": "clibm-mcp",\n  "version": "0.2.0",\n  "transport": "%s",\n  "http_port": %s,\n  "encoding": "UTF-8"\n}\n' \
   "$TRANSPORT" "$PORT" > "${HOME}/.clibm/mcp-config.json"
 
 case "$TRANSPORT" in

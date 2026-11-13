@@ -1,6 +1,6 @@
-﻿# ==============================================================================
-# CLIBM v0.1.0 — Cross-Platform Uninstallation Script (Windows PowerShell)
-# Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
+# ==============================================================================
+# CLIBM v0.1.0 -- Cross-Platform Uninstallation Script (Windows PowerShell)
+# Encoding: UTF-8 (without BOM) for Windows PowerShell compatibility
 # ==============================================================================
 # Usage:
 #   .\uninstall.ps1          # Interactive choice or removes binaries (preserves .clibm data)
@@ -16,15 +16,15 @@ param (
 $ErrorActionPreference = "Stop"
 
 Write-Host "============================================================"
-Write-Host " CLIBM v0.1.0 Uninstaller (Windows PowerShell · UTF-8-BOM)"
+Write-Host " CLIBM v0.1.0 Uninstaller (Windows PowerShell - UTF-8-BOM)"
 Write-Host "============================================================"
 
 if (-not $Purge -and -not $Keep -and -not $Yes) {
     try {
         Write-Host ""
         Write-Host "Select Uninstallation Mode:"
-        Write-Host "  1) Standard Uninstall — Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
-        Write-Host "  2) Full Purge (-Purge) — Remove binaries AND delete .clibm repository data"
+        Write-Host "  1) Standard Uninstall -- Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
+        Write-Host "  2) Full Purge (-Purge) -- Remove binaries AND delete .clibm repository data"
         $u = Read-Host "Select option [1-2, default: 1]"
         if ($u -eq "2" -or $u -eq "purge") { $Purge = $true }
     } catch {
@@ -169,7 +169,7 @@ $Receipt = [ordered]@{
     uninstalled_binaries = $RemovedCount
     purged_data          = [bool]$Purge
     path_entries_removed = $RemovedPathDirs.Count
-    encoding             = "UTF-8-BOM"
+    encoding = "UTF-8"
 } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $HOME ".clibm-uninstall-receipt.json"), $Receipt, $Utf8BomEncoding)
 

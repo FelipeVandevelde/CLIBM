@@ -1,14 +1,14 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
-# clibm-docs — Standalone AI Context & DOCS Plugin Installer (Linux / macOS)
-# Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
+# clibm-docs -- Standalone AI Context & DOCS Plugin Installer (Linux / macOS)
+# Encoding: UTF-8 (without BOM) for cross-platform compatibility
 # ==============================================================================
 # Presents interactive configuration choices to the user during installation:
 #   [1/3] AI Context Document Format:
-#     1) all         — Generate AGENTS.md, CLAUDE.md, .cursorrules & .mcp.json [Default]
-#     2) agents      — Generate AGENTS.md only
-#     3) claude      — Generate CLAUDE.md only
-#     4) cursorrules — Generate .cursorrules only
+#     1) all         -- Generate AGENTS.md, CLAUDE.md, .cursorrules & .mcp.json [Default]
+#     2) agents      -- Generate AGENTS.md only
+#     3) claude      -- Generate CLAUDE.md only
+#     4) cursorrules -- Generate .cursorrules only
 #   [2/3] Auto-Sync on Init / Post-Commit Hook: true (default) or false
 #   [3/3] Installation Target Directory (default: ~/.local/bin)
 
@@ -82,8 +82,8 @@ clibm_init_env_path_helper() {
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
 # clibm-env-path-version: 5
 # ==============================================================================
-# CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
-# Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
+# CLIBM Shared User PATH Helper (Linux / macOS -- Bash 3.2+)
+# Encoding: UTF-8 (without BOM) in repository; LF-clean when sourced
 # Manages user-scope PATH marker blocks in shell profiles and reference-counted
 # ownership in ~/.clibm/path-ledger without touching system-wide profiles.
 # ==============================================================================
@@ -695,7 +695,7 @@ clibm_update_registry_file() {
   mkdir -p "$(dirname "$reg_file")"
 
   if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
-    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
+    printf '[\n  %s\n]\n' "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -707,7 +707,7 @@ clibm_update_registry_file() {
      ! printf '%s\n' "$clean_content" | grep -Fq "\"name\":\"${name}\"" 2>/dev/null; then
     local body
     body=$(printf '%s\n' "$clean_content" | sed '$d')
-    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+    printf '%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -752,7 +752,7 @@ clibm_update_registry_file() {
   ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-  printf '\xEF\xBB\xBF' > "$reg_file"
+  printf '' > "$reg_file"
   cat "$tmp_file" >> "$reg_file"
   rm -f "$tmp_file"
 }
@@ -894,7 +894,7 @@ ${extra_d%/}/registry.json"
     ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-    printf '\xEF\xBB\xBF' > "$rfile"
+    printf '' > "$rfile"
     cat "$tmp_file" >> "$rfile"
     rm -f "$tmp_file"
     echo "==> Removed ${name} from plugin registry: ${rfile}"
@@ -911,7 +911,7 @@ clibm_init_env_path_helper
 # <<< clibm-env-path (generated) <<<
 
 echo "===================================================================="
-echo " CLIBM-DOCS v0.1.0 — AI Teaching & Context Plugin Installer (UTF-8-BOM)"
+echo " CLIBM-DOCS v0.1.0 -- AI Teaching & Context Plugin Installer (UTF-8)"
 echo "===================================================================="
 
 if [ -z "$DOC_FORMAT" ]; then
@@ -920,10 +920,10 @@ if [ -z "$DOC_FORMAT" ]; then
   else
     echo ""
     echo "[1/3] Select AI Context Document Format to generate for projects:"
-    echo "  1) all         — Generate AGENTS.md, CLAUDE.md, .cursorrules & .mcp.json [Default]"
-    echo "  2) agents      — Generate AGENTS.md only"
-    echo "  3) claude      — Generate CLAUDE.md only"
-    echo "  4) cursorrules — Generate .cursorrules only"
+    echo "  1) all         -- Generate AGENTS.md, CLAUDE.md, .cursorrules & .mcp.json [Default]"
+    echo "  2) agents      -- Generate AGENTS.md only"
+    echo "  3) claude      -- Generate CLAUDE.md only"
+    echo "  4) cursorrules -- Generate .cursorrules only"
     clibm_prompt "Select option [1-4, default: 1]: " choice_fmt
     case "${choice_fmt:-1}" in
       2|agents) DOC_FORMAT="agents" ;;
@@ -940,8 +940,8 @@ if [ -z "$AUTO_SYNC" ]; then
   else
     echo ""
     echo "[2/3] Automatically refresh AI teaching files on 'clibm init' / 'post-commit'?"
-    echo "  1) Yes — Keep AI context files synchronized automatically [Default]"
-    echo "  2) No  — Only run manually via 'clibm plugin run docs'"
+    echo "  1) Yes -- Keep AI context files synchronized automatically [Default]"
+    echo "  2) No  -- Only run manually via 'clibm plugin run docs'"
     clibm_prompt "Select option [1-2, default: 1]: " choice_sync
     case "${choice_sync:-1}" in
       2|no|false) AUTO_SYNC="false" ;;
@@ -978,7 +978,7 @@ clibm_build_and_stage \
   "Cargo.toml" \
   "src/main.rs"
 
-printf '\xEF\xBB\xBF{\n  "plugin": "clibm-docs",\n  "version": "0.1.0",\n  "format": "%s",\n  "auto_sync": %s,\n  "encoding": "UTF-8-BOM"\n}\n' \
+printf '{\n  "plugin": "clibm-docs",\n  "version": "0.1.0",\n  "format": "%s",\n  "auto_sync": %s,\n  "encoding": "UTF-8"\n}\n' \
   "$DOC_FORMAT" "$AUTO_SYNC" > "${HOME}/.clibm/docs-config.json"
 
 DOCS_HOOKS="ai-docs-generator,on-init,post-commit"

@@ -1,6 +1,6 @@
-﻿# ==============================================================================
-# clibm-plugin-template — Standalone Plugin Installer (Windows PowerShell)
-# Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
+# ==============================================================================
+# clibm-plugin-template -- Standalone Plugin Installer (Windows PowerShell)
+# Encoding: UTF-8 (without BOM) for Windows PowerShell compatibility
 # ==============================================================================
 # Presents interactive configuration choices to the user during installation:
 #   [1/3] Hook Subscription Profile (default-hooks, manual-only, or all-hooks)
@@ -43,7 +43,7 @@ function Initialize-ClibmEnvPathHelper {
 # clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
-# Encoding: UTF-8 with BOM (EF BB BF)
+# Encoding: UTF-8 (without BOM)
 # Manages user-scope PATH entries and reference-counted ownership in
 # ~/.clibm/path-ledger without touching machine/system environment variables.
 # ==============================================================================
@@ -962,8 +962,8 @@ function Unregister-ClibmPlugin {
     }
     if ($NeedsWrite) {
         New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
-        $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
-        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8Bom)
+        $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8NoBom)
     }
     return $HelperFile
 }
@@ -987,7 +987,7 @@ if ([string]::IsNullOrWhiteSpace($PluginDesc)) {
 }
 
 Write-Host "===================================================================="
-Write-Host " $BinName — Standalone Plugin Installer (Windows PowerShell · UTF-8-BOM)"
+Write-Host " $BinName -- Standalone Plugin Installer (Windows PowerShell - UTF-8-BOM)"
 Write-Host "===================================================================="
 
 if (-not $Hooks) {
@@ -996,9 +996,9 @@ if (-not $Hooks) {
     } else {
         Write-Host ""
         Write-Host "[1/3] Select Contract Hook Subscription Profile for ${BinName}:"
-        Write-Host "  1) default-hooks — Subscribe to pre-commit & on-task-move [Default]"
-        Write-Host "  2) manual-only   — Run only when invoked via 'clibm plugin run $BinName'"
-        Write-Host "  3) all-hooks     — Subscribe to pre-commit, post-commit, on-task-move, on-workspace-switch, on-export"
+        Write-Host "  1) default-hooks -- Subscribe to pre-commit & on-task-move [Default]"
+        Write-Host "  2) manual-only   -- Run only when invoked via 'clibm plugin run $BinName'"
+        Write-Host "  3) all-hooks     -- Subscribe to pre-commit, post-commit, on-task-move, on-workspace-switch, on-export"
         $c = Read-Host "Select option [1-3, default: 1]"
         switch ($c) {
             "2" { $Hooks = "manual-only" }
@@ -1014,8 +1014,8 @@ if (-not $Scope) {
     } else {
         Write-Host ""
         Write-Host "[2/3] Select Plugin Registration Scope:"
-        Write-Host "  1) global       — Available across all ongoing CLIBM projects (~/.clibm/plugins) [Default]"
-        Write-Host "  2) project-only — Register only in the active local .clibm repository"
+        Write-Host "  1) global       -- Available across all ongoing CLIBM projects (~/.clibm/plugins) [Default]"
+        Write-Host "  2) project-only -- Register only in the active local .clibm repository"
         $s = Read-Host "Select option [1-2, default: 1]"
         if ($s -eq "2") { $Scope = "project-only" } else { $Scope = "global" }
     }
@@ -1058,7 +1058,7 @@ $TplCfg = @{
     hook_mode   = $Hooks
     scope       = $Scope
     install_dir = $InstallDir
-    encoding    = "UTF-8-BOM"
+    encoding = "UTF-8"
 } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $GlobalCfgDir "$BinName-config.json"), $TplCfg, $Utf8BomEncoding)
 

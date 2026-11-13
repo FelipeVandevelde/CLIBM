@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
-# CLIBM v0.1.0 — Cross-Platform Uninstallation Script (Linux / macOS)
-# Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
+# CLIBM v0.1.0 -- Cross-Platform Uninstallation Script (Linux / macOS)
+# Encoding: UTF-8 (without BOM) for cross-platform compatibility
 # ==============================================================================
 # Usage:
 #   ./uninstall.sh           # Interactive choice or removes binaries (preserves .clibm data)
@@ -28,7 +28,7 @@ for arg in "$@"; do
 done
 
 echo "============================================================"
-echo " CLIBM v0.1.0 Uninstaller (Linux / macOS · UTF-8-BOM)"
+echo " CLIBM v0.1.0 Uninstaller (Linux / macOS - UTF-8-BOM)"
 echo "============================================================"
 
 if [ -z "$PURGE" ]; then
@@ -37,8 +37,8 @@ if [ -z "$PURGE" ]; then
   elif [ -t 0 ]; then
     echo ""
     echo "Select Uninstallation Mode:"
-    echo "  1) Standard Uninstall — Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
-    echo "  2) Full Purge (--purge) — Remove binaries AND delete .clibm repository data"
+    echo "  1) Standard Uninstall -- Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
+    echo "  2) Full Purge (--purge) -- Remove binaries AND delete .clibm repository data"
     read -r -p "Select option [1-2, default: 1]: " choice_uninstall || true
     case "${choice_uninstall:-1}" in
       2|purge) PURGE="true" ;;
@@ -47,8 +47,8 @@ if [ -z "$PURGE" ]; then
   elif [ -e /dev/tty ] && [ -r /dev/tty ]; then
     echo ""
     echo "Select Uninstallation Mode:"
-    echo "  1) Standard Uninstall — Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
-    echo "  2) Full Purge (--purge) — Remove binaries AND delete .clibm repository data"
+    echo "  1) Standard Uninstall -- Remove clibm & plugin binaries, KEEP .clibm project data [Default]"
+    echo "  2) Full Purge (--purge) -- Remove binaries AND delete .clibm repository data"
     read -r -p "Select option [1-2, default: 1]: " choice_uninstall < /dev/tty || true
     case "${choice_uninstall:-1}" in
       2|purge) PURGE="true" ;;
@@ -185,7 +185,7 @@ else
 fi
 
 # Write UTF-8-BOM uninstallation receipt log
-printf '\xEF\xBB\xBF{"uninstalled_binaries":%d,"purged_data":%s,"path_entries_removed":%d,"encoding":"UTF-8-BOM"}\n' \
+printf '{"uninstalled_binaries":%d,"purged_data":%s,"path_entries_removed":%d,"encoding": "UTF-8"}\n' \
   "$REMOVED_COUNT" "$PURGE" "$PATH_REMOVED_COUNT" > "${HOME}/.clibm-uninstall-receipt.json" 2>/dev/null || true
 
 echo "============================================================"

@@ -1,6 +1,6 @@
-﻿# ==============================================================================
-# CLIBM v0.1.0 — GitHub Update Script (Windows PowerShell)
-# Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell compatibility
+# ==============================================================================
+# CLIBM v0.1.0 -- GitHub Update Script (Windows PowerShell)
+# Encoding: UTF-8 (without BOM) for Windows PowerShell compatibility
 # ==============================================================================
 # Pulls latest updates from the GitHub repository and reinstalls the core binary (and optional plugins).
 # Usage:
@@ -27,7 +27,7 @@ if (Test-Path ".clibm\config.json") {
 }
 
 Write-Host "============================================================"
-Write-Host " CLIBM GitHub Updater (Windows PowerShell · UTF-8-BOM)"
+Write-Host " CLIBM GitHub Updater (Windows PowerShell - UTF-8-BOM)"
 Write-Host " Remote : $Repo"
 Write-Host " Branch : $Branch"
 Write-Host "============================================================"

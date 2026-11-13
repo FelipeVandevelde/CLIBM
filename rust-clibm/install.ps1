@@ -1,6 +1,6 @@
-﻿# ==============================================================================
-# CLIBM v0.1.0 — Interactive Core Installer (Windows PowerShell)
-# Encoding: UTF-8 with BOM (EF BB BF) for Windows PowerShell 5.1 & 7+ compatibility
+# ==============================================================================
+# CLIBM v0.1.0 -- Interactive Core Installer (Windows PowerShell)
+# Encoding: UTF-8 (without BOM) for Windows PowerShell 5.1 & 7+ compatibility
 # Supports BOTH:
 #   - Remote / Raw GitHub Install:
 #     irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1 | iex
@@ -10,7 +10,7 @@
 # Presents interactive configuration options during installation:
 #   1. Core Mode: Pure Core (without plugins) vs. Core + Default Plugins
 #      (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)
-#   2. Language Selection: en (English), pt-BR (Português), es (Español)
+#   2. Language Selection: en (English), pt-BR (Portugues), es (Espanol)
 #   3. Automatic Per-Modification Commits: true (default) or false
 #   4. Machine Storage / Install Location: custom path (default: ~\.clibm-bin)
 #   5. User PATH Registration: add install directory to user PATH (or -NoModifyPath)
@@ -53,7 +53,7 @@ function Initialize-ClibmEnvPathHelper {
 # clibm-env-path-version: 5
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
-# Encoding: UTF-8 with BOM (EF BB BF)
+# Encoding: UTF-8 (without BOM)
 # Manages user-scope PATH entries and reference-counted ownership in
 # ~/.clibm/path-ledger without touching machine/system environment variables.
 # ==============================================================================
@@ -972,8 +972,8 @@ function Unregister-ClibmPlugin {
     }
     if ($NeedsWrite) {
         New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
-        $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
-        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8Bom)
+        $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($HelperFile, $EmbeddedContent, $Utf8NoBom)
     }
     return $HelperFile
 }
@@ -981,7 +981,7 @@ try { . (Initialize-ClibmEnvPathHelper) } catch { Invoke-Expression $script:Clib
 # <<< clibm-env-path (generated) <<<
 
 Write-Host "===================================================================="
-Write-Host " CLIBM v0.1.0 — Interactive Core Installation Wizard (UTF-8-BOM)"
+Write-Host " CLIBM v0.1.0 -- Interactive Core Installation Wizard (UTF-8)"
 Write-Host "===================================================================="
 
 if (-not $Profile) {
@@ -990,7 +990,7 @@ if (-not $Profile) {
     } else {
         Write-Host ""
         Write-Host "[1/5] Select CLIBM Core Installation Profile:"
-        Write-Host "  1) Pure Core (without plugins — 100% pure engine) [Default]"
+        Write-Host "  1) Pure Core (without plugins -- 100% pure engine) [Default]"
         Write-Host "  2) Core + Default Plugins (builds dep-audit, export-md, workflow-lint)"
         $c = Read-Host "Select option [1-2, default: 1]"
         if ($c -eq "2") { $Profile = "with-defaults" } else { $Profile = "pure" }
@@ -1004,8 +1004,8 @@ if (-not $Language) {
         Write-Host ""
         Write-Host "[2/5] Select Interface & CLI Language:"
         Write-Host "  1) English (en) [Default]"
-        Write-Host "  2) Português (pt-BR)"
-        Write-Host "  3) Español (es)"
+        Write-Host "  2) Portugues (pt-BR)"
+        Write-Host "  3) Espanol (es)"
         $l = Read-Host "Select language [1-3, default: 1]"
         switch ($l) {
             "2" { $Language = "pt-BR" }
@@ -1021,8 +1021,8 @@ if (-not $AutoCommit) {
     } else {
         Write-Host ""
         Write-Host "[3/5] Enable Automatic Per-Modification Commits (auto_commit)?"
-        Write-Host "  1) Yes — Record every change individually as a BLAKE3 commit [Default]"
-        Write-Host "  2) No  — Require manual 'clibm commit -m ...'"
+        Write-Host "  1) Yes -- Record every change individually as a BLAKE3 commit [Default]"
+        Write-Host "  2) No  -- Require manual 'clibm commit -m ...'"
         $a = Read-Host "Select option [1-2, default: 1]"
         if ($a -eq "2" -or $a -eq "false" -or $a -eq "no") { $AutoCommit = "false" } else { $AutoCommit = "true" }
     }
@@ -1091,7 +1091,7 @@ if ($ModifyPath) {
 
 Write-Host ""
 Write-Host "--------------------------------------------------------------------"
-Write-Host " Installation Summary (Encoding: UTF-8-BOM EF BB BF):"
+Write-Host " Installation Summary (Encoding: UTF-8):"
 Write-Host "   Install Mode   : $InstallMode"
 Write-Host "   Profile        : $Profile"
 Write-Host "   Language       : $Language"

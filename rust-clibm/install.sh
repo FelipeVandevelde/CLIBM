@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
-# CLIBM v0.1.0 — Interactive Core Installer (Linux / macOS)
-# Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
+# CLIBM v0.1.0 -- Interactive Core Installer (Linux / macOS)
+# Encoding: UTF-8 (without BOM) for cross-platform compatibility
 # Supports BOTH:
 #   - Remote / Raw GitHub Install:
 #     curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
@@ -11,7 +11,7 @@
 # Presents interactive configuration options during installation:
 #   1. Core Mode: Pure Core (without plugins) vs. Core + Default Plugins
 #      (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)
-#   2. Language Selection: en (English), pt-BR (Português), es (Español)
+#   2. Language Selection: en (English), pt-BR (Portugues), es (Espanol)
 #   3. Automatic Per-Modification Commits: true (default) or false
 #   4. Machine Storage / Install Location: custom path (default: ~/.local/bin)
 #   5. User PATH Registration: add install directory to user PATH (or --no-modify-path)
@@ -99,8 +99,8 @@ clibm_init_env_path_helper() {
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
 # clibm-env-path-version: 5
 # ==============================================================================
-# CLIBM Shared User PATH Helper (Linux / macOS — Bash 3.2+)
-# Encoding: UTF-8 with BOM (EF BB BF) in repository; LF-clean when sourced
+# CLIBM Shared User PATH Helper (Linux / macOS -- Bash 3.2+)
+# Encoding: UTF-8 (without BOM) in repository; LF-clean when sourced
 # Manages user-scope PATH marker blocks in shell profiles and reference-counted
 # ownership in ~/.clibm/path-ledger without touching system-wide profiles.
 # ==============================================================================
@@ -712,7 +712,7 @@ clibm_update_registry_file() {
   mkdir -p "$(dirname "$reg_file")"
 
   if [ ! -f "$reg_file" ] || ! grep -Fq "\"name\"" "$reg_file" 2>/dev/null; then
-    printf '\xEF\xBB\xBF[\n  %s\n]\n' "$new_obj" > "$reg_file"
+    printf '[\n  %s\n]\n' "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -724,7 +724,7 @@ clibm_update_registry_file() {
      ! printf '%s\n' "$clean_content" | grep -Fq "\"name\":\"${name}\"" 2>/dev/null; then
     local body
     body=$(printf '%s\n' "$clean_content" | sed '$d')
-    printf '\xEF\xBB\xBF%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
+    printf '%s,\n  %s\n]\n' "$body" "$new_obj" > "$reg_file"
     return 0
   fi
 
@@ -769,7 +769,7 @@ clibm_update_registry_file() {
   ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-  printf '\xEF\xBB\xBF' > "$reg_file"
+  printf '' > "$reg_file"
   cat "$tmp_file" >> "$reg_file"
   rm -f "$tmp_file"
 }
@@ -911,7 +911,7 @@ ${extra_d%/}/registry.json"
     ' <<EOF > "$tmp_file"
 $clean_content
 EOF
-    printf '\xEF\xBB\xBF' > "$rfile"
+    printf '' > "$rfile"
     cat "$tmp_file" >> "$rfile"
     rm -f "$tmp_file"
     echo "==> Removed ${name} from plugin registry: ${rfile}"
@@ -928,7 +928,7 @@ clibm_init_env_path_helper
 # <<< clibm-env-path (generated) <<<
 
 echo "===================================================================="
-echo " CLIBM v0.1.0 — Interactive Core Installation Wizard (UTF-8-BOM)"
+echo " CLIBM v0.1.0 -- Interactive Core Installation Wizard (UTF-8)"
 echo "===================================================================="
 
 # 1. Core Mode (Pure vs With Default Plugins)
@@ -938,7 +938,7 @@ if [ -z "$PROFILE" ]; then
   else
     echo ""
     echo "[1/5] Select CLIBM Core Installation Profile:"
-    echo "  1) Pure Core (without plugins — 100% pure engine) [Default]"
+    echo "  1) Pure Core (without plugins -- 100% pure engine) [Default]"
     echo "  2) Core + Default Plugins (builds dep-audit, export-md, workflow-lint)"
     clibm_prompt "Select option [1-2, default: 1]: " choice_profile
     case "${choice_profile:-1}" in
@@ -956,8 +956,8 @@ if [ -z "$LANGUAGE" ]; then
     echo ""
     echo "[2/5] Select Interface & CLI Language:"
     echo "  1) English (en) [Default]"
-    echo "  2) Português (pt-BR)"
-    echo "  3) Español (es)"
+    echo "  2) Portugues (pt-BR)"
+    echo "  3) Espanol (es)"
     clibm_prompt "Select language [1-3, default: 1]: " choice_lang
     case "${choice_lang:-1}" in
       2|pt|pt-BR) LANGUAGE="pt-BR" ;;
@@ -974,8 +974,8 @@ if [ -z "$AUTO_COMMIT" ]; then
   else
     echo ""
     echo "[3/5] Enable Automatic Per-Modification Commits (auto_commit)?"
-    echo "  1) Yes — Record every change individually as a BLAKE3 commit [Default]"
-    echo "  2) No  — Require manual 'clibm commit -m ...'"
+    echo "  1) Yes -- Record every change individually as a BLAKE3 commit [Default]"
+    echo "  2) No  -- Require manual 'clibm commit -m ...'"
     clibm_prompt "Select option [1-2, default: 1]: " choice_auto
     case "${choice_auto:-1}" in
       2|n|no|false) AUTO_COMMIT="false" ;;
@@ -1046,7 +1046,7 @@ fi
 
 echo ""
 echo "--------------------------------------------------------------------"
-echo " Installation Summary (Encoding: UTF-8-BOM EF BB BF):"
+echo " Installation Summary (Encoding: UTF-8):"
 echo "   Profile        : $PROFILE"
 echo "   Language       : $LANGUAGE"
 echo "   Auto-Commit    : $AUTO_COMMIT"
@@ -1054,11 +1054,11 @@ echo "   Install Path   : $INSTALL_DIR"
 echo "   User PATH      : $PATH_STATUS"
 echo "--------------------------------------------------------------------"
 
-# Persist global installation defaults in ~/.clibm/install-config.json (UTF-8-BOM)
+# Persist global installation defaults in ~/.clibm/install-config.json (UTF-8)
 GLOBAL_CFG_DIR="${HOME}/.clibm"
 mkdir -p "${GLOBAL_CFG_DIR}/plugins"
 
-printf '\xEF\xBB\xBF{\n  "install_profile": "%s",\n  "language": "%s",\n  "auto_commit": %s,\n  "install_path": "%s",\n  "path_entry_added": %s,\n  "mcp_transport": "both"\n}\n' \
+printf '{\n  "install_profile": "%s",\n  "language": "%s",\n  "auto_commit": %s,\n  "install_path": "%s",\n  "path_entry_added": %s,\n  "mcp_transport": "both"\n}\n' \
   "$PROFILE" "$LANGUAGE" "$AUTO_COMMIT" "$INSTALL_DIR" "$PATH_ENTRY_ADDED" > "${GLOBAL_CFG_DIR}/install-config.json"
 
 if [ "$PROFILE" = "with-defaults" ]; then
@@ -1088,9 +1088,9 @@ if [ "$PROFILE" = "with-defaults" ]; then
     fi
   done
 else
-  # Pure core: initialize empty plugin registry if none exists (UTF-8-BOM)
+  # Pure core: initialize empty plugin registry if none exists (UTF-8)
   if [ ! -f "${GLOBAL_CFG_DIR}/plugins/registry.json" ]; then
-    printf '\xEF\xBB\xBF[]\n' > "${GLOBAL_CFG_DIR}/plugins/registry.json"
+    printf '[]\n' > "${GLOBAL_CFG_DIR}/plugins/registry.json"
   fi
   echo "==> Pure Core active (0 pre-installed plugins)."
   echo "    Install any plugin later via its folder or raw GitHub URL."

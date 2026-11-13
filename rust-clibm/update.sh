@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
-# CLIBM v0.1.0 — GitHub Update Script (Linux / macOS)
-# Encoding: UTF-8 with BOM (EF BB BF) for cross-platform compatibility
+# CLIBM v0.1.0 -- GitHub Update Script (Linux / macOS)
+# Encoding: UTF-8 (without BOM) for cross-platform compatibility
 # ==============================================================================
 # Pulls latest updates from the GitHub repository and reinstalls the core binary (and optional plugins).
 # Usage:
@@ -42,7 +42,7 @@ if [ -f ".clibm/config.json" ] && command -v grep >/dev/null 2>&1; then
 fi
 
 echo "============================================================"
-echo " CLIBM GitHub Updater (Linux / macOS · UTF-8-BOM)"
+echo " CLIBM GitHub Updater (Linux / macOS - UTF-8-BOM)"
 echo " Remote : $REPO_URL"
 echo " Branch : $BRANCH"
 echo "============================================================"
