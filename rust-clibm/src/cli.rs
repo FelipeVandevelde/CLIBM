@@ -20,7 +20,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Initialize a new .clibm repository in the current directory (Pure Core by default)
+    /// Initialize a new .clibm repository in the current directory (Pure Core by default).
+    /// Refuses to run if the current directory already has a .clibm repository.
     Init {
         #[arg(long, default_value = "default-workspace")]
         workspace: String,
@@ -28,19 +29,22 @@ pub enum Commands {
         code: String,
         #[arg(long, default_value = "CLIBM Core Project")]
         name: String,
-        /// Install the 3 default plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint) instead of Pure Core
+        /// Register the 3 default plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint) instead of Pure Core
         #[arg(long)]
         with_defaults: bool,
-        /// Configure repository interface & AI documentation language (en, pt-BR, es)
-        #[arg(long, default_value = "en")]
-        lang: String,
-        /// Enable or disable automatic per-modification commits (true by default)
+        /// Repository interface language (en, pt-BR, es). Defaults to the installer's choice, else "en".
+        #[arg(long)]
+        lang: Option<String>,
+        /// Enable or disable automatic per-modification commits. Defaults to the installer's choice, else true.
         #[arg(long)]
         auto_commit: Option<bool>,
-        /// Specify machine installation directory where clibm binaries are stored
-        #[arg(long, default_value = "~/.local/bin")]
-        install_path: String,
+        /// Machine directory where clibm binaries are stored. Defaults to the installer's choice.
+        #[arg(long)]
+        install_path: Option<String>,
     },
+
+    /// Show the branch, HEAD commit, uncommitted changes, active workspace/project and task counts
+    Status,
 
     /// Manage workspaces, switch active workspace, and coordinate across workspaces
     Workspace {
@@ -67,11 +71,13 @@ pub enum Commands {
     },
 
     /// Create an immutable commit snapshot of the current staged tree
+    /// (does nothing when there are no uncommitted changes)
     Commit {
         #[arg(short, long)]
         message: String,
-        #[arg(short, long, default_value = "Local Maintainer")]
-        author: String,
+        /// Commit author (defaults to `author_name` in .clibm/config.json)
+        #[arg(short, long)]
+        author: Option<String>,
     },
 
     /// Show commit history log
@@ -90,6 +96,9 @@ pub enum Commands {
     Checkout {
         /// Branch name or commit hash prefix
         target: String,
+        /// Discard uncommitted changes instead of refusing
+        #[arg(long)]
+        force: bool,
     },
 
     /// Compare two commits or branches structurally
@@ -98,11 +107,18 @@ pub enum Commands {
         to_ref: String,
     },
 
-    /// Merge a branch into the current HEAD branch
+    /// Three-way merge of a branch into HEAD. Conflicts stop the merge unless --ours/--theirs is given.
     Merge {
         branch: String,
-        #[arg(short, long, default_value = "Local Maintainer")]
-        author: String,
+        /// Merge commit author (defaults to `author_name` in .clibm/config.json)
+        #[arg(short, long)]
+        author: Option<String>,
+        /// Resolve conflicts by keeping the current branch's version
+        #[arg(long, conflicts_with = "theirs")]
+        ours: bool,
+        /// Resolve conflicts by taking the merged branch's version
+        #[arg(long)]
+        theirs: bool,
     },
 
     /// Inspect a raw CAS object by its BLAKE3 hash or prefix
@@ -138,10 +154,11 @@ pub enum Commands {
     /// Uninstallation assistant: scans and displays all installed binary paths, configuration folders,
     /// and user PATH entries with copy-pasteable removal commands so the user can easily remove them.
     Uninstall {
-        /// Also delete the local .clibm repository directory in the current working directory
+        /// Also delete the .clibm repository in the current directory (never a parent folder's).
+        /// Asks for confirmation unless --yes is given.
         #[arg(long)]
         purge: bool,
-        /// Skip interactive confirmation prompt
+        /// Skip the confirmation prompt of --purge
         #[arg(short, long)]
         yes: bool,
     },
@@ -202,8 +219,10 @@ pub enum TaskCommands {
         title: String,
         #[arg(short, long, default_value = "")]
         description: String,
-        #[arg(short, long, default_value = "medium")]
-        priority: String,
+        /// low | medium | high | critical (defaults to `default_priority` in .clibm/config.json)
+        #[arg(short, long)]
+        priority: Option<String>,
+        /// Column ID or name
         #[arg(short, long, default_value = "todo")]
         column: String,
         #[arg(short, long)]
@@ -212,27 +231,69 @@ pub enum TaskCommands {
         due: Option<String>,
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+        /// Comma-separated task references (ID, number or hash prefix)
         #[arg(long, value_delimiter = ',')]
         depends_on: Vec<String>,
+        /// Ignore dependency, WIP-limit and assignee rules of the target column
+        #[arg(long)]
+        force: bool,
     },
     /// Show full details of a task
     Show {
+        /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
         id: String,
+    },
+    /// Edit task fields (use `board move` to change its column)
+    Edit {
+        /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
+        id: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(short, long)]
+        description: Option<String>,
+        #[arg(short, long)]
+        priority: Option<String>,
+        /// New assignee ("" clears it)
+        #[arg(short, long)]
+        assignee: Option<String>,
+        /// New due date ("" clears it)
+        #[arg(long)]
+        due: Option<String>,
+        /// Replace all tags (comma-separated; "" clears them)
+        #[arg(long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
+        #[arg(long, value_delimiter = ',')]
+        add_tag: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        remove_tag: Vec<String>,
+    },
+    /// Remove a task from the current state (it stays in history)
+    Delete {
+        /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
+        id: String,
+        /// Delete even if other tasks depend on it (those links are removed)
+        #[arg(long)]
+        force: bool,
     },
     /// Add a comment to a task
     Comment {
+        /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
         id: String,
         body: String,
-        #[arg(short, long, default_value = "Local Maintainer")]
-        author: String,
+        /// Comment author (defaults to `author_name` in .clibm/config.json)
+        #[arg(short, long)]
+        author: Option<String>,
     },
     /// Add a blocking dependency between tasks (supports cross-workspace dependencies)
     Depend {
+        /// Task that will be blocked (ID, number or hash prefix)
         task_id: String,
+        /// Task it depends on (ID, number or hash prefix)
         depends_on_id: String,
     },
     /// Transfer or copy a task to another workspace
     Transfer {
+        /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
         task_id: String,
         target_workspace: String,
         #[arg(long)]
@@ -240,6 +301,7 @@ pub enum TaskCommands {
     },
     /// Show individual change history of a single task across commits
     History {
+        /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
         id: String,
     },
 }
@@ -250,8 +312,11 @@ pub enum BoardCommands {
     Show,
     /// Move a task to a target column (validates dependencies & WIP limits)
     Move {
+        /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
         task_id: String,
+        /// Column ID or name
         column: String,
+        /// Ignore dependency, WIP-limit and assignee rules
         #[arg(long)]
         force: bool,
     },

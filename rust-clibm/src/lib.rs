@@ -8,6 +8,7 @@ pub mod cas;
 pub mod cli;
 pub mod engine;
 pub mod index;
+pub mod install;
 pub mod models;
 pub mod plugin;
 pub mod versioning;

@@ -8,7 +8,7 @@
 //! - References (`refs/heads/*`, `HEAD`) to identify versions and branches
 //! - Configuration management (`.clibm/config.json`) with `auto_commit = true` by default
 
-use crate::canonical::compute_object_hash;
+use crate::canonical::{compute_object_hash, normalize_value};
 use crate::models::ClibmConfig;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -37,6 +37,52 @@ pub struct FsckReport {
     pub total_objects: usize,
     pub verified_objects: usize,
     pub corrupted_hashes: Vec<String>,
+    /// Objects written by old clibm-web / clibm-tui builds, which hashed
+    /// `"type:version:payload"` instead of the canonical envelope. Their content
+    /// is intact; only the hashing scheme differs.
+    #[serde(default)]
+    pub legacy_hashes: Vec<String>,
+}
+
+/// Hash scheme used by clibm-web / clibm-tui before they moved onto `clibm_core`.
+fn legacy_plugin_hash(object_type: &str, version: &str, payload: &Value) -> Option<String> {
+    let canonical_payload = serde_json::to_string(&normalize_value(payload)).ok()?;
+    let preimage = format!("{}:{}:{}", object_type, version, canonical_payload);
+    Some(blake3::hash(preimage.as_bytes()).to_hex().to_string())
+}
+
+/// Validates a branch name before it is used as a path under `.clibm/refs/heads/`.
+/// Allows `[A-Za-z0-9._/-]`, rejects `..`, empty segments, a leading `-`, `/` or `.`,
+/// a trailing `/` or `.lock`, and the reserved name `HEAD`.
+pub fn validate_ref_name(name: &str) -> Result<()> {
+    let invalid = |reason: &str| -> Result<()> {
+        bail!("Invalid branch name '{}': {}", name, reason)
+    };
+    if name.is_empty() || name.len() > 100 {
+        return invalid("must be 1-100 characters long");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+    {
+        return invalid("only letters, digits, '.', '_', '-' and '/' are allowed");
+    }
+    if name.eq_ignore_ascii_case("HEAD") {
+        return invalid("'HEAD' is reserved");
+    }
+    if name.starts_with('-') || name.starts_with('/') || name.ends_with('/') {
+        return invalid("cannot start with '-' or '/', or end with '/'");
+    }
+    if name.contains("..") || name.contains("//") {
+        return invalid("cannot contain '..' or '//'");
+    }
+    if name.ends_with(".lock") {
+        return invalid("cannot end with '.lock'");
+    }
+    if name.split('/').any(|seg| seg.is_empty() || seg.starts_with('.')) {
+        return invalid("path segments cannot be empty or start with '.'");
+    }
+    Ok(())
 }
 
 /// Manages `.clibm/` filesystem layout cleanly across Linux and Windows.
@@ -67,6 +113,15 @@ impl CasStore {
 
         Self {
             root_dir: start.join(".clibm"),
+        }
+    }
+
+    /// Targets `<workspace_root>/.clibm` exactly, without consulting `CLIBM_PROJECT_ROOT`
+    /// or searching parent directories. Used by `clibm init` and destructive operations
+    /// that must never act on a repository discovered in an ancestor folder.
+    pub fn at_root(workspace_root: impl AsRef<Path>) -> Self {
+        Self {
+            root_dir: workspace_root.as_ref().join(".clibm"),
         }
     }
 
@@ -276,8 +331,9 @@ impl CasStore {
                 for obj_entry in fs::read_dir(shard_entry.path())? {
                     let obj_entry = obj_entry?;
                     if obj_entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
-                        let content = fs::read_to_string(obj_entry.path())?;
-                        if let Ok(obj) = serde_json::from_str::<CasObject>(&content) {
+                        let raw = fs::read_to_string(obj_entry.path())?;
+                        let content = raw.strip_prefix('\u{FEFF}').unwrap_or(&raw);
+                        if let Ok(obj) = serde_json::from_str::<CasObject>(content) {
                             results.push(obj);
                         }
                     }
@@ -293,12 +349,17 @@ impl CasStore {
         let objects = self.list_all_objects()?;
         let mut verified = 0usize;
         let mut corrupted = Vec::new();
+        let mut legacy = Vec::new();
 
         for obj in &objects {
             let (recomputed, _) =
                 compute_object_hash(&obj.object_type, &obj.version, &obj.payload)?;
             if recomputed == obj.hash {
                 verified += 1;
+            } else if legacy_plugin_hash(&obj.object_type, &obj.version, &obj.payload).as_deref()
+                == Some(obj.hash.as_str())
+            {
+                legacy.push(obj.hash.clone());
             } else {
                 corrupted.push(obj.hash.clone());
             }
@@ -308,7 +369,26 @@ impl CasStore {
             total_objects: objects.len(),
             verified_objects: verified,
             corrupted_hashes: corrupted,
+            legacy_hashes: legacy,
         })
+    }
+
+    /// Counts object files in `.clibm/objects` without parsing them.
+    pub fn count_objects(&self) -> usize {
+        let Ok(shards) = fs::read_dir(self.objects_dir()) else {
+            return 0;
+        };
+        shards
+            .flatten()
+            .filter(|s| s.path().is_dir())
+            .filter_map(|s| fs::read_dir(s.path()).ok())
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+                    .count()
+            })
+            .sum()
     }
 
     // --- Reference & Branch Management ---
@@ -338,6 +418,10 @@ impl CasStore {
     }
 
     pub fn get_branch_commit(&self, branch: &str) -> Result<Option<String>> {
+        if validate_ref_name(branch).is_err() {
+            // Never turn an arbitrary string (e.g. "../../x") into a path under refs/heads.
+            return Ok(None);
+        }
         let branch_file = self.refs_heads_dir().join(branch);
         if !branch_file.exists() {
             return Ok(None);
@@ -351,6 +435,7 @@ impl CasStore {
     }
 
     pub fn set_branch_commit(&self, branch: &str, commit_hash: &str) -> Result<()> {
+        validate_ref_name(branch)?;
         let branch_file = self.refs_heads_dir().join(branch);
         if let Some(parent) = branch_file.parent() {
             fs::create_dir_all(parent)?;
@@ -360,6 +445,7 @@ impl CasStore {
     }
 
     pub fn set_head_branch(&self, branch: &str) -> Result<()> {
+        validate_ref_name(branch)?;
         fs::write(self.head_file(), format!("ref: refs/heads/{}\n", branch))?;
         Ok(())
     }

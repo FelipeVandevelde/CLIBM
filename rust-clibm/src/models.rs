@@ -18,6 +18,47 @@ fn default_true() -> bool {
     true
 }
 
+/// First number handed out to tasks of a project (`<CODE>-101`).
+pub const FIRST_TASK_NUMBER: u64 = 101;
+
+/// Splits `"CLIBM-101"` into `("CLIBM", 101)`. Returns `None` when the part after the
+/// last `-` is not a number.
+pub fn split_entity_id(id: &str) -> Option<(&str, u64)> {
+    let (prefix, num) = id.rsplit_once('-')?;
+    num.parse::<u64>().ok().map(|n| (prefix, n))
+}
+
+/// Next free task number for `code` among `ids`: the highest existing number + 1,
+/// never below [`FIRST_TASK_NUMBER`]. Using the maximum (not the count) keeps numbers
+/// unique after deletions.
+pub fn next_task_number_in<'a, I>(ids: I, code: &str) -> u64
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    ids.into_iter()
+        .filter_map(|id| split_entity_id(id))
+        .filter(|(prefix, _)| prefix.eq_ignore_ascii_case(code))
+        .map(|(_, n)| n + 1)
+        .max()
+        .unwrap_or(FIRST_TASK_NUMBER)
+        .max(FIRST_TASK_NUMBER)
+}
+
+/// Next free `PREFIX-NN` id (e.g. `WS-03`) among `ids`.
+pub fn next_entity_id<'a, I>(ids: I, prefix: &str) -> String
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    let next = ids
+        .into_iter()
+        .filter_map(|id| split_entity_id(id))
+        .filter(|(p, _)| p.eq_ignore_ascii_case(prefix))
+        .map(|(_, n)| n + 1)
+        .max()
+        .unwrap_or(1);
+    format!("{}-{:02}", prefix, next)
+}
+
 fn default_author_name() -> String {
     "Local Maintainer".to_string()
 }
@@ -231,11 +272,39 @@ pub struct TreeSnapshotPayload {
     pub projects: BTreeMap<String, String>,
     pub boards: BTreeMap<String, String>,
     pub tasks: BTreeMap<String, String>,
+    /// Highest task number issued per project code (upper-case), so a deleted task's
+    /// number is never handed out again. Omitted while empty, which keeps the hashes of
+    /// trees written before this field existed unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub task_counters: BTreeMap<String, u64>,
+}
+
+impl TreeSnapshotPayload {
+    /// Next free task number for `code`: above both the existing task IDs and the
+    /// highest number ever issued in this tree.
+    pub fn next_task_number(&self, code: &str) -> u64 {
+        let issued = self
+            .task_counters
+            .get(&code.to_uppercase())
+            .map(|n| n + 1)
+            .unwrap_or(FIRST_TASK_NUMBER);
+        next_task_number_in(self.tasks.keys(), code).max(issued)
+    }
+
+    /// Records that `number` was issued for `code`.
+    pub fn record_task_number(&mut self, code: &str, number: u64) {
+        let entry = self.task_counters.entry(code.to_uppercase()).or_insert(0);
+        if number > *entry {
+            *entry = number;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitPayload {
     pub tree_hash: String,
+    /// `parents` is accepted for commits written by old clibm-web / clibm-tui builds.
+    #[serde(alias = "parents")]
     pub parent_hashes: Vec<String>,
     pub author: String,
     pub timestamp: String,
@@ -269,4 +338,43 @@ pub struct TaskHistoryEntry {
     pub commit_message: String,
     pub task_object_hash: String,
     pub task_snapshot: TaskPayload,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_entity_id_parses_last_dash() {
+        assert_eq!(split_entity_id("APP-101"), Some(("APP", 101)));
+        assert_eq!(split_entity_id("MY-APP-7"), Some(("MY-APP", 7)));
+        assert_eq!(split_entity_id("APP"), None);
+        assert_eq!(split_entity_id("APP-x"), None);
+    }
+
+    #[test]
+    fn next_numbers_use_max_not_count() {
+        let ids: Vec<String> = ["APP-101", "APP-105", "WEB-300"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(next_task_number_in(ids.iter(), "app"), 106);
+        assert_eq!(next_task_number_in(ids.iter(), "WEB"), 301);
+        assert_eq!(next_task_number_in(ids.iter(), "NEW"), FIRST_TASK_NUMBER);
+        let ws: Vec<String> = ["WS-01", "WS-04"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(next_entity_id(ws.iter(), "WS"), "WS-05");
+    }
+
+    #[test]
+    fn task_counter_prevents_number_reuse() {
+        let mut tree = TreeSnapshotPayload::default();
+        tree.tasks.insert("APP-101".into(), "h1".into());
+        assert_eq!(tree.next_task_number("APP"), 102);
+        tree.record_task_number("APP", 102);
+        assert_eq!(tree.next_task_number("app"), 103);
+    }
+
+    #[test]
+    fn empty_task_counters_keep_old_tree_hashes() {
+        let tree = TreeSnapshotPayload::default();
+        let json = serde_json::to_value(&tree).unwrap();
+        assert!(json.get("task_counters").is_none());
+    }
 }
