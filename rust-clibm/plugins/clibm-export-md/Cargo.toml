@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Standalone Markdown sprint report exporter plugin for CLIBM"
 authors = ["CLIBM Systems Engineering"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [[bin]]
 name = "clibm-export-md"

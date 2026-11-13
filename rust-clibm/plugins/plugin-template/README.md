@@ -1,6 +1,54 @@
-# CLIBM Plugin Starter Template (`clibm-plugin-template`)
+# clibm-plugin-template — starter for your own plugin
 
-Official starter template for creating standalone **CLIBM v0.1.0** plugins in Rust.
+A minimal, dependency-light CLIBM plugin that shows the whole plugin contract. Copy it, or
+generate a new plugin with `clibm plugin new`.
+
+## How CLIBM talks to a plugin
+
+1. **Registration.** The installer runs `<plugin> --manifest --executable <path> [--hooks a,b]`
+   and stores the printed JSON line in `~/.clibm/plugins/registry.json`:
+
+   ```json
+   {"name":"clibm-plugin-template","version":"0.1.0","description":"...","enabled":true,"hooks":["manual-run"],"executable":"/home/me/.local/bin/clibm-plugin-template","tools":[]}
+   ```
+
+   `tools` may declare MCP tools (see the `clibm-mcp` README).
+
+2. **Calls.** `clibm plugin run <plugin> [-- args]` and lifecycle hooks start the binary with
+   `CLIBM_PROJECT_ROOT` set and send one request on stdin:
+
+   ```json
+   {"contract":"CLIBM_PLUGIN_CONTRACT_V1","event":"pre-move","tree_hash":"…","args":[],
+    "context":{"task_id":"APP-101","board_id":"BRD-01","from":"todo","to":"in-progress","force":false}}
+   ```
+
+   The plugin answers on stdout:
+
+   ```json
+   {"ok": true, "output": "..."}
+   ```
+
+3. **Hooks.** Events: `pre-commit`, `post-commit`, `pre-move`, `on-task-move`,
+   `on-task-depend`, `on-workspace-switch`, `on-export`. Answering `ok: false` to a `pre-*`
+   event **blocks** the action (the user sees your `output`); other events are informational.
+   Each call has a time limit (`hook_timeout_secs`, default 10). Users can skip hooks with
+   `clibm --no-hooks` or disable a plugin per project with `clibm plugin disable <name>`.
+
+Rust plugins that use the core library can rely on `clibm_core::plugin_sdk::PluginRun`,
+which reads the request and writes the reply for you.
+
+## Demo switches
+
+To see a veto in action without writing code:
+
+```bash
+cd plugins/plugin-template
+./install.sh -y --hooks pre-move,post-commit   # PowerShell: .\install.ps1 -Yes -Hooks pre-move,post-commit
+cd ~/my-project
+export CLIBM_TEMPLATE_DENY=pre-move            # PowerShell: $env:CLIBM_TEMPLATE_DENY = "pre-move"
+clibm board move 101 in-progress               # -> Blocked by plugin 'clibm-plugin-template'
+export CLIBM_TEMPLATE_LOG=/tmp/events.log      # appends every received event to that file
+```
 
 ## Quick Install
 
@@ -26,72 +74,16 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/uninstall.ps1)
 ```
 
----
+Or `clibm plugin uninstall template`.
 
-## Key Capabilities
-
-1. **Folder-Scoped Standalone Compilation**: Compiles strictly from within its own plugin folder without modifying the core `clibm` Cargo manifest.
-2. **Ongoing-Project Execution**: Reads `.clibm/HEAD`, `.clibm/config.json`, and `.clibm/objects/` from the active project directory (`CLIBM_PROJECT_ROOT` or current working directory).
-3. **`CLIBM_PLUGIN_CONTRACT_V1` Protocol**: Parses JSON invocation payloads over `stdin` and emits structured JSON responses over `stdout`.
-
-## Quick Start: Creating a New Plugin
-
-### Option A: Using the CLI Generator (Recommended)
-
-From any initialized CLIBM project directory:
+## Creating your own plugin
 
 ```bash
-clibm plugin new my-custom-plugin --hooks pre-commit,on-task-move
-cd plugins/clibm-my-custom-plugin
-./install.sh
+cd ~/my-project
+clibm plugin new sprint-velocity --description "Tracks velocity" --hooks post-commit,on-task-move
+cd plugins/clibm-sprint-velocity
+./install.sh            # or .\install.ps1
+clibm plugin run sprint-velocity
 ```
 
-### Option B: Copying `plugins/plugin-template` Manually
-
-```bash
-cp -r plugins/plugin-template plugins/clibm-my-plugin
-cd plugins/clibm-my-plugin
-# Edit Cargo.toml and src/main.rs
-./install.sh
-```
-
-### Option C: Direct Install from GitHub Raw Script
-
-```powershell
-# Windows PowerShell:
-irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.ps1 | iex
-```
-
-```bash
-# Linux / macOS:
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/install.sh | bash
-```
-
-## Running Your Plugin in an Ongoing Project
-
-Once installed via `./install.sh` (or `.\install.ps1` on Windows) or `clibm plugin install .`, run your plugin inside any CLIBM project:
-
-```bash
-clibm plugin run clibm-plugin-template
-# or invoke the installed binary directly:
-clibm-plugin-template
-```
-
-## Uninstalling the Plugin
-
-### Quick Uninstall One-Liner (Remote):
-```powershell
-# Windows PowerShell:
-iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/uninstall.ps1)
-```
-```bash
-# Linux / macOS:
-curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/plugin-template/uninstall.sh | bash
-```
-
-### From Local Plugin Folder:
-```bash
-./uninstall.sh
-# Or on Windows PowerShell:
-.\uninstall.ps1
-```
+The generated crate already supports `--manifest` and the stdin contract.

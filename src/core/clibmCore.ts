@@ -556,7 +556,7 @@ export function createSeededRepository(options?: {
     ],
     metadata: {
       crate_edition: '2021',
-      license: 'Apache-2.0',
+      license: 'MIT',
       min_rustc: '1.75.0',
     },
     board_ids: ['BRD-01'],

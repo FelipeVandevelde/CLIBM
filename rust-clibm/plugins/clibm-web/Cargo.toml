@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["CLIBM Contributors"]
 description = "Standalone single-binary local HTTP server plugin serving an embedded Web UI for ongoing CLIBM projects"
-license = "Apache-2.0"
+license = "MIT"
 readme = "README.md"
 
 [[bin]]

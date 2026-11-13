@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Official starter template for building standalone CLIBM plugins in Rust"
 authors = ["CLIBM Systems Engineering"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [[bin]]
 name = "clibm-plugin-template"

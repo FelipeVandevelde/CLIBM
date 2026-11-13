@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["CLIBM Contributors"]
 description = "Lightweight, local-first CLI project management system with BLAKE3 Content-Addressable Storage and Git-style versioning"
-license = "Apache-2.0"
+license = "MIT"
 readme = "README.md"
 
 [[bin]]

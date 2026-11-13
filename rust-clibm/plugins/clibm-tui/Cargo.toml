@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["CLIBM Contributors"]
 description = "Standalone Ratatui & Crossterm Terminal User Interface (TUI) plugin for ongoing CLIBM projects"
-license = "Apache-2.0"
+license = "MIT"
 readme = "README.md"
 
 [[bin]]

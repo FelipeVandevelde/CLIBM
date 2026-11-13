@@ -1,6 +1,6 @@
 {
-  "name": "CLIBM — Rust CLI Project Manager & CAS Engine",
-  "description": "Local-first, modular CLI project management system in Rust with BLAKE3 Content-Addressable Storage, Git-style versioning, Kanban workflows, and downloadable Cargo workspace.",
+  "name": "CLIBM — Local-first CLI Project Manager",
+  "description": "Web workbench and in-browser simulator for CLIBM, a local-first Rust CLI project manager with BLAKE3 content-addressed storage, Git-style versioning, Kanban workflows and an MCP server for AI agents.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

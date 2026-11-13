@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 description = "Self-hosted Model Context Protocol (MCP) server plugin for AI agents with modular STDIO and HTTP transports"
 authors = ["CLIBM Systems Engineering"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [[bin]]
 name = "clibm-mcp"
