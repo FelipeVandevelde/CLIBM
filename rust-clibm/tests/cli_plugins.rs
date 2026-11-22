@@ -104,6 +104,40 @@ fn enable_disable_is_a_project_override() {
 }
 
 #[test]
+fn short_names_resolve_to_installed_clibm_prefixed_plugins() {
+    let p = TempProject::new("shortname");
+    p.init();
+    let exe = fake_binary(&p.home.join(".clibm-bin"), "clibm-sprint-velocity");
+    write_json(&global_registry(&p), serde_json::json!([entry("clibm-sprint-velocity", &exe)]));
+
+    // `clibm plugin new sprint-velocity` creates `clibm-sprint-velocity`; the short name works too.
+    p.ok(&["plugin", "disable", "sprint-velocity"]);
+    assert_eq!(p.json(&["plugin", "list"])[0]["enabled"], false);
+    p.ok(&["plugin", "enable", "sprint-velocity"]);
+    let report = p.json(&["plugin", "uninstall", "sprint-velocity"]);
+    assert_eq!(report["name"], "clibm-sprint-velocity");
+    assert!(!exe.exists(), "binary still present");
+}
+
+#[test]
+fn plugin_new_scaffolds_a_standalone_crate_with_all_lifecycle_scripts() {
+    let p = TempProject::new("scaffold");
+    p.init();
+    let out = p.ok(&["plugin", "new", "sprint-velocity", "--hooks", "post-commit"]);
+    let dir = p.dir.join("plugins").join("clibm-sprint-velocity");
+    for f in ["Cargo.toml", "src/main.rs", "README.md", "install.sh", "install.ps1", "uninstall.sh", "uninstall.ps1"] {
+        assert!(dir.join(f).is_file(), "missing {}", f);
+        assert!(out.contains(f.rsplit('/').next().unwrap()), "{} not listed in: {}", f, out);
+    }
+    let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+    assert!(cargo.contains("\n[workspace]\n"), "{}", cargo);
+    let readme = std::fs::read_to_string(dir.join("README.md")).unwrap();
+    // The plugin is not in the official repository, so no raw.githubusercontent one-liners.
+    assert!(!readme.contains("raw.githubusercontent.com"), "{}", readme);
+    assert!(readme.contains("clibm plugin run clibm-sprint-velocity"), "{}", readme);
+}
+
+#[test]
 fn plugin_uninstall_removes_binary_and_registry_entries() {
     let p = TempProject::new("uninstall");
     p.init();

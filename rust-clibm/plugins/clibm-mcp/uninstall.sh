@@ -20,7 +20,7 @@ clibm_init_env_path_helper() {
   local home_dir="${CLIBM_HOME:-${HOME}}"
   local lib_dir="${home_dir%/}/.clibm/lib"
   local helper_file="${lib_dir}/env-path.sh"
-  local embedded_version=6
+  local embedded_version=7
   local needs_write=1
   local bom=$'\xef\xbb\xbf'
   if [ -f "$helper_file" ]; then
@@ -35,7 +35,7 @@ clibm_init_env_path_helper() {
   if [ "$needs_write" -eq 1 ]; then
     mkdir -p "$lib_dir"
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
-# clibm-env-path-version: 6
+# clibm-env-path-version: 7
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Linux / macOS -- Bash 3.2+)
 # Encoding: UTF-8 (without BOM) in repository; LF-clean when sourced
@@ -173,8 +173,14 @@ clibm_remove_dir_from_session_path() {
   export PATH="$new_path"
 }
 
+# Home folder used for CLIBM state (~/.clibm): CLIBM_HOME, then HOME (same as the CLI).
+clibm_home_dir() {
+  local h="${CLIBM_HOME:-${HOME}}"
+  printf '%s\n' "${h%/}"
+}
+
 clibm_ledger_file() {
-  printf '%s\n' "${HOME}/.clibm/path-ledger"
+  printf '%s\n' "$(clibm_home_dir)/.clibm/path-ledger"
 }
 
 clibm_read_ledger() {
@@ -429,14 +435,16 @@ EOF
 
 clibm_core_installed() {
   local extra_dir="${1:-}"
-  if [ -f "${HOME}/.clibm/install-config.json" ]; then
+  local home_dir
+  home_dir=$(clibm_home_dir)
+  if [ -f "${home_dir}/.clibm/install-config.json" ]; then
     return 0
   fi
   if command -v clibm >/dev/null 2>&1; then
     return 0
   fi
   local d
-  for d in "$extra_dir" "${HOME}/.local/bin" "${HOME}/.clibm-bin" "${HOME}/.cargo/bin"; do
+  for d in "$extra_dir" "${home_dir}/.local/bin" "${home_dir}/.clibm-bin" "${home_dir}/.cargo/bin"; do
     if [ -n "$d" ] && [ -x "${d}/clibm" ]; then
       return 0
     fi
@@ -976,6 +984,43 @@ $CLIBM_REMOVED_PATH_DIRS
 EOF
   fi
 }
+
+# Prints the executable path of every plugin in the global registry.
+clibm_registry_executables() {
+  local line exe
+  clibm_registry_lines "$(clibm_global_registry_file)" | while IFS= read -r line; do
+    exe=$(clibm_json_string_field "$line" "executable")
+    if [ -n "$exe" ]; then
+      printf '%s\n' "$exe"
+    fi
+  done
+}
+
+# Deletes CLIBM's machine-level state in ~/.clibm: install record, global plugin registry,
+# PATH ledger, plugin settings and the shared helpers. Project data is never touched: the
+# folder itself is only removed when it is empty afterwards (it may also be a project's
+# repository when CLIBM was initialized in the home folder). Sets CLIBM_REMOVED_STATE.
+clibm_remove_global_state() {
+  local gdir f
+  gdir="$(clibm_home_dir)/.clibm"
+  CLIBM_REMOVED_STATE=""
+  if [ ! -d "$gdir" ]; then
+    return 0
+  fi
+  for f in "${gdir}/install-config.json" "${gdir}/path-ledger" "${gdir}/plugins/registry.json" \
+           "${gdir}/mcp-config.json" "${gdir}"/clibm-*-config.json; do
+    if [ -f "$f" ]; then
+      rm -f "$f"
+      CLIBM_REMOVED_STATE="${CLIBM_REMOVED_STATE}${f}"$'\n'
+    fi
+  done
+  if [ -d "${gdir}/lib" ]; then
+    rm -rf "${gdir}/lib"
+    CLIBM_REMOVED_STATE="${CLIBM_REMOVED_STATE}${gdir}/lib"$'\n'
+  fi
+  rmdir "${gdir}/plugins" 2>/dev/null || true
+  rmdir "$gdir" 2>/dev/null || true
+}
 CLIBM_ENV_PATH_EOF
   fi
   # shellcheck disable=SC1090
@@ -1005,8 +1050,9 @@ fi
 
 clibm_uninstall_plugin "clibm-mcp"
 
-if [ "$PURGE" = "true" ] && [ -f "${HOME}/.clibm/mcp-config.json" ]; then
-  rm -f "${HOME}/.clibm/mcp-config.json"
-  echo "==> Purged ~/.clibm/mcp-config.json"
+MCP_CFG_FILE="$(clibm_home_dir)/.clibm/mcp-config.json"
+if [ "$PURGE" = "true" ] && [ -f "$MCP_CFG_FILE" ]; then
+  rm -f "$MCP_CFG_FILE"
+  echo "==> Purged ${MCP_CFG_FILE}"
 fi
 echo "==> clibm-mcp uninstallation complete."

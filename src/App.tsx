@@ -130,8 +130,8 @@ export default function App() {
             ...prev,
             {
               id: String(Date.now()),
-              command: `clibm import ${file.name}`,
-              output: `Imported ${Object.keys(parsed.objects).length} BLAKE3 CAS objects from ${file.name}.`,
+              command: `[simulator] load bundle ${file.name}`,
+              output: `Imported ${Object.keys(parsed.objects).length} BLAKE3 CAS objects from ${file.name}. (Simulator-only: the native clibm CLI has no import command.)`,
               status: 'ok',
               timestamp: new Date().toISOString(),
             },
@@ -142,7 +142,7 @@ export default function App() {
           ...prev,
           {
             id: String(Date.now()),
-            command: `clibm import ${file.name}`,
+            command: `[simulator] load bundle ${file.name}`,
             output: `Failed to parse repository bundle: ${
               err instanceof Error ? err.message : String(err)
             }`,
@@ -394,7 +394,7 @@ export default function App() {
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="px-2.5 py-1 text-xs font-mono text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              title="Import .clibm CAS repository JSON bundle"
+              title="Load a bundle saved by Export CAS Bundle (simulator-only: the native clibm CLI has no import command)"
             >
               <Upload className="w-3.5 h-3.5" />
               <span>Import Bundle</span>

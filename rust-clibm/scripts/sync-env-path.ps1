@@ -169,7 +169,9 @@ $BlockRegex = [regex]::new(
 
 $TargetFiles = @(
     (Join-Path $RustRoot 'install.ps1'),
-    (Join-Path $RustRoot 'install.sh')
+    (Join-Path $RustRoot 'install.sh'),
+    (Join-Path $RustRoot 'uninstall.ps1'),
+    (Join-Path $RustRoot 'uninstall.sh')
 )
 foreach ($PDir in $PluginDirs) {
     foreach ($ScriptName in @('install.ps1', 'uninstall.ps1', 'install.sh', 'uninstall.sh')) {

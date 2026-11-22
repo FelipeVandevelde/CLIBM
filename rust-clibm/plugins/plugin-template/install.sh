@@ -11,16 +11,21 @@
 set -euo pipefail
 
 CALLER_DIR="$(pwd)"
+RUN_FROM_FILE=false
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   cd "$SCRIPT_DIR"
+  RUN_FROM_FILE=true
 else
   SCRIPT_DIR="$CALLER_DIR"
 fi
 
+# The plugin's name comes from the Cargo.toml next to this script (a copy of the template or
+# a plugin made with `clibm plugin new`). When piped from GitHub there is no such file, and
+# the Cargo.toml of whatever folder the user is in must not be mistaken for the plugin's.
 BIN_NAME="clibm-plugin-template"
 PLUGIN_DESC=""
-if [ -f "${SCRIPT_DIR}/Cargo.toml" ]; then
+if [ "$RUN_FROM_FILE" = true ] && [ -f "${SCRIPT_DIR}/Cargo.toml" ]; then
   PARSED_BIN=$(grep -E '^[[:space:]]*name[[:space:]]*=' "${SCRIPT_DIR}/Cargo.toml" | head -n1 | sed 's/.*=[[:space:]]*"\([^"]*\)".*/\1/' || true)
   if [ -n "$PARSED_BIN" ] && [ "$PARSED_BIN" != "clibm" ]; then
     BIN_NAME="$PARSED_BIN"
@@ -75,7 +80,7 @@ clibm_init_env_path_helper() {
   local home_dir="${CLIBM_HOME:-${HOME}}"
   local lib_dir="${home_dir%/}/.clibm/lib"
   local helper_file="${lib_dir}/env-path.sh"
-  local embedded_version=6
+  local embedded_version=7
   local needs_write=1
   local bom=$'\xef\xbb\xbf'
   if [ -f "$helper_file" ]; then
@@ -90,7 +95,7 @@ clibm_init_env_path_helper() {
   if [ "$needs_write" -eq 1 ]; then
     mkdir -p "$lib_dir"
     cat <<'CLIBM_ENV_PATH_EOF' | tr -d '\r' > "$helper_file"
-# clibm-env-path-version: 6
+# clibm-env-path-version: 7
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Linux / macOS -- Bash 3.2+)
 # Encoding: UTF-8 (without BOM) in repository; LF-clean when sourced
@@ -228,8 +233,14 @@ clibm_remove_dir_from_session_path() {
   export PATH="$new_path"
 }
 
+# Home folder used for CLIBM state (~/.clibm): CLIBM_HOME, then HOME (same as the CLI).
+clibm_home_dir() {
+  local h="${CLIBM_HOME:-${HOME}}"
+  printf '%s\n' "${h%/}"
+}
+
 clibm_ledger_file() {
-  printf '%s\n' "${HOME}/.clibm/path-ledger"
+  printf '%s\n' "$(clibm_home_dir)/.clibm/path-ledger"
 }
 
 clibm_read_ledger() {
@@ -484,14 +495,16 @@ EOF
 
 clibm_core_installed() {
   local extra_dir="${1:-}"
-  if [ -f "${HOME}/.clibm/install-config.json" ]; then
+  local home_dir
+  home_dir=$(clibm_home_dir)
+  if [ -f "${home_dir}/.clibm/install-config.json" ]; then
     return 0
   fi
   if command -v clibm >/dev/null 2>&1; then
     return 0
   fi
   local d
-  for d in "$extra_dir" "${HOME}/.local/bin" "${HOME}/.clibm-bin" "${HOME}/.cargo/bin"; do
+  for d in "$extra_dir" "${home_dir}/.local/bin" "${home_dir}/.clibm-bin" "${home_dir}/.cargo/bin"; do
     if [ -n "$d" ] && [ -x "${d}/clibm" ]; then
       return 0
     fi
@@ -1031,6 +1044,43 @@ $CLIBM_REMOVED_PATH_DIRS
 EOF
   fi
 }
+
+# Prints the executable path of every plugin in the global registry.
+clibm_registry_executables() {
+  local line exe
+  clibm_registry_lines "$(clibm_global_registry_file)" | while IFS= read -r line; do
+    exe=$(clibm_json_string_field "$line" "executable")
+    if [ -n "$exe" ]; then
+      printf '%s\n' "$exe"
+    fi
+  done
+}
+
+# Deletes CLIBM's machine-level state in ~/.clibm: install record, global plugin registry,
+# PATH ledger, plugin settings and the shared helpers. Project data is never touched: the
+# folder itself is only removed when it is empty afterwards (it may also be a project's
+# repository when CLIBM was initialized in the home folder). Sets CLIBM_REMOVED_STATE.
+clibm_remove_global_state() {
+  local gdir f
+  gdir="$(clibm_home_dir)/.clibm"
+  CLIBM_REMOVED_STATE=""
+  if [ ! -d "$gdir" ]; then
+    return 0
+  fi
+  for f in "${gdir}/install-config.json" "${gdir}/path-ledger" "${gdir}/plugins/registry.json" \
+           "${gdir}/mcp-config.json" "${gdir}"/clibm-*-config.json; do
+    if [ -f "$f" ]; then
+      rm -f "$f"
+      CLIBM_REMOVED_STATE="${CLIBM_REMOVED_STATE}${f}"$'\n'
+    fi
+  done
+  if [ -d "${gdir}/lib" ]; then
+    rm -rf "${gdir}/lib"
+    CLIBM_REMOVED_STATE="${CLIBM_REMOVED_STATE}${gdir}/lib"$'\n'
+  fi
+  rmdir "${gdir}/plugins" 2>/dev/null || true
+  rmdir "$gdir" 2>/dev/null || true
+}
 CLIBM_ENV_PATH_EOF
   fi
   # shellcheck disable=SC1090
@@ -1051,7 +1101,7 @@ if [ -z "$HOOK_MODE" ]; then
     echo "[1/3] Select Contract Hook Subscription Profile for ${BIN_NAME}:"
     echo "  1) default-hooks -- Subscribe to pre-commit & on-task-move [Default]"
     echo "  2) manual-only   -- Run only when invoked via 'clibm plugin run ${BIN_NAME}'"
-    echo "  3) all-hooks     -- Subscribe to pre-commit, post-commit, on-task-move, on-workspace-switch, on-export"
+    echo "  3) all-hooks     -- Subscribe to every lifecycle event (pre-commit, post-commit, pre-move, on-task-move, on-task-depend, on-workspace-switch, on-export)"
     clibm_prompt "Select option [1-3, default: 1]: " choice_hk
     case "${choice_hk:-1}" in
       2|manual|manual-only) HOOK_MODE="manual-only" ;;
@@ -1094,7 +1144,8 @@ if ! clibm_core_installed "$INSTALL_DIR"; then
 fi
 
 mkdir -p "$INSTALL_DIR"
-mkdir -p "${HOME}/.clibm"
+TPL_CFG_DIR="$(clibm_home_dir)/.clibm"
+mkdir -p "$TPL_CFG_DIR"
 
 REMOTE_SUBPATH="plugins/${BIN_NAME}"
 if [ "$BIN_NAME" = "clibm-plugin-template" ]; then
@@ -1111,7 +1162,7 @@ clibm_build_and_stage \
   "src/main.rs"
 
 printf '{\n  "plugin": "%s",\n  "hook_mode": "%s",\n  "scope": "%s",\n  "install_dir": "%s",\n  "encoding": "UTF-8"\n}\n' \
-  "$BIN_NAME" "$HOOK_MODE" "$SCOPE" "$INSTALL_DIR" > "${HOME}/.clibm/${BIN_NAME}-config.json"
+  "$BIN_NAME" "$HOOK_MODE" "$SCOPE" "$INSTALL_DIR" > "${TPL_CFG_DIR}/${BIN_NAME}-config.json"
 
 case "$HOOK_MODE" in
   manual-only)   TPL_HOOKS="manual-run" ;;

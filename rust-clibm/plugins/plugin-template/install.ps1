@@ -38,9 +38,9 @@ function Initialize-ClibmEnvPathHelper {
     $HomeDir = if ($env:CLIBM_HOME) { $env:CLIBM_HOME } elseif ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
     $LibDir = Join-Path $HomeDir '.clibm\lib'
     $HelperFile = Join-Path $LibDir 'env-path.ps1'
-    $EmbeddedVersion = 6
+    $EmbeddedVersion = 7
     $EmbeddedContent = @'
-# clibm-env-path-version: 6
+# clibm-env-path-version: 7
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
 # Encoding: UTF-8 (without BOM)
@@ -981,6 +981,49 @@ function Uninstall-ClibmPlugin {
     }
     return (-not $Failed)
 }
+
+# Executable paths of every plugin in the global registry.
+function Get-ClibmRegistryExecutables {
+    $Result = @()
+    foreach ($E in @(Read-ClibmRegistryEntries -RegFile (Get-ClibmGlobalRegistryFile))) {
+        if ($E.executable) { $Result += ([string]$E.executable -replace '/', '\') }
+    }
+    return $Result
+}
+
+# Deletes CLIBM's machine-level state in ~/.clibm: install record, global plugin registry,
+# PATH ledger, plugin settings and the shared helpers. Project data is never touched: the
+# folder itself is only removed when it is empty afterwards (it may also be a project's
+# repository when CLIBM was initialized in the home folder). Returns what was removed.
+function Remove-ClibmGlobalState {
+    $GlobalDir = Join-Path (Get-ClibmHomeDirectory) '.clibm'
+    $Removed = @()
+    if (-not (Test-Path -LiteralPath $GlobalDir)) { return $Removed }
+    $Files = @(
+        (Join-Path $GlobalDir 'install-config.json'),
+        (Join-Path $GlobalDir 'path-ledger'),
+        (Join-Path (Join-Path $GlobalDir 'plugins') 'registry.json'),
+        (Join-Path $GlobalDir 'mcp-config.json')
+    )
+    $Files += @(Get-ChildItem -LiteralPath $GlobalDir -Filter 'clibm-*-config.json' -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    foreach ($F in $Files) {
+        if (Test-Path -LiteralPath $F) {
+            Remove-Item -LiteralPath $F -Force -ErrorAction SilentlyContinue
+            $Removed += $F
+        }
+    }
+    $LibDir = Join-Path $GlobalDir 'lib'
+    if (Test-Path -LiteralPath $LibDir) {
+        Remove-Item -LiteralPath $LibDir -Recurse -Force -ErrorAction SilentlyContinue
+        $Removed += $LibDir
+    }
+    foreach ($D in @((Join-Path $GlobalDir 'plugins'), $GlobalDir)) {
+        if ((Test-Path -LiteralPath $D) -and @(Get-ChildItem -LiteralPath $D -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+            Remove-Item -LiteralPath $D -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $Removed
+}
 '@
     $script:ClibmEmbeddedHelperContent = $EmbeddedContent
     $NeedsWrite = $true
@@ -1015,10 +1058,13 @@ function Uninstall-ClibmPlugin {
 try { . (Initialize-ClibmEnvPathHelper) } catch { Invoke-Expression $script:ClibmEmbeddedHelperContent }
 # <<< clibm-env-path (generated) <<<
 
-$LocalCargoToml = Join-Path $ScriptDir "Cargo.toml"
+# The plugin's name comes from the Cargo.toml next to this script (a copy of the template or
+# a plugin made with `clibm plugin new`). When run with iex there is no such file, and the
+# Cargo.toml of whatever folder the user is in must not be mistaken for the plugin's.
+$LocalCargoToml = if ($PSScriptRoot) { Join-Path $PSScriptRoot "Cargo.toml" } else { "" }
 $BinName = "clibm-plugin-template"
 $PluginDesc = ""
-if (Test-Path -LiteralPath $LocalCargoToml) {
+if ($LocalCargoToml -and (Test-Path -LiteralPath $LocalCargoToml)) {
     $CargoToml = Get-Content -LiteralPath $LocalCargoToml -Raw -Encoding UTF8
     if (($CargoToml -match '(?m)^\s*name\s*=\s*"([^"]+)"') -and ($Matches[1] -ne "clibm")) {
         $BinName = $Matches[1]
@@ -1043,7 +1089,7 @@ if (-not $Hooks) {
         Write-Host "[1/3] Select Contract Hook Subscription Profile for ${BinName}:"
         Write-Host "  1) default-hooks -- Subscribe to pre-commit & on-task-move [Default]"
         Write-Host "  2) manual-only   -- Run only when invoked via 'clibm plugin run $BinName'"
-        Write-Host "  3) all-hooks     -- Subscribe to pre-commit, post-commit, on-task-move, on-workspace-switch, on-export"
+        Write-Host "  3) all-hooks     -- Subscribe to every lifecycle event (pre-commit, post-commit, pre-move, on-task-move, on-task-depend, on-workspace-switch, on-export)"
         $c = Read-Host "Select option [1-3, default: 1]"
         switch ($c) {
             "2" { $Hooks = "manual-only" }

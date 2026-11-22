@@ -45,8 +45,12 @@ export const DEFAULT_CONFIG: ClibmConfig = {
   install_profile: 'pure',
   language: 'en',
   install_path: '~/.local/bin',
-  mcp_transport: 'both',
+  mcp_transport: 'stdio',
 };
+
+/** First output line of commands that exist only in this web simulator, not in the native Rust CLI. */
+const SIMULATOR_ONLY_NOTICE = (command: string): string =>
+  `[simulator-only] 'clibm ${command}' exists only in this web workbench; the native clibm CLI has no such command.`;
 
 export function getDefaultPluginsBundle(installPath = '~/.local/bin'): PluginManifest[] {
   const cleanDir = installPath.replace(/\/+$/, '') || '~/.local/bin';
@@ -1050,9 +1054,11 @@ export function executeCliCommand(
           'CLIBM v0.1.0 — Local-First Rust CLI Project Manager (100% Pure Core + AI-Ready MCP/DOCS)',
           'USAGE: clibm <COMMAND> [OPTIONS]',
           '',
+          'GLOBAL OPTIONS: --json (machine-readable output) | --no-hooks (skip plugin lifecycle hooks)',
+          '',
           'CORE INSTALLATION, SETUP & CONFIGURATION COMMANDS:',
-          '  init [--pure | --with-defaults] [--lang <en|pt-BR|es>] [--auto-commit <true|false>] [--install-path <dir>]',
-          '  setup                                   Run interactive Core Installation Wizard options',
+          '  init [--workspace <w>] [--code <C>] [--name <n>] [--with-defaults] [--lang <en|pt-BR|es>]',
+          '       [--auto-commit <true|false>] [--install-path <dir>]   (Pure Core unless --with-defaults)',
           '  config show                             Inspect .clibm/config.json (install_profile, language, auto_commit, install_path, mcp_transport)',
           '  config set <key> <value>                Update config (e.g. clibm config set install_profile with-defaults)',
           '  config get <key> | config reset         Get a single config key or restore Pure Core defaults',
@@ -1064,7 +1070,7 @@ export function executeCliCommand(
           '  status                                  Show active workspace, Pure Core profile, HEAD & tree hash',
           '  task list [--all-workspaces] [--column <c>] [--priority <p>] [--tag <t>]',
           '  task add "<title>" [-p <prio>] [-c <col>] [-a <user>] [--tags a,b] [--depends-on ID]',
-          '  task show <ID> | task edit <ID> | task delete <ID> | task comment <ID> "<msg>"',
+          '  task show <ID> | task edit <ID> [--title ...] | task delete <ID> [--force] | task comment <ID> "<msg>"',
           '  task depend <ID> <DEPENDS_ON_ID>        Link task dependency (supports cross-workspace DAG)',
           '  task transfer <ID> <TARGET_WS> [--copy] Transfer or copy a task to another workspace',
           '  task history <ID>                       Trace single task changes across commit DAG',
@@ -1072,26 +1078,30 @@ export function executeCliCommand(
           '',
           'STANDALONE PLUGINS & AI INTEGRATION (plugins/*):',
           '  plugin list                             List installed plugins (starts at 0 in Pure Core mode)',
-          '  plugin install <folder> [--transport both|stdio|http]  Build & install plugin from plugins/<name>',
-          '  plugin run mcp [--stdio|--http|--call <tool>]          Run self-hosted MCP server for AI agents',
+          '  plugin install <folder> [--transport stdio|both|http]  Build & install plugin from plugins/<name>',
+          '  plugin run mcp [-- --stdio|--http|--both]              Run self-hosted MCP server for AI agents',
           '  plugin run dep-audit | export-md | workflow-lint | tui | web',
-          '  plugin new <name> [--hooks a,b]         Scaffold a new standalone plugin crate from template',
+          '  plugin enable <name> | plugin disable <name> | plugin uninstall <name>',
+          '  plugin new <name> [-d "<desc>"] [--hooks a,b]          Scaffold a new standalone plugin crate from template',
           '',
           'VERSIONING & LIFECYCLE COMMANDS:',
-          '  commit -m "<msg>" | log [ref] | branch [name] | checkout <ref> | diff <A> <B> | merge <branch>',
-          '  cat-object <hash> | fsck | update [--check|--plugins] | uninstall [--purge]',
+          '  commit -m "<msg>" | log [ref] | branch [name] | checkout <ref> [--force] | diff <A> <B>',
+          '  merge <branch> [--ours|--theirs] | cat-object <hash> | fsck',
+          '  update [--check] [--plugins] [--repo <url>] [--branch <b>] | uninstall [--purge] [--yes]',
+          '  (native only, not simulated in this terminal: export [-o <file>])',
+          '',
+          'SIMULATOR-ONLY COMMANDS (this web workbench only — the native clibm CLI does NOT have them):',
+          '  board column-add <id> "<Name>" [--wip <limit>]  Add a Kanban column',
+          '  project show | project participant "<Name>" [Role]',
+          '  plugin install --defaults               Shortcut for the 3 default plugins (native: install each folder)',
+          '  plugin run mcp --call task_list|dag_audit  Preview an MCP tool result without an AI client',
         ].join('\n'),
       };
     }
 
     if (sub === 'init' || sub === 'setup') {
-      const withDefaults = args.includes('--with-defaults');
-      const explicitPure = args.includes('--pure');
-      const profile: CoreInstallProfile = withDefaults
-        ? 'with-defaults'
-        : explicitPure
-        ? 'pure'
-        : state.config.install_profile || 'pure';
+      // Like the native CLI: Pure Core unless --with-defaults is given.
+      const profile: CoreInstallProfile = args.includes('--with-defaults') ? 'with-defaults' : 'pure';
 
       const langIdx = args.findIndex((a) => a === '--lang' || a === '--language');
       const rawLang = langIdx !== -1 && args[langIdx + 1] ? args[langIdx + 1] : state.config.language || 'en';
@@ -1264,7 +1274,7 @@ export function executeCliCommand(
         } else if (key === 'mcp_transport') {
           const t = rawVal.toLowerCase();
           if (!['both', 'stdio', 'http'].includes(t)) {
-            throw new Error(`Invalid mcp_transport '${rawVal}'. Expected 'both' (default), 'stdio', or 'http'.`);
+            throw new Error(`Invalid mcp_transport '${rawVal}'. Expected 'stdio' (default), 'both', or 'http'.`);
           }
           state.config.mcp_transport = t as McpTransportMode;
           const mcpPlugin = state.plugins.find((p) => p.name === 'clibm-mcp');
@@ -1493,6 +1503,7 @@ export function executeCliCommand(
       throw new Error('Usage: clibm workspace <list | switch [id-or-name] | create "<name>">');
     }
 
+    // SIMULATOR-ONLY: the native clibm CLI has no `project` command.
     if (sub === 'project') {
       const action = (args[1] || 'show').toLowerCase();
       const tree = getStagedTree(state);
@@ -1501,6 +1512,7 @@ export function executeCliCommand(
 
       if (action === 'list' || action === 'show') {
         const lines = [
+          SIMULATOR_ONLY_NOTICE('project'),
           `Project:      ${prj.name} (${prj.id} / code: ${prj.code})`,
           `Object Hash:  ${prjHash}`,
           `Workspace:    ${prj.workspace_id}`,
@@ -1529,7 +1541,7 @@ export function executeCliCommand(
         return {
           nextState: state,
           status: 'ok',
-          output: `Added participant '${name}' (${role}) -> new project hash ${newPrjHash.slice(
+          output: `${SIMULATOR_ONLY_NOTICE('project participant')}\nAdded participant '${name}' (${role}) -> new project hash ${newPrjHash.slice(
             0,
             12
           )}${formatAutoCommitNotice(autoCommitHash, commitMsg)}`,
@@ -1986,6 +1998,7 @@ export function executeCliCommand(
         };
       }
 
+      // SIMULATOR-ONLY: the native clibm CLI has no `board column-add` command.
       if (action === 'column-add') {
         const colId = (args[2] || '').toLowerCase();
         const colName = args[3] || colId;
@@ -2007,7 +2020,7 @@ export function executeCliCommand(
         return {
           nextState: state,
           status: 'ok',
-          output: `Added column '${colName}' (${colId}) -> new board CAS hash ${newBoardHash.slice(
+          output: `${SIMULATOR_ONLY_NOTICE('board column-add')}\nAdded column '${colName}' (${colId}) -> new board CAS hash ${newBoardHash.slice(
             0,
             12
           )}${formatAutoCommitNotice(autoCommitHash, commitMsg)}`,
@@ -2238,13 +2251,13 @@ export function executeCliCommand(
               '-'.repeat(78),
               '  No plugins are currently installed in this repository.',
               '  All plugins live in the ./plugins/ folder and are installed on demand:',
-              '    • clibm plugin install plugins/clibm-mcp --transport both   (Self-hosted MCP server for AI)',
+              '    • clibm plugin install plugins/clibm-mcp                    (Self-hosted MCP server for AI, stdio)',
               '    • clibm plugin install plugins/clibm-dep-audit              (DAG Critical Path & Cycle Auditor)',
               '    • clibm plugin install plugins/clibm-export-md              (Markdown Sprint Exporter)',
               '    • clibm plugin install plugins/clibm-workflow-lint          (Kanban WIP & Policy Linter)',
               '    • clibm plugin install plugins/clibm-tui                    (Ratatui Terminal UI)',
               '    • clibm plugin install plugins/clibm-web                    (Self-Hosted HTTP Web Server)',
-              '    • clibm plugin install --defaults                           (Install the 3 default plugins)',
+              '    • clibm plugin install --defaults                           (SIMULATOR-ONLY shortcut for the 3 default plugins)',
             ].join('\n'),
           };
         }
@@ -2341,6 +2354,7 @@ export function executeCliCommand(
             nextState: state,
             status: 'ok',
             output: [
+              `${SIMULATOR_ONLY_NOTICE('plugin install --defaults')} Natively, run 'clibm plugin install plugins/<name>' for each one, or pick "Core + Default Plugins" in install.sh / install.ps1.`,
               `==> Installed the 3 default plugins from ./plugins/ into ${installDir}:`,
               `    1. clibm-dep-audit     (${installDir}/clibm-dep-audit)`,
               `    2. clibm-export-md     (${installDir}/clibm-export-md)`,
@@ -2358,7 +2372,7 @@ export function executeCliCommand(
           args[transportIdx + 1] &&
           ['both', 'stdio', 'http'].includes(args[transportIdx + 1].toLowerCase())
             ? (args[transportIdx + 1].toLowerCase() as McpTransportMode)
-            : state.config.mcp_transport || 'both';
+            : 'stdio';
 
         const catalog: Record<string, { description: string; hooks: string[] }> = {
           'clibm-mcp': {
@@ -2432,9 +2446,9 @@ export function executeCliCommand(
           outLines.push(
             `==> Configured MCP Transport Mode: '${requestedTransport}' (${
               requestedTransport === 'both'
-                ? 'stdio JSON-RPC 2.0 + HTTP SSE Server on 127.0.0.1:7879 [Default]'
+                ? 'stdio JSON-RPC 2.0 + HTTP SSE Server on 127.0.0.1:7879'
                 : requestedTransport === 'stdio'
-                ? 'stdio JSON-RPC 2.0 only'
+                ? 'stdio JSON-RPC 2.0 only [Default]'
                 : 'Local HTTP SSE Server on 127.0.0.1:7879 only'
             })`
           );
@@ -2547,7 +2561,9 @@ export function executeCliCommand(
             ? 'stdio'
             : args.includes('--http')
             ? 'http'
-            : state.config.mcp_transport || 'both';
+            : args.includes('--both')
+            ? 'both'
+            : state.config.mcp_transport || 'stdio';
 
           if (toolToCall) {
             if (toolToCall === 'task_list') {
@@ -2614,9 +2630,9 @@ export function executeCliCommand(
               `Ongoing Project : .clibm/ (Workspace: ${tree.active_workspace_id}, Tree: ${state.stagedTreeHash.slice(0, 12)})`,
               `Transport Mode  : ${mode.toUpperCase()} (${
                 mode === 'both'
-                  ? 'stdio JSON-RPC 2.0 + Local HTTP SSE Server http://127.0.0.1:7879/sse [Default]'
+                  ? 'stdio JSON-RPC 2.0 + Local HTTP SSE Server http://127.0.0.1:7879/sse'
                   : mode === 'stdio'
-                  ? 'stdio JSON-RPC 2.0 only'
+                  ? 'stdio JSON-RPC 2.0 only [Default]'
                   : 'Local HTTP SSE Server http://127.0.0.1:7879/sse only'
               })`,
               `====================================================================`,
@@ -2630,7 +2646,7 @@ export function executeCliCommand(
               `  • clibm://tree/staged   (application/json)`,
               `  • clibm://config        (application/json)`,
               `  • clibm://board/active  (application/json)`,
-              `Tip: Test individual MCP tool calls via 'clibm plugin run mcp --call task_list' or 'clibm plugin run mcp --call dag_audit'.`,
+              `Simulator-only tip: preview a tool result with 'clibm plugin run mcp --call task_list' or '--call dag_audit'. The native clibm-mcp has no --call flag; AI clients call tools over JSON-RPC.`,
             ].join('\n'),
           };
         }

@@ -167,7 +167,8 @@ export interface DownloadablePluginPackage {
   cliCommand: string;
   binaryInvoke: string;
   zipFilename: string;
-  installPrompt: PluginInstallPromptSpec;
+  /** Plugin-specific installer choice; omitted when install.sh / install.ps1 asks nothing beyond the target directory. */
+  installPrompt?: PluginInstallPromptSpec;
   files: ZipFileEntry[];
 }
 
@@ -617,7 +618,7 @@ export const RUST_PROJECT_FILES: RustProjectFile[] = [
     relativePath: 'plugins/clibm-mcp/install.sh',
     zipPath: 'clibm/plugins/clibm-mcp/install.sh',
     category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer for clibm-mcp letting the user choose both (default), stdio, or http transport.',
+    description: 'UTF-8 interactive Linux installer for clibm-mcp letting the user choose stdio (default), both, or http transport.',
     language: 'bash',
     content: withoutUtf8Bom(mcpInstallSh),
     lines: countLines(mcpInstallSh),
@@ -627,7 +628,7 @@ export const RUST_PROJECT_FILES: RustProjectFile[] = [
     relativePath: 'plugins/clibm-mcp/install.ps1',
     zipPath: 'clibm/plugins/clibm-mcp/install.ps1',
     category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer for clibm-mcp letting the user choose both (default), stdio, or http.',
+    description: 'UTF-8 interactive Windows PowerShell installer for clibm-mcp letting the user choose stdio (default), both, or http.',
     language: 'powershell',
     content: withoutUtf8Bom(mcpInstallPs1),
     lines: countLines(mcpInstallPs1),
@@ -1118,18 +1119,18 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
       ps1ParamName: '-Transport',
       promptTitle: 'Select MCP Transport Mode (install.sh / install.ps1)',
       promptDescription:
-        'When installing clibm-mcp, the installer prompts you to choose whether to enable both transports (default) or only one:',
-      defaultValue: 'both',
+        'When installing clibm-mcp, the installer asks which transport to build (stdio is the default, the one AI clients launch):',
+      defaultValue: 'stdio',
       options: [
         {
-          value: 'both',
-          label: '1) Both Transports (Default)',
-          detail: 'Enable stdio JSON-RPC 2.0 + Local HTTP SSE Server (127.0.0.1:7879)',
+          value: 'stdio',
+          label: '1) stdio JSON-RPC 2.0 (Default)',
+          detail: 'JSON-RPC over stdin/stdout, what AI clients launch (zero network/HTTP dependencies)',
         },
         {
-          value: 'stdio',
-          label: '2) stdio JSON-RPC 2.0 Only',
-          detail: 'Enable only stdio transport (zero network/HTTP dependencies)',
+          value: 'both',
+          label: '2) Both Transports',
+          detail: 'stdio plus a local HTTP endpoint (127.0.0.1:7879)',
         },
         {
           value: 'http',
@@ -1188,12 +1189,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
       promptTitle: 'Select DAG Audit Hook Mode (install.sh / install.ps1)',
       promptDescription:
         'When installing clibm-dep-audit, choose whether to run automatically on commits/dependencies or manually:',
-      defaultValue: 'pre-commit,on-task-depend',
+      defaultValue: 'on-task-depend',
       options: [
         {
-          value: 'pre-commit,on-task-depend',
+          value: 'on-task-depend',
           label: '1) Automatic Hooks (Default)',
-          detail: 'Audit DAG cycles automatically on pre-commit and on-task-depend',
+          detail: 'Audit DAG cycles automatically on on-task-depend',
         },
         {
           value: 'manual-run',
@@ -1234,12 +1235,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
       promptTitle: 'Select Markdown Export Hook Mode (install.sh / install.ps1)',
       promptDescription:
         'When installing clibm-export-md, choose whether to trigger Markdown export hooks automatically or manually:',
-      defaultValue: 'on-export,post-commit',
+      defaultValue: 'on-export',
       options: [
         {
-          value: 'on-export,post-commit',
-          label: '1) Automatic Export Hooks (Default)',
-          detail: 'Run on-export and post-commit to keep sprint Markdown reports updated',
+          value: 'on-export',
+          label: '1) Automatic Export Hook (Default)',
+          detail: 'Run on-export to keep sprint Markdown reports updated',
         },
         {
           value: 'manual-run',
@@ -1280,12 +1281,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
       promptTitle: 'Select Workflow Policy Linter Mode (install.sh / install.ps1)',
       promptDescription:
         'When installing clibm-workflow-lint, select whether to enforce WIP policies automatically or on manual runs:',
-      defaultValue: 'pre-move,pre-commit',
+      defaultValue: 'post-commit',
       options: [
         {
-          value: 'pre-move,pre-commit',
-          label: '1) Automatic Policy Enforcement (Default)',
-          detail: 'Validate WIP limits and assignees on pre-move and pre-commit',
+          value: 'post-commit',
+          label: '1) Automatic Policy Check (Default)',
+          detail: 'Validate WIP limits and assignees on post-commit',
         },
         {
           value: 'manual-run',
@@ -1320,26 +1321,8 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     cliCommand: 'clibm plugin run tui',
     binaryInvoke: 'clibm-tui',
     zipFilename: 'clibm-tui-v0.1.0.zip',
-    installPrompt: {
-      flagName: '--keymap',
-      ps1ParamName: '-Keymap',
-      promptTitle: 'Select TUI Keybinding Preset (install.sh / install.ps1)',
-      promptDescription:
-        'When installing clibm-tui, choose your preferred terminal keybinding preset:',
-      defaultValue: 'vim-arrows',
-      options: [
-        {
-          value: 'vim-arrows',
-          label: '1) Vim (h/j/k/l) + Arrow Keys (Default)',
-          detail: 'Full Vim modal navigation alongside standard arrow keys',
-        },
-        {
-          value: 'arrows',
-          label: '2) Standard Arrow Keys Only',
-          detail: 'Arrow keys, Enter, Tab, and function keys',
-        },
-      ],
-    },
+    // No installPrompt: the TUI always accepts both Vim keys (h/j/k/l) and arrow keys,
+    // so install.sh / install.ps1 only ask for the target directory.
     files: [
       { path: 'clibm-tui/Cargo.toml', content: withoutUtf8Bom(tuiCargoToml) },
       { path: 'clibm-tui/README.md', content: withoutUtf8Bom(tuiReadmeMd) },

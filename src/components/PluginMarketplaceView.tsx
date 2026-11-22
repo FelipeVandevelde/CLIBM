@@ -57,7 +57,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
   // Interactive Plugin Installer Modal State (shows install.sh / install.ps1 choices when user clicks Install)
   const [installingPlugin, setInstallingPlugin] =
     useState<DownloadablePluginPackage | null>(null);
-  const [installChoiceValue, setInstallChoiceValue] = useState<string>('both');
+  const [installChoiceValue, setInstallChoiceValue] = useState<string>('stdio');
   const [installTargetDir, setInstallTargetDir] = useState<string>(
     repoState.config.install_path || '~/.local/bin'
   );
@@ -99,7 +99,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
     if (pkg.id === 'clibm-mcp' && repoState.config.mcp_transport) {
       setInstallChoiceValue(repoState.config.mcp_transport);
     } else {
-      setInstallChoiceValue(pkg.installPrompt.defaultValue);
+      setInstallChoiceValue(pkg.installPrompt?.defaultValue ?? '');
     }
     setInstallTargetDir(repoState.config.install_path || '~/.local/bin');
     setInstallScriptTab('install.sh');
@@ -196,9 +196,9 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
               type="button"
               onClick={() => onRunCommand('clibm plugin install --defaults')}
               className="px-3.5 py-2.5 text-xs font-mono font-semibold bg-zinc-950 hover:bg-zinc-800 text-zinc-100 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              title="Install clibm-dep-audit, clibm-export-md, and clibm-workflow-lint from plugins/"
+              title="Simulator-only shortcut: installs clibm-dep-audit, clibm-export-md and clibm-workflow-lint at once. The native CLI has no --defaults flag: run `clibm plugin install plugins/<name>` for each, or pick Core + Default Plugins in install.sh / install.ps1."
             >
-              Install 3 Default Plugins
+              Install 3 Default Plugins (simulator shortcut)
             </button>
             <button
               type="button"
@@ -435,7 +435,8 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
             </div>
 
             <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
-              {/* Step 1: Plugin-Specific Choices from install.sh / install.ps1 */}
+              {/* Step 1: Plugin-Specific Choices from install.sh / install.ps1 (only when the installer asks one) */}
+              {installingPlugin.installPrompt && (
               <div className="space-y-3">
                 <div className="space-y-1">
                   <div className="text-xs font-mono font-bold text-white">
@@ -473,12 +474,14 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                   })}
                 </div>
               </div>
+              )}
 
               {/* Step 2: Target Installation Directory */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
                 <div className="md:col-span-6">
                   <label className="block text-xs font-mono font-bold text-white mb-1">
-                    [2/2] Installation Target Directory (--install-dir / -InstallDir)
+                    {installingPlugin.installPrompt ? '[2/2]' : '[1/1]'} Installation Target
+                    Directory (--install-dir / -InstallDir)
                   </label>
                   <input
                     type="text"
@@ -492,8 +495,10 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                   <div className="text-zinc-400">Generated Terminal Command (Linux / Windows):</div>
                   <div className="text-zinc-100 truncate">
                     $ cd plugins/{installingPlugin.crateName} &amp;&amp; ./install.sh{' '}
-                    {installingPlugin.installPrompt.flagName} {installChoiceValue} --install-dir &quot;
-                    {installTargetDir}&quot;
+                    {installingPlugin.installPrompt
+                      ? `${installingPlugin.installPrompt.flagName} ${installChoiceValue} `
+                      : ''}
+                    --install-dir &quot;{installTargetDir}&quot;
                   </div>
                 </div>
               </div>
@@ -576,7 +581,8 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                 >
                   <Check className="w-4 h-4" />
                   <span>
-                    Confirm &amp; Install {installingPlugin.crateName} ({installChoiceValue})
+                    Confirm &amp; Install {installingPlugin.crateName}
+                    {installingPlugin.installPrompt ? ` (${installChoiceValue})` : ''}
                   </span>
                 </button>
               </div>
