@@ -920,10 +920,13 @@ fn main() -> Result<()> {
                     manifest.name,
                     plugin_dir.display()
                 );
-                println!("Generated files: Cargo.toml, src/main.rs, README.md, install.sh");
                 println!(
-                    "Next steps: `cd plugins/{} && ./install.sh`, then `clibm plugin run {}`",
-                    manifest.name, manifest.name
+                    "Generated files: Cargo.toml, src/main.rs, README.md, install.sh, install.ps1, uninstall.sh, uninstall.ps1"
+                );
+                println!(
+                    "Next steps: `clibm plugin install {}` (or run its install.sh / install.ps1), then `clibm plugin run {}`",
+                    plugin_dir.display(),
+                    manifest.name
                 );
             }
             PluginCommands::Install { path, transport } => {

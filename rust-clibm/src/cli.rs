@@ -33,7 +33,8 @@ pub enum Commands {
         code: String,
         #[arg(long, default_value = "CLIBM Core Project")]
         name: String,
-        /// Register the 3 default plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint) instead of Pure Core
+        /// Record the "with-defaults" profile and point out which of the 3 default plugins
+        /// (clibm-dep-audit, clibm-export-md, clibm-workflow-lint) still need `clibm plugin install`
         #[arg(long)]
         with_defaults: bool,
         /// Repository interface language (en, pt-BR, es). Defaults to the installer's choice, else "en".

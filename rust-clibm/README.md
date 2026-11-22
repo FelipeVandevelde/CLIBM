@@ -28,6 +28,11 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
 ```
 
+The uninstallers remove the `clibm` and `clibm-*` binaries, the PATH entries CLIBM added and
+its machine state in `~/.clibm`; project `.clibm` folders are only deleted with `--purge` /
+`-Purge` (current folder). From this folder: `./uninstall.sh [-y] [--purge]` or
+`.\uninstall.ps1 [-Yes] [-Purge]`.
+
 ## Installing from this folder
 
 ```bash

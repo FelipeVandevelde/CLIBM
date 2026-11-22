@@ -32,9 +32,9 @@ function Initialize-ClibmEnvPathHelper {
     $HomeDir = if ($env:CLIBM_HOME) { $env:CLIBM_HOME } elseif ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
     $LibDir = Join-Path $HomeDir '.clibm\lib'
     $HelperFile = Join-Path $LibDir 'env-path.ps1'
-    $EmbeddedVersion = 6
+    $EmbeddedVersion = 7
     $EmbeddedContent = @'
-# clibm-env-path-version: 6
+# clibm-env-path-version: 7
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
 # Encoding: UTF-8 (without BOM)
@@ -974,6 +974,49 @@ function Uninstall-ClibmPlugin {
         }
     }
     return (-not $Failed)
+}
+
+# Executable paths of every plugin in the global registry.
+function Get-ClibmRegistryExecutables {
+    $Result = @()
+    foreach ($E in @(Read-ClibmRegistryEntries -RegFile (Get-ClibmGlobalRegistryFile))) {
+        if ($E.executable) { $Result += ([string]$E.executable -replace '/', '\') }
+    }
+    return $Result
+}
+
+# Deletes CLIBM's machine-level state in ~/.clibm: install record, global plugin registry,
+# PATH ledger, plugin settings and the shared helpers. Project data is never touched: the
+# folder itself is only removed when it is empty afterwards (it may also be a project's
+# repository when CLIBM was initialized in the home folder). Returns what was removed.
+function Remove-ClibmGlobalState {
+    $GlobalDir = Join-Path (Get-ClibmHomeDirectory) '.clibm'
+    $Removed = @()
+    if (-not (Test-Path -LiteralPath $GlobalDir)) { return $Removed }
+    $Files = @(
+        (Join-Path $GlobalDir 'install-config.json'),
+        (Join-Path $GlobalDir 'path-ledger'),
+        (Join-Path (Join-Path $GlobalDir 'plugins') 'registry.json'),
+        (Join-Path $GlobalDir 'mcp-config.json')
+    )
+    $Files += @(Get-ChildItem -LiteralPath $GlobalDir -Filter 'clibm-*-config.json' -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    foreach ($F in $Files) {
+        if (Test-Path -LiteralPath $F) {
+            Remove-Item -LiteralPath $F -Force -ErrorAction SilentlyContinue
+            $Removed += $F
+        }
+    }
+    $LibDir = Join-Path $GlobalDir 'lib'
+    if (Test-Path -LiteralPath $LibDir) {
+        Remove-Item -LiteralPath $LibDir -Recurse -Force -ErrorAction SilentlyContinue
+        $Removed += $LibDir
+    }
+    foreach ($D in @((Join-Path $GlobalDir 'plugins'), $GlobalDir)) {
+        if ((Test-Path -LiteralPath $D) -and @(Get-ChildItem -LiteralPath $D -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+            Remove-Item -LiteralPath $D -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $Removed
 }
 '@
     $script:ClibmEmbeddedHelperContent = $EmbeddedContent

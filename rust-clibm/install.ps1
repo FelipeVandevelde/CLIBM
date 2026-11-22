@@ -15,7 +15,7 @@
 #   4. Machine Storage / Install Location: custom path (default: ~\.clibm-bin)
 #   5. User PATH Registration: add install directory to user PATH (or -NoModifyPath)
 
-$Profile = ""
+$InstallProfile = ""
 $Language = ""
 $AutoCommit = ""
 $InstallDir = ""
@@ -25,7 +25,7 @@ $Yes = $false
 
 for ($i = 0; $i -lt $args.Count; $i++) {
     switch -Regex ($args[$i]) {
-        '^-+(?i)Profile$'      { $Profile = $args[++$i] }
+        '^-+(?i)Profile$'      { $InstallProfile = $args[++$i] }
         '^-+(?i)Language$'     { $Language = $args[++$i] }
         '^-+(?i)AutoCommit$'   { $AutoCommit = $args[++$i] }
         '^-+(?i)InstallDir$'   { $InstallDir = $args[++$i] }
@@ -48,9 +48,9 @@ function Initialize-ClibmEnvPathHelper {
     $HomeDir = if ($env:CLIBM_HOME) { $env:CLIBM_HOME } elseif ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
     $LibDir = Join-Path $HomeDir '.clibm\lib'
     $HelperFile = Join-Path $LibDir 'env-path.ps1'
-    $EmbeddedVersion = 6
+    $EmbeddedVersion = 7
     $EmbeddedContent = @'
-# clibm-env-path-version: 6
+# clibm-env-path-version: 7
 # ==============================================================================
 # CLIBM Shared User PATH Helper (Windows PowerShell 5.1 & 7+)
 # Encoding: UTF-8 (without BOM)
@@ -991,6 +991,49 @@ function Uninstall-ClibmPlugin {
     }
     return (-not $Failed)
 }
+
+# Executable paths of every plugin in the global registry.
+function Get-ClibmRegistryExecutables {
+    $Result = @()
+    foreach ($E in @(Read-ClibmRegistryEntries -RegFile (Get-ClibmGlobalRegistryFile))) {
+        if ($E.executable) { $Result += ([string]$E.executable -replace '/', '\') }
+    }
+    return $Result
+}
+
+# Deletes CLIBM's machine-level state in ~/.clibm: install record, global plugin registry,
+# PATH ledger, plugin settings and the shared helpers. Project data is never touched: the
+# folder itself is only removed when it is empty afterwards (it may also be a project's
+# repository when CLIBM was initialized in the home folder). Returns what was removed.
+function Remove-ClibmGlobalState {
+    $GlobalDir = Join-Path (Get-ClibmHomeDirectory) '.clibm'
+    $Removed = @()
+    if (-not (Test-Path -LiteralPath $GlobalDir)) { return $Removed }
+    $Files = @(
+        (Join-Path $GlobalDir 'install-config.json'),
+        (Join-Path $GlobalDir 'path-ledger'),
+        (Join-Path (Join-Path $GlobalDir 'plugins') 'registry.json'),
+        (Join-Path $GlobalDir 'mcp-config.json')
+    )
+    $Files += @(Get-ChildItem -LiteralPath $GlobalDir -Filter 'clibm-*-config.json' -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    foreach ($F in $Files) {
+        if (Test-Path -LiteralPath $F) {
+            Remove-Item -LiteralPath $F -Force -ErrorAction SilentlyContinue
+            $Removed += $F
+        }
+    }
+    $LibDir = Join-Path $GlobalDir 'lib'
+    if (Test-Path -LiteralPath $LibDir) {
+        Remove-Item -LiteralPath $LibDir -Recurse -Force -ErrorAction SilentlyContinue
+        $Removed += $LibDir
+    }
+    foreach ($D in @((Join-Path $GlobalDir 'plugins'), $GlobalDir)) {
+        if ((Test-Path -LiteralPath $D) -and @(Get-ChildItem -LiteralPath $D -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+            Remove-Item -LiteralPath $D -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $Removed
+}
 '@
     $script:ClibmEmbeddedHelperContent = $EmbeddedContent
     $NeedsWrite = $true
@@ -1029,16 +1072,16 @@ Write-Host "====================================================================
 Write-Host " CLIBM v0.1.0 -- Interactive Core Installation Wizard (UTF-8)"
 Write-Host "===================================================================="
 
-if (-not $Profile) {
+if (-not $InstallProfile) {
     if ($Yes) {
-        $Profile = "pure"
+        $InstallProfile = "pure"
     } else {
         Write-Host ""
         Write-Host "[1/5] Select CLIBM Core Installation Profile:"
         Write-Host "  1) Pure Core (without plugins -- 100% pure engine) [Default]"
         Write-Host "  2) Core + Default Plugins (builds dep-audit, export-md, workflow-lint)"
         $c = Read-Host "Select option [1-2, default: 1]"
-        if ($c -eq "2") { $Profile = "with-defaults" } else { $Profile = "pure" }
+        if ($c -eq "2") { $InstallProfile = "with-defaults" } else { $InstallProfile = "pure" }
     }
 }
 
@@ -1125,7 +1168,7 @@ Write-Host ""
 Write-Host "--------------------------------------------------------------------"
 Write-Host " Installation Summary (Encoding: UTF-8):"
 Write-Host "   Install Mode   : $InstallMode"
-Write-Host "   Profile        : $Profile"
+Write-Host "   Profile        : $InstallProfile"
 Write-Host "   Language       : $Language"
 Write-Host "   Auto-Commit    : $AutoCommit"
 Write-Host "   Install Path   : $InstallDir"
@@ -1138,7 +1181,7 @@ New-Item -ItemType Directory -Force -Path $GlobalPluginsDir | Out-Null
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $InstallCfg = [ordered]@{
-    install_profile  = $Profile
+    install_profile  = $InstallProfile
     language         = $Language
     auto_commit      = ($AutoCommit -eq "true")
     install_path     = $InstallDir
@@ -1151,7 +1194,7 @@ $InstallCfg = [ordered]@{
 } | ConvertTo-Json -Depth 4
 [System.IO.File]::WriteAllText((Join-Path $GlobalCfgDir "install-config.json"), $InstallCfg, $Utf8NoBom)
 
-if ($Profile -eq "with-defaults") {
+if ($InstallProfile -eq "with-defaults") {
     Write-Host "==> Installing default standalone plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)..."
     $EffectiveRawBase = if ($RawBaseUrl) { $RawBaseUrl.TrimEnd('/') } else { Get-ClibmRawRepoBase }
     foreach ($PluginName in @("clibm-dep-audit", "clibm-export-md", "clibm-workflow-lint")) {

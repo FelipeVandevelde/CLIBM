@@ -410,6 +410,21 @@ impl PluginManager {
         }
     }
 
+    /// Like [`Self::normalize_plugin_name`], and also accepts the short name of any
+    /// installed plugin: `sprint-velocity` finds an installed `clibm-sprint-velocity`.
+    pub fn resolve_plugin_name(name: &str) -> String {
+        let canonical = Self::normalize_plugin_name(name);
+        if canonical.starts_with("clibm-") {
+            return canonical;
+        }
+        let prefixed = format!("clibm-{}", canonical);
+        let global = Self::load_global_registry();
+        if !global.iter().any(|p| p.name == canonical) && global.iter().any(|p| p.name == prefixed) {
+            return prefixed;
+        }
+        canonical
+    }
+
     pub fn binary_file_name(bin_name: &str) -> String {
         if cfg!(windows) && !bin_name.to_ascii_lowercase().ends_with(".exe") {
             format!("{}.exe", bin_name)
@@ -678,6 +693,9 @@ version = "0.1.0"
 edition = "2021"
 description = "{description}"
 
+# A standalone crate, even when the project lives inside another Cargo workspace.
+[workspace]
+
 [[bin]]
 name = "{crate_name}"
 path = "src/main.rs"
@@ -783,7 +801,7 @@ fn manifest_json(args: &[String]) -> String {{
         write_utf8_file(&src_dir.join("main.rs"), &main_rs)?;
 
         let readme = format!(
-            "# {crate_name}\n\n{description}\n\n- **Encoding:** UTF-8\n\n## Quick Install\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/install.ps1)\n```\n\n## Quick Uninstall\n\n### Linux, macOS, WSL2\n```bash\ncurl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.sh | bash\n```\n\n### Windows (native, PowerShell)\n```powershell\niex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/{crate_name}/uninstall.ps1)\n```\n\n## Local Build & Install (From This Folder)\n\n```bash\ncd plugins/{crate_name}\n./install.sh\n# Or on Windows PowerShell:\n.\\install.ps1\n```\n\n## Run in Any Ongoing CLIBM Project\n\n```bash\nclibm plugin run {crate_name}\n```\n\n## Local Uninstall\n\n```bash\n./uninstall.sh\n# Or on Windows PowerShell:\n.\\uninstall.ps1\n```\n"
+            "# {crate_name}\n\n{description}\n\nA standalone CLIBM plugin (`CLIBM_PLUGIN_CONTRACT_V1`). Requires the Rust toolchain (`cargo`).\n\n## Install (from this folder)\n\n```bash\n./install.sh            # Linux, macOS, WSL2 (add -y for the defaults)\n.\\install.ps1           # Windows PowerShell (add -Yes for the defaults)\nclibm plugin install .  # or let CLIBM build and register it\n```\n\nThe installer builds the plugin, copies the binary to your CLIBM install folder and registers\nit in `~/.clibm/plugins/registry.json` (from `{crate_name} --manifest`).\n\n## Run in any CLIBM project\n\n```bash\nclibm plugin run {crate_name}\n```\n\nIt is also called automatically on the lifecycle hooks it subscribes to.\n\n## Uninstall\n\n```bash\nclibm plugin uninstall {crate_name}\n./uninstall.sh          # or .\\uninstall.ps1 (also releases its user PATH entry)\n```\n"
         );
         write_utf8_file(&plugin_dir.join("README.md"), &readme)?;
 
@@ -869,7 +887,7 @@ mkdir -p \"$INSTALL_DIR\"\n\
 clibm_build_and_stage \"{crate_name}\" \"plugins/{crate_name}\" \"$INSTALL_DIR/{crate_name}\" \"$SCRIPT_DIR\" \"$RAW_BASE_URL\" \"Cargo.toml\" \"src/main.rs\"\n\
 case \"$HOOK_MODE\" in\n\
   manual-only)   RESOLVED_HOOKS=\"manual-run\" ;;\n\
-  all-hooks)     RESOLVED_HOOKS=\"pre-commit,post-commit,on-task-move,on-workspace-switch,on-export\" ;;\n\
+  all-hooks)     RESOLVED_HOOKS=\"pre-commit,post-commit,pre-move,on-task-move,on-task-depend,on-workspace-switch,on-export\" ;;\n\
   default-hooks) RESOLVED_HOOKS=\"{default_hooks_csv}\" ;;\n\
   *)             RESOLVED_HOOKS=\"$HOOK_MODE\" ;;\n\
 esac\n\
@@ -936,7 +954,7 @@ $InstalledExe = Join-Path $InstallDir \"{crate_name}.exe\"\n\
 Invoke-ClibmBuildAndStage -CrateName \"{crate_name}\" -RemoteSubPath \"plugins/{crate_name}\" -SourceFiles @(\"Cargo.toml\", \"src/main.rs\") -DestinationBinary $InstalledExe -LocalCandidateDir $ScriptDir -RawBaseUrl $RawBaseUrl | Out-Null\n\
 $ResolvedHooks = switch ($Hooks) {{\n\
   \"manual-only\"   {{ @(\"manual-run\") }}\n\
-  \"all-hooks\"     {{ @(\"pre-commit\", \"post-commit\", \"on-task-move\", \"on-workspace-switch\", \"on-export\") }}\n\
+  \"all-hooks\"     {{ @(\"pre-commit\", \"post-commit\", \"pre-move\", \"on-task-move\", \"on-task-depend\", \"on-workspace-switch\", \"on-export\") }}\n\
   \"default-hooks\" {{ @({default_hooks_ps1}) }}\n\
   default         {{ @($Hooks -split ',' | Where-Object {{ $_ }}) }}\n\
 }}\n\
@@ -994,7 +1012,7 @@ Write-Host \"Uninstalled {crate_name}.exe\"
     /// Enables or disables an installed plugin. Inside a repository this is a project
     /// override; outside one it changes the global default.
     pub fn set_plugin_enabled(cas: &CasStore, name: &str, enabled: bool) -> Result<()> {
-        let canonical_name = Self::normalize_plugin_name(name);
+        let canonical_name = Self::resolve_plugin_name(name);
         let installed = Self::load_registry(cas)?;
         if !installed.iter().any(|p| p.name == canonical_name) {
             bail!(
@@ -1027,7 +1045,7 @@ Write-Host \"Uninstalled {crate_name}.exe\"
     /// removes it from the global registry and from this project's overrides. The user
     /// `PATH` is left alone because the install folder is shared with the core.
     pub fn uninstall_plugin(cas: &CasStore, name: &str) -> Result<PluginUninstallReport> {
-        let canonical = Self::normalize_plugin_name(name);
+        let canonical = Self::resolve_plugin_name(name);
         if canonical == "clibm" || canonical.trim().is_empty() {
             bail!("Use `clibm uninstall` (or the core uninstall script) to remove CLIBM itself.");
         }
@@ -1112,7 +1130,7 @@ Write-Host \"Uninstalled {crate_name}.exe\"
         _tree: &TreeSnapshotPayload,
         args: &[String],
     ) -> Result<PluginInvocationResponse> {
-        let canonical_name = Self::normalize_plugin_name(name);
+        let canonical_name = Self::resolve_plugin_name(name);
         let plugins = Self::load_registry(cas)?;
         let manifest = plugins
             .iter()

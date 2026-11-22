@@ -364,10 +364,12 @@ answers on stdout:
 
 ```bash
 clibm plugin new sprint-velocity --description "Tracks sprint velocity" --hooks post-commit,on-task-move
-cd plugins/clibm-sprint-velocity
-./install.sh
-clibm plugin run sprint-velocity
+clibm plugin install plugins/clibm-sprint-velocity   # or: cd plugins/clibm-sprint-velocity && ./install.sh
+clibm plugin run sprint-velocity                     # short for clibm-sprint-velocity
 ```
+
+The generated crate (`Cargo.toml`, `src/main.rs`, `README.md`, `install.*`, `uninstall.*`)
+already supports `--manifest` and the stdin contract.
 
 ---
 
@@ -504,9 +506,11 @@ clibm update --plugins          # also rebuild every installed official plugin
 clibm update --path ~/src/CLIBM # build from a local clone
 ```
 
-`clibm update` builds from where CLIBM was installed (recorded by the installer), the
-official repository otherwise. Inside a clone, `./update.sh` / `.\update.ps1` pull the latest
-changes and update from the clone.
+`clibm update` builds from where CLIBM was installed (recorded by the installer: a GitHub
+repository and branch, or the local clone it was installed from), the official repository
+otherwise (for example when that clone no longer exists). Inside a clone, `./update.sh` /
+`.\update.ps1` pull the latest changes and update from the clone. Plugins are only rebuilt with
+`--plugins`; they keep their hooks, enabled state and (for `clibm-mcp`) transports.
 
 ---
 
@@ -514,20 +518,34 @@ changes and update from the clone.
 
 ```powershell
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
-.\uninstall.ps1            # from a clone
-.\uninstall.ps1 -Purge     # also delete the .clibm data in the current folder
+.\uninstall.ps1            # from a clone (-Yes: no questions)
+.\uninstall.ps1 -Purge     # also delete the .clibm project data in the current folder
 ```
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.sh | bash
-./uninstall.sh             # from a clone
-./uninstall.sh --purge     # also delete the .clibm data in the current folder
+./uninstall.sh             # from a clone (-y: no questions)
+./uninstall.sh --purge     # also delete the .clibm project data in the current folder
 ```
 
-`clibm uninstall` lists everything CLIBM installed (binaries, `~/.clibm`, PATH entries) with
-the commands to remove it. `clibm uninstall --purge` deletes the current folder's `.clibm`
-after asking for confirmation (or with `--yes`); it never deletes a repository found in a
-parent folder.
+The uninstall scripts remove everything the installers created:
+
+- `clibm` and every `clibm-*` plugin binary (install folder, folders listed in the plugin
+  registry, `~/.clibm-bin`, `~/.local/bin`, `~/.cargo/bin`); running copies are stopped first
+  on Windows;
+- the user PATH entries CLIBM added (`~/.clibm/path-ledger`);
+- CLIBM's machine state in `~/.clibm`: `install-config.json`, the plugin registry, the PATH
+  ledger, plugin settings (`mcp-config.json`, ...) and the shared helpers in `lib/`.
+
+The `.clibm` folders inside your projects (tasks and history) are kept unless you pass
+`--purge` / `-Purge` in that folder. A plugin alone is removed with
+`clibm plugin uninstall <name>` or its own `uninstall.*` script (which also releases its PATH
+entry).
+
+`clibm uninstall` does not delete anything except with `--purge`: it lists what CLIBM installed
+(binaries, `~/.clibm`, PATH entries) with the commands to remove it. `clibm uninstall --purge`
+deletes the current folder's `.clibm` after asking for confirmation (or with `--yes`); it never
+deletes a repository found in a parent folder.
 
 ---
 

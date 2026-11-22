@@ -140,9 +140,16 @@ impl UpdateSource {
         let project_url = project_cfg
             .map(|c| c.github_repo_url.clone())
             .filter(|u| !u.trim().is_empty() && *u != default_project_url);
+        // An install made from a local clone records that folder, not a URL. When the
+        // folder is gone (or --branch asks for a remote build) it cannot be used as a
+        // repository URL, so fall back to the project/official repository.
+        let installed_url = install
+            .source_repo
+            .clone()
+            .filter(|r| normalize_repo_url(r).is_ok());
         let repo_input = repo_flag
             .map(str::to_string)
-            .or_else(|| install.source_repo.clone())
+            .or(installed_url)
             .or(project_url)
             .unwrap_or_else(|| DEFAULT_REPO_URL.to_string());
         let repo = normalize_repo_url(&repo_input)?;
@@ -673,5 +680,28 @@ mod local_source_tests {
             UpdateSource::resolve(Some("https://github.com/x/y"), None, None, None, &install).unwrap(),
             UpdateSource::Git { .. }
         ));
+        // --branch alone builds the official repository instead of failing on the folder path.
+        match UpdateSource::resolve(None, Some("dev"), None, None, &install).unwrap() {
+            UpdateSource::Git { repo, branch } => {
+                assert_eq!(repo.clone_url, DEFAULT_REPO_URL);
+                assert_eq!(branch, "dev");
+            }
+            other => panic!("expected git source, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn moved_or_deleted_install_clone_falls_back_to_the_official_repository() {
+        let install = InstallConfig {
+            source_repo: Some("/this/clone/was/deleted/rust-clibm".into()),
+            ..Default::default()
+        };
+        match UpdateSource::resolve(None, None, None, None, &install).unwrap() {
+            UpdateSource::Git { repo, branch } => {
+                assert_eq!(repo.clone_url, DEFAULT_REPO_URL);
+                assert_eq!(branch, DEFAULT_BRANCH);
+            }
+            other => panic!("expected git source, got {:?}", other),
+        }
     }
 }
