@@ -287,8 +287,8 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
               onClick={() =>
                 onRunCommand(
                   `clibm init ${
-                    config.install_profile === 'with-defaults' ? '--with-defaults' : '--pure'
-                  } --lang ${config.language || 'en'} --auto-commit ${String(
+                    config.install_profile === 'with-defaults' ? '--with-defaults ' : ''
+                  }--lang ${config.language || 'en'} --auto-commit ${String(
                     config.auto_commit
                   )} --install-path "${config.install_path || '~/.local/bin'}"`
                 )

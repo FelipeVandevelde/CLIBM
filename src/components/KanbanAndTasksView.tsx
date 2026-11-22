@@ -679,8 +679,9 @@ export const KanbanAndTasksView: React.FC<KanbanAndTasksViewProps> = ({
             className="border border-zinc-800 bg-zinc-900/40 rounded-lg p-3 flex items-center justify-between gap-3"
           >
             <span className="text-xs text-zinc-400">
-              Customize Kanban Workflow (
-              <code className="text-zinc-200">clibm board column-add</code>):
+              Customize Kanban Workflow (simulator-only{' '}
+              <code className="text-zinc-200">clibm board column-add</code>; the native CLI has
+              no column command):
             </span>
             <div className="flex items-center gap-2">
               <input
