@@ -68,12 +68,14 @@ fn task_reference_by_id_number_and_hash() {
 }
 
 #[test]
-fn status_reports_branch_counts_and_dirty_flag() {
+fn status_reports_history_counts_and_dirty_flag() {
     let p = TempProject::new("status");
     p.init();
     p.ok(&["task", "add", "One", "-c", "todo"]);
     let st = p.json(&["status"]);
-    assert_eq!(st["branch"], "main");
+    assert_eq!(st["commits"], 2);
+    assert!(st["history_note"].is_null());
+    assert!(st.get("branch").is_none());
     assert_eq!(st["dirty"], false);
     assert_eq!(st["active_project_code"], "APP");
     assert_eq!(st["project_tasks"], 1);
@@ -143,104 +145,6 @@ fn edit_and_delete_tasks() {
     p.ok(&["task", "add", "Fresh"]);
     let tasks = p.json(&["task", "list"]);
     assert_eq!(tasks[0][1]["id"], "APP-103");
-}
-
-#[test]
-fn checkout_refuses_uncommitted_changes() {
-    let p = TempProject::new("checkout");
-    p.init();
-    p.ok(&["branch", "feature"]);
-    p.ok(&["config", "set", "auto_commit", "false"]);
-    p.ok(&["task", "add", "Unsaved"]);
-    let err = p.fails(&["checkout", "feature"]);
-    assert!(err.contains("uncommitted changes"), "{}", err);
-    p.ok(&["checkout", "feature", "--force"]);
-}
-
-#[test]
-fn branch_names_are_validated() {
-    let p = TempProject::new("branchname");
-    p.init();
-    for bad in ["../../evil", "-x", "a..b", "HEAD", "x.lock", "a//b"] {
-        let err = p.fails(&["branch", "--", bad]);
-        assert!(err.contains("Invalid branch name"), "{}: {}", bad, err);
-    }
-    p.ok(&["branch", "feature/login"]);
-    let err = p.fails(&["branch", "feature/login"]);
-    assert!(err.contains("already exists"), "{}", err);
-}
-
-#[test]
-fn merge_conflict_stops_and_theirs_resolves() {
-    let p = TempProject::new("mergeconf");
-    p.init();
-    p.ok(&["task", "add", "Shared"]);
-    p.ok(&["branch", "feat"]);
-    p.ok(&["task", "edit", "101", "--title", "main title"]);
-    p.ok(&["checkout", "feat"]);
-    p.ok(&["task", "edit", "101", "--title", "feat title"]);
-    p.ok(&["checkout", "main"]);
-
-    let err = p.fails(&["merge", "feat"]);
-    assert!(err.contains("conflict"), "{}", err);
-    assert_eq!(p.json(&["task", "show", "101"])["title"], "main title");
-
-    p.ok(&["merge", "feat", "--theirs"]);
-    assert_eq!(p.json(&["task", "show", "101"])["title"], "feat title");
-}
-
-#[test]
-fn merge_renumbers_same_id_and_propagates_deletions() {
-    let p = TempProject::new("mergerenum");
-    p.init();
-    p.ok(&["task", "add", "Old"]); // APP-101 in base
-    p.ok(&["branch", "feat"]);
-    p.ok(&["task", "add", "Main task"]); // APP-102 on main
-    p.ok(&["checkout", "feat"]);
-    p.ok(&["task", "add", "Feat task"]); // APP-102 on feat (collision)
-    p.ok(&["task", "add", "Feat child", "--depends-on", "102"]); // APP-103 -> APP-102
-    p.ok(&["task", "delete", "101"]);
-    p.ok(&["checkout", "main"]);
-
-    let outcome = p.json(&["merge", "feat"]);
-    assert_eq!(outcome["kind"], "merged");
-    assert_eq!(outcome["renumbered"][0][0], "APP-102");
-    let new_id = outcome["renumbered"][0][1].as_str().unwrap().to_string();
-
-    let tasks = p.json(&["task", "list"]);
-    let titles: Vec<(String, String)> = tasks
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|row| {
-            (
-                row[1]["id"].as_str().unwrap().to_string(),
-                row[1]["title"].as_str().unwrap().to_string(),
-            )
-        })
-        .collect();
-    assert!(!titles.iter().any(|(id, _)| id == "APP-101"), "deletion not applied: {:?}", titles);
-    assert!(titles.contains(&("APP-102".to_string(), "Main task".to_string())));
-    assert!(titles.contains(&(new_id.clone(), "Feat task".to_string())));
-    let child = p.json(&["task", "show", "APP-103"]);
-    assert_eq!(child["title"], "Feat child");
-    assert_eq!(child["depends_on"][0], new_id.as_str());
-    assert_eq!(p.json(&["status"])["dirty"], false);
-}
-
-#[test]
-fn merge_fast_forwards() {
-    let p = TempProject::new("mergeff");
-    p.init();
-    p.ok(&["branch", "feat"]);
-    p.ok(&["checkout", "feat"]);
-    p.ok(&["task", "add", "On feat"]);
-    p.ok(&["checkout", "main"]);
-    let outcome = p.json(&["merge", "feat"]);
-    assert_eq!(outcome["kind"], "fast-forward");
-    assert_eq!(p.json(&["task", "show", "101"])["title"], "On feat");
-    let again = p.json(&["merge", "feat"]);
-    assert_eq!(again["kind"], "up-to-date");
 }
 
 #[test]

@@ -3,7 +3,7 @@ import { Terminal, Play, RotateCcw, CornerDownLeft } from 'lucide-react';
 import { TerminalHistoryEntry } from '../core/types';
 
 interface TerminalPaneProps {
-  activeBranch: string | null;
+  headLabel: string | null;
   stagedTreeHash: string;
   history: TerminalHistoryEntry[];
   onExecute: (command: string) => void;
@@ -23,7 +23,7 @@ const QUICK_COMMANDS = [
 ];
 
 export const TerminalPane: React.FC<TerminalPaneProps> = ({
-  activeBranch,
+  headLabel,
   stagedTreeHash,
   history,
   onExecute,
@@ -91,10 +91,8 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
         'clibm board move CLIBM-103 review',
         'clibm commit -m "',
         'clibm log',
-        'clibm branch',
-        'clibm checkout feat/plugin-hooks',
-        'clibm diff main feat/plugin-hooks',
-        'clibm merge feat/plugin-hooks',
+        'clibm diff HEAD~1 HEAD',
+        'clibm restore HEAD~1',
         'clibm fsck',
         'clibm plugin run dep-audit',
       ];
@@ -112,7 +110,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
           <span className="font-semibold text-white">clibm-cli v0.1.0 (rust/blake3-cas)</span>
           <span aria-hidden="true" className="text-zinc-600">·</span>
           <span>
-            branch: <strong className="text-white">{activeBranch || 'detached'}</strong>
+            HEAD: <strong className="text-white tabular-nums">{headLabel || 'none'}</strong>
           </span>
           <span aria-hidden="true" className="text-zinc-600">·</span>
           <span className="tabular-nums">tree: {stagedTreeHash.slice(0, 12)}</span>
@@ -154,7 +152,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
             {entry.command && (
               <div className="flex items-center gap-2 text-zinc-400">
                 <span className="text-zinc-100 font-semibold select-none">
-                  clibm@{activeBranch || 'HEAD'}:~$
+                  clibm:~$
                 </span>
                 <span className="text-white font-medium">{entry.command}</span>
                 <span className="ml-auto text-[11px] text-zinc-600 tabular-nums select-none">
@@ -186,7 +184,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
         className="flex items-center gap-2 px-4 py-2.5 bg-zinc-900/90 border-t border-zinc-800"
       >
         <span className="font-mono text-xs font-semibold text-zinc-100 whitespace-nowrap select-none">
-          clibm@{activeBranch || 'HEAD'}:~$
+          clibm:~$
         </span>
         <input
           ref={inputRef}

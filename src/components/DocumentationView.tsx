@@ -238,36 +238,37 @@ cargo build --release --workspace`,
   {
     id: 'versioning-and-diffs',
     number: '05',
-    title: 'Git-Style Versioning, Branching, Diffs & Merges',
+    title: 'Versioning: History, Diffs & Restore',
     summary:
-      'How CLIBM snapshots project state, branches without data duplication, computes structural diffs, and merges branches.',
+      'How CLIBM records every change in one straight history, computes structural diffs, and brings back earlier states.',
     sections: [
       {
-        heading: 'Tree Snapshots, Commits, Diffs & Merges (Spec 2.1.4)',
+        heading: 'Tree Snapshots, Commits, Diffs & Restore (Spec 2.1.4)',
         body: [
-          'Instead of copying the entire database on every version, a commit points to a compact `TreeSnapshotPayload` that maps entity IDs (`CLIBM-101`) to their current 64-char BLAKE3 object hash. Unchanged tasks share the exact same file on disk across all commits and branches.',
+          'Instead of copying the entire database on every version, a commit points to a compact `TreeSnapshotPayload` that maps entity IDs (`CLIBM-101`) to their current 64-char BLAKE3 object hash. Unchanged tasks share the exact same file on disk across all commits.',
+          'CLIBM keeps one straight history without branches: every change is a commit on top of the previous one. Refer to commits by hash, `HEAD`, or `HEAD~N` (N commits before HEAD).',
         ],
         runnableSnippets: [
           {
             id: 'ver-log',
-            label: 'Traverse the commit history DAG',
+            label: 'Show the commit history',
             command: 'clibm log',
             explanation:
-              'Lists commits in reverse chronological order with commit hash, tree hash, author, and message.',
+              'Lists commits newest first with commit hash, tree hash, author, and message.',
           },
           {
             id: 'ver-diff',
-            label: 'Run structural diff between main and feat/plugin-hooks',
-            command: 'clibm diff main feat/plugin-hooks',
+            label: 'Compare the latest commit with the one before',
+            command: 'clibm diff HEAD~1 HEAD',
             explanation:
               'Compares both TreeSnapshotPayloads in O(N) time by comparing BLAKE3 hashes and detailing exact field changes.',
           },
           {
-            id: 'ver-merge',
-            label: 'Merge feat/plugin-hooks branch into current HEAD',
-            command: 'clibm merge feat/plugin-hooks',
+            id: 'ver-restore',
+            label: 'Bring back the state before the latest commit',
+            command: 'clibm restore HEAD~1',
             explanation:
-              'Combines the tree mappings from feat/plugin-hooks into the active branch and records a two-parent merge commit.',
+              'Records the earlier state as a NEW commit on top, so the history is kept. Task numbers used since then are never reused. `clibm restore HEAD --force` discards uncommitted changes.',
           },
         ],
       },

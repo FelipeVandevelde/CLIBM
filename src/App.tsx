@@ -10,7 +10,6 @@ import {
   RotateCcw,
   Terminal,
   FolderGit2,
-  GitBranch,
   Database,
   Kanban,
   BookOpen,
@@ -23,7 +22,6 @@ import {
 } from 'lucide-react';
 import {
   executeCliCommand,
-  getActiveBranch,
   getStagedTree,
   getTypedPayload,
   loadOrInitRepository,
@@ -156,8 +154,8 @@ export default function App() {
     e.target.value = '';
   };
 
-  const activeBranch = getActiveBranch(repoState);
   const headCommit = resolveHeadCommit(repoState);
+  const headLabel = headCommit ? headCommit.slice(0, 12) : null;
   const objectCount = Object.keys(repoState.objects).length;
 
   const { activeWorkspace, sortedWorkspaces } = useMemo(() => {
@@ -330,10 +328,6 @@ export default function App() {
               <span>AUTO-COMMIT: {repoState.config.auto_commit ? 'ON' : 'OFF'}</span>
             </button>
             <span aria-hidden="true">·</span>
-            <span>
-              Branch: <strong className="text-white">{activeBranch || 'detached'}</strong>
-            </span>
-            <span aria-hidden="true">·</span>
             <span className="tabular-nums">HEAD: {headCommit?.slice(0, 10)}</span>
             <span aria-hidden="true">·</span>
             <span className="tabular-nums">Tree: {repoState.stagedTreeHash.slice(0, 10)}</span>
@@ -424,7 +418,7 @@ export default function App() {
         {activeTab === 'showcase' && (
           <ShowcaseView
             repoState={repoState}
-            activeBranch={activeBranch}
+            headLabel={headLabel}
             terminalHistory={terminalHistory}
             onExecuteCommand={handleExecuteCommand}
             onClearTerminal={() => setTerminalHistory([])}
@@ -466,7 +460,7 @@ export default function App() {
           <div className="space-y-6">
             <ConfigurationView repoState={repoState} onRunCommand={handleExecuteCommand} />
             <TerminalPane
-              activeBranch={activeBranch}
+              headLabel={headLabel}
               stagedTreeHash={repoState.stagedTreeHash}
               history={terminalHistory}
               onExecute={handleExecuteCommand}
@@ -502,7 +496,7 @@ export default function App() {
                       : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  <GitBranch className="w-3.5 h-3.5" />
+                  <GitCommit className="w-3.5 h-3.5" />
                   <span>Version History &amp; Diff</span>
                 </button>
                 <button
@@ -547,7 +541,7 @@ export default function App() {
             {workbenchSubTab === 'terminal-kanban' && (
               <div className="space-y-6">
                 <TerminalPane
-                  activeBranch={activeBranch}
+                  headLabel={headLabel}
                   stagedTreeHash={repoState.stagedTreeHash}
                   history={terminalHistory}
                   onExecute={handleExecuteCommand}
@@ -561,7 +555,7 @@ export default function App() {
               <div className="space-y-6">
                 <VersioningAndDiffView repoState={repoState} onRunCommand={handleExecuteCommand} />
                 <TerminalPane
-                  activeBranch={activeBranch}
+                  headLabel={headLabel}
                   stagedTreeHash={repoState.stagedTreeHash}
                   history={terminalHistory}
                   onExecute={handleExecuteCommand}
@@ -575,7 +569,7 @@ export default function App() {
               <div className="space-y-6">
                 <CasInspectorView repoState={repoState} onRunCommand={handleExecuteCommand} />
                 <TerminalPane
-                  activeBranch={activeBranch}
+                  headLabel={headLabel}
                   stagedTreeHash={repoState.stagedTreeHash}
                   history={terminalHistory}
                   onExecute={handleExecuteCommand}
@@ -589,7 +583,7 @@ export default function App() {
               <div className="space-y-6">
                 <ConfigurationView repoState={repoState} onRunCommand={handleExecuteCommand} />
                 <TerminalPane
-                  activeBranch={activeBranch}
+                  headLabel={headLabel}
                   stagedTreeHash={repoState.stagedTreeHash}
                   history={terminalHistory}
                   onExecute={handleExecuteCommand}

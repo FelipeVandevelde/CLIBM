@@ -45,10 +45,11 @@ fn build_report(run: &PluginRun, all_projects: bool) -> Result<String> {
     }
     let (tree_hash, tree) = engine.load_working_tree()?;
     let active = engine.active_project(&tree)?;
-    let branch = engine
+    let head = engine
         .cas
-        .current_branch()?
-        .unwrap_or_else(|| "detached HEAD".to_string());
+        .resolve_head_commit()?
+        .map(|h| h[..12.min(h.len())].to_string())
+        .unwrap_or_else(|| "none".to_string());
 
     let mut projects: Vec<ProjectPayload> = Vec::new();
     for hash in tree.projects.values() {
@@ -64,13 +65,13 @@ fn build_report(run: &PluginRun, all_projects: bool) -> Result<String> {
 
     let mut md = String::new();
     md.push_str(&format!(
-        "# CLIBM task report - {}\n\nBranch `{}`, tree `{}`, generated {}.\n",
+        "# CLIBM task report - {}\n\nCommit `{}`, tree `{}`, generated {}.\n",
         if all_projects {
             "all projects".to_string()
         } else {
             format!("{} ({})", active.name, active.code)
         },
-        branch,
+        head,
         &tree_hash[..12.min(tree_hash.len())],
         chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")
     ));

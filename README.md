@@ -42,8 +42,9 @@ CLIBM is project management for developers, teams and AI agents without a databa
 1. **No database**: everything is plain files in `.clibm/` next to your code, fully offline.
 2. **Content-addressed storage**: every workspace, project, board, task, tree and commit is
    stored as canonical JSON and named by its 256-bit BLAKE3 hash.
-3. **Git-style versioning**: commits, branches, checkout, structural diffs and three-way
-   merges. Unchanged tasks are shared between branches and commits.
+3. **Full history**: every change is a commit on one straight history (no branches), with
+   structural diffs between any two commits and `restore` to bring back an earlier state.
+   Unchanged tasks are shared between commits.
 4. **Dependencies and workflow rules**: tasks can depend on other tasks; cycles are refused,
    and moves respect dependencies and column WIP limits.
 5. **Headless core**: the `clibm_core` library holds all the logic; the CLI, the terminal UI,
@@ -54,7 +55,7 @@ CLIBM is project management for developers, teams and AI agents without a databa
 ### How work is organized
 
 ```
-Repository (.clibm/)        one per project folder, with branches like Git
+Repository (.clibm/)        one per project folder, with the full history of every change
 └── Workspace  WS-01        a team, product or area; one is active at a time
     └── Project PRJ-01      has a code (APP) that prefixes its task IDs: APP-101, APP-102, ...
         └── Board BRD-01    one Kanban board per project: columns, WIP limits, workflow rules
@@ -85,8 +86,8 @@ project.
 - **Computed index (`index.rs`)**: `.clibm/index/computed.json` for fast lookups by column,
   priority, tag and assignee, plus dependency-cycle detection.
 - **Automatic commits**: with `auto_commit = true` (default) every change becomes a commit.
-- **Stable task numbers**: a deleted task's number is never reused, even across branches
-  (same-ID tasks added on two branches are renumbered on merge).
+- **Stable task numbers**: a deleted task's number is never reused, even after restoring an
+  older state.
 - **AI integration**: the `clibm-mcp` plugin implements the Model Context Protocol
   (`2024-11-05`) over stdio and a local HTTP endpoint.
 
@@ -108,14 +109,14 @@ flowchart TD
         ENGINE["ClibmEngine"]
         CANONICAL["Canonical JSON"]
         CAS["BLAKE3 CAS Storage"]
-        VERSIONING["Versioning & 3-way merge"]
+        VERSIONING["History, diff & restore"]
         INDEX["Computed Index & Cycle Checker"]
         PLUGIN_MGR["Plugin registry & lifecycle hooks"]
     end
 
     subgraph Storage[".clibm/ Repository Structure"]
         OBJECTS[".clibm/objects/xx/yyy...json\n(Immutable CAS Envelopes)"]
-        REFS[".clibm/refs/heads/* & HEAD\n(Branches & Pointers)"]
+        REFS[".clibm/HEAD & refs/heads/main\n(Latest commit)"]
         TREE[".clibm/STAGE_TREE\n(Hash of the current tree)"]
         COMPUTED[".clibm/index/computed.json\n(Fast Query Index)"]
         CONFIG[".clibm/config.json\n(Repo Configuration)"]
@@ -157,9 +158,9 @@ CLIBM/
     ├── scripts/               # Shared PATH, ledger, build and registry helpers (env-path)
     ├── src/
     │   ├── canonical.rs       # Canonical JSON & hashing
-    │   ├── cas.rs             # Object store, refs, branch-name validation, fsck
+    │   ├── cas.rs             # Object store, HEAD and HEAD~N references, fsck
     │   ├── engine.rs          # ClibmEngine: tasks, workspaces, status, rules, hooks
-    │   ├── versioning.rs      # Commits, log, diff, 3-way merge
+    │   ├── versioning.rs      # Commits, log, diff, task history
     │   ├── index.rs           # Computed index & cycle detection
     │   ├── plugin.rs          # Plugin registry, install/uninstall, hooks
     │   ├── plugin_sdk.rs      # Helper for writing plugins on clibm_core
@@ -420,7 +421,7 @@ whenever the task changes).
 
 ```bash
 clibm init [--workspace <WS>] [--code <CODE>] [--name <NAME>] [--lang <en|pt-BR|es>] [--auto-commit <bool>] [--install-path <DIR>] [--with-defaults]
-clibm status                    # branch, HEAD, uncommitted changes, active project, counts per column
+clibm status                    # HEAD, history size, uncommitted changes, active project, counts per column
 clibm fsck                      # verify every object's BLAKE3 hash (exit code 1 on corruption)
 clibm cat-object <HASH_PREFIX>  # print a stored object
 clibm export [-o <FILE>]        # whole repository as a portable JSON bundle
@@ -506,29 +507,32 @@ clibm board rules [--enforce-deps <bool>] [--enforce-wip <bool>] [--require-assi
   `--require-assignee` applies to the `in-progress` column. The repository-wide switches
   `enforce_dependencies` / `enforce_wip_limits` in `clibm config` still apply on top.
 
-### Versioning, branching & merges
+### History
+
+CLIBM keeps the history of every change as one straight line of commits. There are no
+branches: the history is for tracking and going back, not for parallel versions.
 
 ```bash
 clibm commit -m <MESSAGE> [-a <AUTHOR>]          # does nothing when there is nothing to commit
-clibm log [<REF>]
-clibm branch [<NAME>]                            # list, or create at HEAD (names are validated)
-clibm checkout <BRANCH_OR_COMMIT> [--force]      # refuses to discard uncommitted changes
-clibm diff <FROM_REF> <TO_REF>
-clibm merge <BRANCH> [--ours | --theirs] [-a <AUTHOR>]
+clibm log [<REF>]                                # newest first; start from <REF> instead of HEAD
+clibm diff <FROM_REF> <TO_REF>                   # e.g. clibm diff HEAD~1 HEAD
+clibm restore <REF> [--force] [-m <MESSAGE>]     # bring back an earlier state as a new commit
+clibm task history <TASK>                        # every version of one task
 ```
 
-`merge` is a three-way merge against the common ancestor: changes made on one side (including
-deletions) are applied, and changes made differently on both sides are conflicts. Conflicts stop
-the merge (nothing is changed) unless you pass `--ours` or `--theirs`. Tasks added on both
-branches with the same ID are renumbered. When possible the merge fast-forwards.
-
-`diff` lists changed tasks, boards (added/removed columns, WIP limits, rules, column order),
-projects and workspaces.
-
-Known limitation: creating a project (or a workspace) on two branches gives both the same ID
-(for example `PRJ-02` and its board `BRD-02`), so merging them stops with conflicts. Resolving
-them with `--ours` or `--theirs` keeps only one of the two projects, and the other branch's
-tasks end up attached to it. Create projects on one branch.
+- **References**: a commit hash prefix from `clibm log`, `HEAD` (the latest commit) or `HEAD~N`
+  (N commits before HEAD; `HEAD~` = `HEAD~1`).
+- `diff` lists changed tasks, boards (added/removed columns, WIP limits, rules, column order),
+  projects and workspaces.
+- `restore` records the earlier state as a **new** commit on top, so nothing in the history is
+  lost and you can restore back again. Task numbers used since then are never handed out
+  again, and you stay in your active project when it exists in the restored state.
+  It refuses while there are uncommitted changes (`auto_commit = false`) unless `--force`;
+  `clibm restore HEAD --force` simply discards uncommitted changes. With
+  `auto_commit = false` the restored state is staged for `clibm commit`.
+- Repositories created by older CLIBM versions keep working. If they still have branch refs
+  or a HEAD on an old commit, `clibm status` and `clibm fsck` show a note; new commits
+  continue from HEAD and nothing is deleted.
 
 ### Plugins
 
@@ -568,14 +572,13 @@ clibm uninstall [--purge] [--yes]
 
 ```
 .clibm/
-├── HEAD                         # "ref: refs/heads/main" or a commit hash (detached)
+├── HEAD                         # "ref: refs/heads/main"
 ├── STAGE_TREE                   # hash of the current (staged) tree object
 ├── config.json                  # project configuration
 ├── index/
 │   └── computed.json            # lookups by column, priority, tag, assignee; cycles
 ├── refs/heads/
-│   ├── main                     # commit hash of branch 'main'
-│   └── feature/login            # branch names may contain '/'
+│   └── main                     # hash of the latest commit
 ├── plugins/
 │   └── registry.json            # per-project plugin on/off overrides
 └── objects/
@@ -584,7 +587,8 @@ clibm uninstall [--purge] [--yes]
 
 Object types: `workspace`, `project`, `board` (columns, WIP limits, workflow rules), `task`,
 `tree` (entity IDs → object hashes, plus per-project task counters) and `commit` (tree hash,
-parents, author, time, message).
+parent, author, time, message). Commits made by older versions may have two parents (merges)
+and are still read normally.
 
 ---
 

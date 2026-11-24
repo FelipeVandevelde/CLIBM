@@ -7,7 +7,7 @@ use crate::cas::{CasObject, CasStore};
 use crate::index::ComputedIndex;
 use crate::models::*;
 use crate::plugin::PluginManager;
-use crate::versioning::{MergeOutcome, MergeStrategy, VersioningEngine};
+use crate::versioning::VersioningEngine;
 use anyhow::{anyhow, bail, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -40,8 +40,12 @@ pub struct ColumnStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusReport {
     pub repository: String,
-    pub branch: Option<String>,
     pub head_commit: Option<String>,
+    /// Number of commits in the history (HEAD and everything before it).
+    pub commits: usize,
+    /// Set for repositories made when CLIBM still had branches (leftover refs or a
+    /// detached HEAD); see [`CasStore::history_note`](crate::cas::CasStore::history_note).
+    pub history_note: Option<String>,
     pub head_tree: Option<String>,
     pub staged_tree: String,
     /// `true` when the staged tree differs from the tree of the HEAD commit.
@@ -58,8 +62,19 @@ pub struct StatusReport {
     pub project_tasks: usize,
     pub total_tasks: usize,
     pub workspaces: usize,
-    pub branches: usize,
     pub objects: usize,
+}
+
+/// Result of [`ClibmEngine::restore`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreResult {
+    /// The commit whose state was brought back.
+    pub target: String,
+    /// The new commit recording the restore (`None` with `auto_commit = false`, or when
+    /// the state already matched HEAD).
+    pub commit: Option<String>,
+    /// `false` when the state already matched HEAD and nothing was discarded.
+    pub changed: bool,
 }
 
 /// Field changes applied by [`ClibmEngine::edit_task`]. `None` leaves a field untouched;
@@ -426,7 +441,6 @@ impl ClibmEngine {
             &tree_hash,
             &cfg.author_name,
             "Initialize CLIBM repository with workspace, project, and Kanban board",
-            None,
         )?;
 
         Ok(commit_hash)
@@ -499,7 +513,6 @@ impl ClibmEngine {
                 &tree_hash,
                 &cfg.author_name,
                 commit_message,
-                None,
             )?;
             self.fire_hook(
                 "post-commit",
@@ -835,7 +848,8 @@ impl ClibmEngine {
 
         Ok(StatusReport {
             repository: self.cas.clibm_dir().display().to_string(),
-            branch: self.cas.current_branch()?,
+            commits: VersioningEngine::log_history(&self.cas, None)?.len(),
+            history_note: self.cas.history_note()?,
             head_commit,
             head_tree,
             staged_tree,
@@ -852,7 +866,6 @@ impl ClibmEngine {
             project_tasks: project_tasks.len(),
             total_tasks: tasks.len(),
             workspaces: tree.workspaces.len(),
-            branches: self.cas.list_branches()?.len(),
             objects: self.cas.count_objects(),
         })
     }
@@ -1895,8 +1908,7 @@ impl ClibmEngine {
             .map(str::to_string)
             .unwrap_or_else(|| cfg.author_name.clone());
         self.fire_hook("pre-commit", &tree_hash, json!({ "message": message, "auto": false }))?;
-        let commit_hash =
-            VersioningEngine::create_commit(&self.cas, &tree_hash, &author, message, None)?;
+        let commit_hash = VersioningEngine::create_commit(&self.cas, &tree_hash, &author, message)?;
         self.fire_hook(
             "post-commit",
             &tree_hash,
@@ -1905,63 +1917,76 @@ impl ClibmEngine {
         Ok(Some(commit_hash))
     }
 
-    /// Creates branch `name` at the HEAD commit.
-    pub fn create_branch(&self, name: &str) -> Result<String> {
-        crate::cas::validate_ref_name(name)?;
-        if self.cas.get_branch_commit(name)?.is_some() {
-            bail!("Branch '{}' already exists", name);
-        }
-        let head_commit = self
-            .cas
-            .resolve_head_commit()?
-            .ok_or_else(|| anyhow!("Cannot create a branch before the first commit"))?;
-        self.cas.set_branch_commit(name, &head_commit)?;
-        Ok(head_commit)
-    }
-
-    /// Switches to a branch or commit. Refuses when the working tree has uncommitted
-    /// changes, unless `force` is set (those changes are then discarded).
-    pub fn checkout(&self, target_ref: &str, force: bool) -> Result<String> {
-        if !force && self.is_dirty()? {
+    /// Brings back the state (workspaces, projects, boards, tasks) of an earlier commit as a
+    /// NEW commit on top of HEAD, so the history only grows and nothing is lost.
+    ///
+    /// - `target`: a commit hash prefix, `HEAD` or `HEAD~N`.
+    /// - Refuses when there are uncommitted changes, unless `force` (they are discarded);
+    ///   `restore HEAD --force` therefore just throws uncommitted changes away.
+    /// - Task numbers issued after `target` are never handed out again.
+    /// - The active workspace/project stay as they are when they exist in the restored state.
+    /// - With `auto_commit = false` the restored state is staged for `clibm commit`.
+    pub fn restore(&self, target: &str, force: bool, message: Option<&str>) -> Result<RestoreResult> {
+        let dirty = self.is_dirty()?;
+        if dirty && !force {
             bail!(
                 "You have uncommitted changes. Commit them with `clibm commit -m <msg>` \
                  or pass --force to discard them."
             );
         }
+        let target_commit = self.cas.resolve_ref(target)?;
+        let commit: CommitPayload = self.cas.get_typed_payload(&target_commit, OBJ_COMMIT)?;
+        let mut tree: TreeSnapshotPayload = self.cas.get_typed_payload(&commit.tree_hash, OBJ_TREE)?;
 
-        if let Some(branch_commit) = self.cas.get_branch_commit(target_ref)? {
-            self.cas.set_head_branch(target_ref)?;
-            let commit: CommitPayload = self.cas.get_typed_payload(&branch_commit, OBJ_COMMIT)?;
-            let tree: TreeSnapshotPayload =
-                self.cas.get_typed_payload(&commit.tree_hash, OBJ_TREE)?;
-            self.save_working_tree(&tree)?;
-            return Ok(branch_commit);
+        let head_tree_hash = self.head_tree_hash()?;
+        let head_tree: Option<TreeSnapshotPayload> = match &head_tree_hash {
+            Some(h) => Some(self.cas.get_typed_payload(h, OBJ_TREE)?),
+            None => None,
+        };
+
+        if let Some(head) = &head_tree {
+            // Keep every number issued up to HEAD reserved.
+            for (code, n) in &head.task_counters {
+                tree.record_task_number(code, *n);
+            }
+            for id in head.tasks.keys() {
+                if let Some((code, n)) = split_entity_id(id) {
+                    tree.record_task_number(code, n);
+                }
+            }
+            // Stay where the user is, when that project still exists.
+            if tree.projects.contains_key(&head.active_project_id)
+                && tree.workspaces.contains_key(&head.active_workspace_id)
+            {
+                tree.active_project_id = head.active_project_id.clone();
+                tree.active_workspace_id = head.active_workspace_id.clone();
+            }
         }
 
-        let commit_hash = self.cas.resolve_ref(target_ref)?;
-        let commit: CommitPayload = self.cas.get_typed_payload(&commit_hash, OBJ_COMMIT)?;
-        self.cas.set_detached_head(&commit_hash)?;
-        let tree: TreeSnapshotPayload = self.cas.get_typed_payload(&commit.tree_hash, OBJ_TREE)?;
-        self.save_working_tree(&tree)?;
-        Ok(commit_hash)
-    }
-
-    /// Merges `branch` into HEAD (see [`VersioningEngine::merge_branch`]). Refuses when the
-    /// working tree has uncommitted changes.
-    pub fn merge(
-        &self,
-        branch: &str,
-        author: Option<&str>,
-        strategy: MergeStrategy,
-    ) -> Result<MergeOutcome> {
-        if self.is_dirty()? {
-            bail!("You have uncommitted changes. Commit them before merging.");
+        let short_target = &target_commit[..target_commit.len().min(12)];
+        let new_tree_hash = self.cas.put_object(OBJ_TREE, &tree)?;
+        if Some(&new_tree_hash) == head_tree_hash.as_ref() {
+            // Same state as HEAD: only drop uncommitted changes, no new commit.
+            if dirty {
+                self.save_working_tree(&tree)?;
+            }
+            return Ok(RestoreResult {
+                target: target_commit,
+                commit: None,
+                changed: dirty,
+            });
         }
-        let cfg = self.cas.load_config()?;
-        let author = author
+        let msg = message
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| cfg.author_name.clone());
-        VersioningEngine::merge_branch(&self.cas, branch, &author, strategy)
+            .unwrap_or_else(|| format!("restore state of {}", short_target));
+        let (_, commit) = self.record_mutation(&tree, &msg)?;
+        Ok(RestoreResult {
+            target: target_commit,
+            commit,
+            changed: true,
+        })
     }
 
     pub fn export_bundle(&self) -> Result<PortableBundle> {

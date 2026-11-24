@@ -37,7 +37,8 @@ const RELOAD_EVERY: Duration = Duration::from_secs(2);
 
 /// What the screen shows; reloaded after each action and every few seconds.
 struct View {
-    branch: String,
+    /// Short hash of the HEAD commit (latest entry of the history).
+    head: String,
     tree_hash: String,
     dirty: bool,
     project_label: String,
@@ -88,13 +89,14 @@ impl App {
                 tasks.push(task);
             }
         }
-        let branch = self
+        let head = self
             .engine
             .cas
-            .current_branch()?
-            .unwrap_or_else(|| "detached".to_string());
+            .resolve_head_commit()?
+            .map(|h| h[..12.min(h.len())].to_string())
+            .unwrap_or_else(|| "none".to_string());
         Ok(View {
-            branch,
+            head,
             tree_hash,
             dirty: self.engine.is_dirty().unwrap_or(false),
             project_label: format!("{} - {}", project.code, project.name),
@@ -221,9 +223,9 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  {}  |  branch {}  |  tree {}{}  |  {}",
+                "  {}  |  HEAD {}  |  tree {}{}  |  {}",
                 view.project_label,
-                view.branch,
+                view.head,
                 &view.tree_hash[..12.min(view.tree_hash.len())],
                 if view.dirty { " (uncommitted)" } else { "" },
                 view.board.name

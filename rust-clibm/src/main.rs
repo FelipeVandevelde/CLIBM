@@ -16,7 +16,7 @@ use clibm_core::install::{
 use clibm_core::models::*;
 use clibm_core::plugin::PluginManager;
 use clibm_core::update::{self, normalize_repo_url, official_plugin_folder, UpdateSource};
-use clibm_core::versioning::{MergeKind, MergeStrategy, VersioningEngine};
+use clibm_core::versioning::VersioningEngine;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::env;
@@ -252,16 +252,15 @@ fn main() -> Result<()> {
             if cli.json {
                 return print_json(&st);
             }
-            match (&st.branch, &st.head_commit) {
-                (Some(b), _) => println!("On branch {}", b),
-                (None, Some(h)) => println!("HEAD detached at {}", short(h)),
-                (None, None) => println!("No commits yet"),
-            }
             println!("Repository : {}", st.repository);
             println!(
-                "HEAD       : {}",
-                st.head_commit.as_deref().map(short).unwrap_or("(none)")
+                "HEAD       : {} ({} commit(s) in history)",
+                st.head_commit.as_deref().map(short).unwrap_or("(none)"),
+                st.commits
             );
+            if let Some(note) = &st.history_note {
+                println!("Note       : {}", note);
+            }
             println!("Staged tree: {}", short(&st.staged_tree));
             if st.dirty {
                 println!("Changes    : uncommitted changes (run `clibm commit -m <msg>`)");
@@ -288,8 +287,8 @@ fn main() -> Result<()> {
                 st.project_tasks, st.total_tasks
             );
             println!(
-                "Repository : {} workspace(s), {} branch(es), {} objects, auto_commit = {}",
-                st.workspaces, st.branches, st.objects, st.auto_commit
+                "Repository : {} workspace(s), {} objects, auto_commit = {}",
+                st.workspaces, st.objects, st.auto_commit
             );
         }
 
@@ -1019,41 +1018,37 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Branch { name } => {
-            if let Some(new_branch) = name {
-                let head_commit = engine.create_branch(&new_branch)?;
-                println!("Created branch '{}' at {}", new_branch, short(&head_commit));
-            } else {
-                let active = engine.cas.current_branch()?;
-                if cli.json {
-                    let out: Vec<serde_json::Value> = engine
-                        .cas
-                        .list_branches()?
-                        .into_iter()
-                        .map(|(b, h)| {
-                            serde_json::json!({
-                                "name": b,
-                                "commit": h,
-                                "current": active.as_deref() == Some(b.as_str()),
-                            })
-                        })
-                        .collect();
-                    return print_json(&out);
+        Commands::Restore {
+            target,
+            force,
+            message,
+        } => {
+            let res = engine.restore(&target, force, message.as_deref())?;
+            if cli.json {
+                return print_json(&res);
+            }
+            match (&res.commit, res.changed) {
+                (Some(c), _) => {
+                    println!(
+                        "Restored the state of {} as new commit {} (the history before it is kept)",
+                        short(&res.target),
+                        short(c)
+                    );
                 }
-                for (b, h) in engine.cas.list_branches()? {
-                    let marker = if active.as_deref() == Some(b.as_str()) {
-                        "*"
+                (None, true) => {
+                    if engine.is_dirty()? {
+                        println!(
+                            "Restored the state of {} in the working tree (auto_commit is off: run `clibm commit -m <msg>`)",
+                            short(&res.target)
+                        );
                     } else {
-                        " "
-                    };
-                    println!("{} {:<18} {}", marker, b, &h[..12]);
+                        println!("Discarded the uncommitted changes (back to HEAD {})", short(&res.target));
+                    }
+                }
+                (None, false) => {
+                    println!("Nothing to restore: the state of {} already matches HEAD", short(&res.target));
                 }
             }
-        }
-
-        Commands::Checkout { target, force } => {
-            let commit_hash = engine.checkout(&target, force)?;
-            println!("Switched to '{}' (commit {})", target, short(&commit_hash));
         }
 
         Commands::Diff { from_ref, to_ref } => {
@@ -1085,52 +1080,6 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Merge {
-            branch,
-            author,
-            ours,
-            theirs,
-        } => {
-            let strategy = if ours {
-                MergeStrategy::Ours
-            } else if theirs {
-                MergeStrategy::Theirs
-            } else {
-                MergeStrategy::Abort
-            };
-            let outcome = engine.merge(&branch, author.as_deref(), strategy)?;
-            if cli.json {
-                return print_json(&outcome);
-            }
-            match outcome.kind {
-                MergeKind::UpToDate => println!("Already up to date with '{}'.", branch),
-                MergeKind::FastForward => println!(
-                    "Fast-forwarded to '{}' (commit {})",
-                    branch,
-                    outcome.commit.as_deref().map(short).unwrap_or("-")
-                ),
-                MergeKind::Merged => {
-                    println!(
-                        "Merged branch '{}' -> merge commit {}",
-                        branch,
-                        outcome.commit.as_deref().map(short).unwrap_or("-")
-                    );
-                    for (old, new) in &outcome.renumbered {
-                        println!("  Renumbered incoming task {} -> {} (same ID on both branches)", old, new);
-                    }
-                    for c in &outcome.resolved_conflicts {
-                        println!(
-                            "  Resolved conflict ({}): {} {} - {}",
-                            if ours { "ours" } else { "theirs" },
-                            c.entity_type,
-                            c.entity_id,
-                            c.reason
-                        );
-                    }
-                }
-            }
-        }
-
         Commands::CatObject { hash } => {
             let obj = engine.cas.get_raw_object(&hash)?;
             println!("{}", serde_json::to_string_pretty(&obj)?);
@@ -1154,6 +1103,9 @@ fn main() -> Result<()> {
                 }
                 if !report.corrupted_hashes.is_empty() {
                     println!("Corrupted hashes: {:?}", report.corrupted_hashes);
+                }
+                if let Some(note) = engine.cas.history_note()? {
+                    println!("Note: {}", note);
                 }
             }
             if !report.corrupted_hashes.is_empty() {
@@ -1620,12 +1572,12 @@ fn main() -> Result<()> {
                 if local_clibm_exists {
                     let repo = ClibmEngine::open_exact(&cwd);
                     let objects = repo.cas.count_objects();
-                    let branches = repo.cas.list_branches().map(|b| b.len()).unwrap_or(0);
+                    let commits = VersioningEngine::log_history(&repo.cas, None).map(|c| c.len()).unwrap_or(0);
                     println!(
-                        "    This permanently deletes {} ({} objects, {} branch(es)). It cannot be undone.",
+                        "    This permanently deletes {} ({} objects, {} commit(s) of history). It cannot be undone.",
                         local_clibm.display(),
                         objects,
-                        branches
+                        commits
                     );
                     let approved = yes || confirm("    Delete it? [y/N]:");
                     if approved {

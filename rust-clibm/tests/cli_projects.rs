@@ -236,13 +236,14 @@ fn transfer_into_a_named_project() {
 fn diff_reports_projects_and_column_changes() {
     let p = TempProject::new("diff-prj");
     p.init();
-    p.ok(&["branch", "before"]);
+    let before = p.json(&["log"])[0]["hash"].as_str().unwrap().to_string();
     p.ok(&["project", "create", "Api", "-c", "API"]);
     p.ok(&["board", "column", "add", "QA"]);
     p.ok(&["board", "column", "edit", "in-progress", "--wip", "5"]);
     p.ok(&["board", "rules", "--require-assignee", "true"]);
 
-    let diff = p.json(&["diff", "before", "main"]);
+    let diff = p.json(&["diff", &before[..12], "HEAD"]);
+    assert_eq!(diff["changes"], p.json(&["diff", "HEAD~4", "HEAD"])["changes"]);
     let changes = diff["changes"].as_array().unwrap();
     let find = |ty: &str, id: &str| {
         changes

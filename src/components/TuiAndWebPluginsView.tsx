@@ -17,10 +17,10 @@ import {
   TaskPriority,
 } from '../core/types';
 import {
-  getActiveBranch,
   getCommitHistory,
   getStagedTree,
   getTypedPayload,
+  resolveHeadCommit,
 } from '../core/clibmCore';
 import {
   downloadPluginZip,
@@ -69,7 +69,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
     setMode(initialMode);
   }, [initialMode]);
 
-  const { board, tasks, activeBranch, commits } = useMemo(() => {
+  const { board, tasks, headLabel, commits } = useMemo(() => {
     const tree = getStagedTree(repoState);
     const brdHash = Object.values(tree.boards)[0];
     const { payload: boardPayload } = getTypedPayload<KanbanBoardPayload>(
@@ -85,7 +85,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
     return {
       board: boardPayload,
       tasks: loadedTasks,
-      activeBranch: getActiveBranch(repoState) || 'detached',
+      headLabel: resolveHeadCommit(repoState)?.slice(0, 12) || 'none',
       commits: getCommitHistory(repoState),
     };
   }, [repoState]);
@@ -119,7 +119,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
   };
 
   const triggerTuiCommit = () => {
-    const msg = `Snapshot committed via clibm-tui on branch ${activeBranch}`;
+    const msg = 'Snapshot committed via clibm-tui';
     onRunCommand(`clibm commit -m "${msg}"`);
     setTuiStatusBanner(`Committed staged tree ${repoState.stagedTreeHash.slice(0, 12)} -> HEAD`);
   };
@@ -300,7 +300,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
                   CLIBM-TUI v0.1.0 (ratatui + crossterm)
                 </span>
                 <span>
-                  Branch: <strong className="text-white">{activeBranch}</strong>
+                  HEAD: <strong className="text-white">{headLabel}</strong>
                 </span>
                 <span className="text-zinc-600">|</span>
                 <span className="tabular-nums">
@@ -444,7 +444,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
 
               <div className="lg:col-span-5 border border-zinc-700 bg-zinc-900/60 p-3 space-y-1.5">
                 <div className="text-white font-semibold border-b border-zinc-800 pb-1">
-                  ┌─ Commit DAG Log (refs/heads/{activeBranch})
+                  ┌─ Commit History (HEAD {headLabel})
                 </div>
                 <div className="space-y-1 max-h-28 overflow-y-auto">
                   {commits.slice(0, 4).map(({ hash, commit }) => (
@@ -536,7 +536,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
                 </span>
               </div>
               <span className="text-zinc-400 tabular-nums">
-                branch: {activeBranch} · tree: {repoState.stagedTreeHash.slice(0, 12)}
+                HEAD: {headLabel} · tree: {repoState.stagedTreeHash.slice(0, 12)}
               </span>
             </div>
 

@@ -157,8 +157,9 @@ fn state_snapshot(engine: &ClibmEngine) -> Result<Value> {
     }
     Ok(json!({
         "ok": true,
-        "branch": st.branch,
         "head_commit": st.head_commit,
+        "commits": st.commits,
+        "history_note": st.history_note,
         "staged_tree_hash": tree_hash,
         "dirty": st.dirty,
         "auto_commit": st.auto_commit,

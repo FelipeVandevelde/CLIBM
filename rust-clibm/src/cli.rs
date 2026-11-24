@@ -49,7 +49,7 @@ pub enum Commands {
         install_path: Option<String>,
     },
 
-    /// Show the branch, HEAD commit, uncommitted changes, active workspace/project and task counts
+    /// Show the HEAD commit, history size, uncommitted changes, active workspace/project and task counts
     Status,
 
     /// Manage workspaces, switch active workspace, and coordinate across workspaces
@@ -92,45 +92,29 @@ pub enum Commands {
         author: Option<String>,
     },
 
-    /// Show commit history log
+    /// Show the commit history (newest first)
     Log {
-        /// Optional branch or commit hash to start from
+        /// Start from this commit instead of HEAD (hash prefix, HEAD or HEAD~N)
         reference: Option<String>,
     },
 
-    /// List or create branches
-    Branch {
-        /// Branch name to create (if omitted, lists all branches)
-        name: Option<String>,
-    },
-
-    /// Checkout a branch or historical commit hash
-    Checkout {
-        /// Branch name or commit hash prefix
+    /// Bring back the state of an earlier commit as a new commit (history is kept).
+    /// `clibm restore HEAD --force` discards uncommitted changes.
+    Restore {
+        /// Commit to restore: hash prefix from `clibm log`, HEAD or HEAD~N
         target: String,
         /// Discard uncommitted changes instead of refusing
         #[arg(long)]
         force: bool,
+        /// Commit message (defaults to "restore state of <hash>")
+        #[arg(short, long)]
+        message: Option<String>,
     },
 
-    /// Compare two commits or branches structurally
+    /// Compare two commits structurally (hash prefix, HEAD or HEAD~N)
     Diff {
         from_ref: String,
         to_ref: String,
-    },
-
-    /// Three-way merge of a branch into HEAD. Conflicts stop the merge unless --ours/--theirs is given.
-    Merge {
-        branch: String,
-        /// Merge commit author (defaults to `author_name` in .clibm/config.json)
-        #[arg(short, long)]
-        author: Option<String>,
-        /// Resolve conflicts by keeping the current branch's version
-        #[arg(long, conflicts_with = "theirs")]
-        ours: bool,
-        /// Resolve conflicts by taking the merged branch's version
-        #[arg(long)]
-        theirs: bool,
     },
 
     /// Inspect a raw CAS object by its BLAKE3 hash or prefix
