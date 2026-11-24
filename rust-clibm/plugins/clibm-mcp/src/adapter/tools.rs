@@ -193,7 +193,7 @@ impl ToolRegistry {
                         "title": { "type": "string" },
                         "description": { "type": "string" },
                         "priority": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
-                        "column": { "type": "string", "description": "Column ID (default: todo)" },
+                        "column": { "type": "string", "description": "Column ID (default: the board's default column, normally todo; see clibm_board_columns)" },
                         "assignee": { "type": "string" },
                         "depends_on": { "type": "string", "description": "Comma-separated task references, e.g. \"101,APP-102\"" }
                     }
@@ -255,6 +255,52 @@ impl ToolRegistry {
                 Some(target) => bridge.execute(&["workspace", "switch", "--", target]),
                 None => bridge.execute(&["workspace", "switch"]),
             }),
+        });
+
+        self.register(ToolDefinition {
+            info: McpToolInfo {
+                name: "clibm_project_list".to_string(),
+                description: "List projects as JSON (ID, code, name, workspace, task count, which one is active) in the active workspace, or in all workspaces".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "all_workspaces": { "type": "boolean" } }
+                }),
+            },
+            is_mutating: false,
+            handler: Arc::new(|args, bridge| {
+                if args.get("all_workspaces").and_then(|b| b.as_bool()) == Some(true) {
+                    bridge.execute(&["--json", "project", "list", "--all-workspaces"])
+                } else {
+                    bridge.execute(&["--json", "project", "list"])
+                }
+            }),
+        });
+
+        self.register(ToolDefinition {
+            info: McpToolInfo {
+                name: "clibm_project_switch".to_string(),
+                description: "Make a project active by ID (PRJ-02), code (API) or name; new tasks are then created in it. Switches workspace too when the project is in another one".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["project"],
+                    "properties": { "project": { "type": "string" } }
+                }),
+            },
+            is_mutating: true,
+            handler: Arc::new(|args, bridge| {
+                let project = text(args, "project").unwrap_or_default();
+                bridge.execute(&["--json", "project", "switch", "--", project])
+            }),
+        });
+
+        self.register(ToolDefinition {
+            info: McpToolInfo {
+                name: "clibm_board_columns".to_string(),
+                description: "Columns of the active project's board as JSON: ID, name, position, WIP limit, done flag, task count, default column, and the workflow rules".to_string(),
+                input_schema: json!({ "type": "object", "properties": {} }),
+            },
+            is_mutating: false,
+            handler: Arc::new(|_args, bridge| bridge.execute(&["--json", "board", "column", "list"])),
         });
     }
 }

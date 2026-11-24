@@ -4,9 +4,12 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use clibm_core::cli::{
-    BoardCommands, Cli, Commands, ConfigCommands, PluginCommands, TaskCommands, WorkspaceCommands,
+    BoardCommands, Cli, ColumnCommands, Commands, ConfigCommands, PluginCommands,
+    ProjectCommands, TaskCommands, WorkspaceCommands,
 };
-use clibm_core::engine::{ClibmEngine, MutationResult, TaskEdit};
+use clibm_core::engine::{
+    BoardRulesEdit, ClibmEngine, ColumnEdit, MutationResult, NewColumn, TaskEdit,
+};
 use clibm_core::install::{
     clibm_home, default_plugins, normalize_install_profile, InstallConfig, INSTALL_PROFILES,
 };
@@ -64,6 +67,74 @@ fn parse_bool(val: &str) -> Result<bool> {
         "false" | "0" | "off" | "no" | "disabled" => Ok(false),
         other => bail!("Invalid boolean value '{}' (expected true/false)", other),
     }
+}
+
+/// Parses an optional boolean flag value (`--done true`).
+fn parse_opt_bool(val: Option<String>) -> Result<Option<bool>> {
+    val.as_deref().map(parse_bool).transpose()
+}
+
+/// Prints the standard line for a project or board change, or a no-op notice.
+fn report_entity(res: &MutationResult, done: &str, json: bool) -> Result<()> {
+    if json {
+        return print_json(res);
+    }
+    if res.changed {
+        println!("{} -> object {}", done, short(&res.hash));
+        print_auto_commit_notice(res.commit.clone());
+    } else {
+        println!("Nothing changed ({} already matches)", res.id);
+    }
+    Ok(())
+}
+
+/// Prints the board's columns with IDs, task counts and WIP limits.
+fn print_columns(engine: &ClibmEngine, json: bool) -> Result<()> {
+    let board = engine.active_board()?;
+    let counts = engine.column_task_counts(&board)?;
+    if json {
+        let cols: Vec<serde_json::Value> = board
+            .columns
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "id": c.id,
+                    "name": c.name,
+                    "position": c.order,
+                    "wip_limit": c.wip_limit,
+                    "done": c.is_completed_state,
+                    "tasks": counts.get(&c.id).copied().unwrap_or(0),
+                    "default": ClibmEngine::default_column(&board).map(|d| d.id == c.id).unwrap_or(false),
+                })
+            })
+            .collect();
+        return print_json(&serde_json::json!({
+            "board_id": board.id, "board_name": board.name, "columns": cols, "workflow": board.workflow
+        }));
+    }
+    let default_id = ClibmEngine::default_column(&board).map(|c| c.id.clone());
+    println!("Board: {} ({})", board.name, board.id);
+    println!("  {:<4} {:<16} {:<20} {:<7} {:<10} FLAGS", "POS", "ID", "NAME", "TASKS", "WIP");
+    println!("{}", "-".repeat(72));
+    for c in &board.columns {
+        let mut flags = Vec::new();
+        if c.is_completed_state {
+            flags.push("done");
+        }
+        if default_id.as_deref() == Some(c.id.as_str()) {
+            flags.push("default");
+        }
+        println!(
+            "  {:<4} {:<16} {:<20} {:<7} {:<10} {}",
+            c.order,
+            c.id,
+            c.name,
+            counts.get(&c.id).copied().unwrap_or(0),
+            c.wip_limit.map(|w| w.to_string()).unwrap_or_else(|| "-".to_string()),
+            flags.join(",")
+        );
+    }
+    Ok(())
 }
 
 fn print_auto_commit_notice(auto_commit_hash: Option<String>) {
@@ -298,6 +369,98 @@ fn main() -> Result<()> {
             }
         },
 
+        Commands::Project { action } => match action {
+            ProjectCommands::List { all_workspaces } => {
+                let rows = engine.list_projects(all_workspaces)?;
+                if cli.json {
+                    return print_json(&rows);
+                }
+                println!(
+                    "  {:<8} {:<8} {:<10} {:<26} {:<6} WORKSPACE",
+                    "ID", "CODE", "HASH", "NAME", "TASKS"
+                );
+                println!("{}", "-".repeat(82));
+                for r in rows {
+                    println!(
+                        "{} {:<8} {:<8} {:<10} {:<26} {:<6} {} ({})",
+                        if r.active { "*" } else { " " },
+                        r.id,
+                        r.project.code,
+                        &r.hash[..8],
+                        r.project.name,
+                        r.tasks,
+                        r.workspace_id,
+                        r.workspace_name
+                    );
+                }
+            }
+            ProjectCommands::Create {
+                name,
+                code,
+                description,
+                switch,
+            } => {
+                let (prj, hash, auto_commit) =
+                    engine.create_project(&name, &code, &description, switch)?;
+                if cli.json {
+                    return print_json(&serde_json::json!({
+                        "id": prj.id, "hash": hash, "commit": auto_commit, "project": prj, "active": switch
+                    }));
+                }
+                println!(
+                    "Created project {} {} ('{}') in workspace {} -> object {}",
+                    prj.id,
+                    prj.code,
+                    prj.name,
+                    prj.workspace_id,
+                    short(&hash)
+                );
+                if switch {
+                    println!("  It is now the active project: new tasks are numbered {}-101, ...", prj.code);
+                } else {
+                    println!("  Switch to it with `clibm project switch {}`", prj.code);
+                }
+                print_auto_commit_notice(auto_commit);
+            }
+            ProjectCommands::Switch { project } => {
+                let (prj, auto_commit) = engine.switch_project(&project)?;
+                if cli.json {
+                    return print_json(&serde_json::json!({
+                        "id": prj.id, "code": prj.code, "workspace_id": prj.workspace_id,
+                        "commit": auto_commit, "changed": auto_commit.is_some()
+                    }));
+                }
+                println!(
+                    "Active project: {} {} ('{}') in workspace {}",
+                    prj.id, prj.code, prj.name, prj.workspace_id
+                );
+                print_auto_commit_notice(auto_commit);
+            }
+            ProjectCommands::Edit {
+                project,
+                name,
+                description,
+            } => {
+                let res = engine.edit_project(&project, name, description)?;
+                report_entity(&res, &format!("Updated project {}", res.id), cli.json)?;
+            }
+            ProjectCommands::Delete { project, move_to } => {
+                let res = engine.delete_project(&project, move_to.as_deref())?;
+                if cli.json {
+                    return print_json(&res);
+                }
+                println!(
+                    "Deleted project {} ({}) and its board (they remain in earlier commits)",
+                    res.id, res.code
+                );
+                if !res.moved_tasks.is_empty() {
+                    println!("  Moved {} task(s): {}", res.moved_tasks.len(), res.moved_tasks.join(", "));
+                }
+                println!("  Active project: {}", res.active_project_id);
+                print_auto_commit_notice(res.commit);
+            }
+        },
+
         Commands::Config { action } => match action {
             ConfigCommands::Show => {
                 let cfg = engine.cas.load_config()?;
@@ -480,7 +643,7 @@ fn main() -> Result<()> {
                     &title,
                     &description,
                     prio,
-                    &column,
+                    column.as_deref().unwrap_or(""),
                     assignee,
                     due,
                     tags,
@@ -606,20 +769,27 @@ fn main() -> Result<()> {
             TaskCommands::Transfer {
                 task_id,
                 target_workspace,
+                project,
                 copy,
             } => {
-                let (task, new_hash, auto_commit) =
-                    engine.transfer_task(&task_id, &target_workspace, copy)?;
+                let (task, new_hash, auto_commit) = engine.transfer_task(
+                    &task_id,
+                    &target_workspace,
+                    project.as_deref(),
+                    copy,
+                )?;
                 if cli.json {
                     return print_json(&serde_json::json!({
                         "id": task.id, "hash": new_hash, "commit": auto_commit, "task": task
                     }));
                 }
                 println!(
-                    "{} task {} to workspace '{}' -> object {}",
+                    "{} task {} to workspace '{}' (project {}, column {}) -> object {}",
                     if copy { "Copied" } else { "Transferred" },
                     task.id,
                     target_workspace,
+                    task.project_id,
+                    task.column_id,
                     short(&new_hash)
                 );
                 print_auto_commit_notice(auto_commit);
@@ -660,22 +830,22 @@ fn main() -> Result<()> {
         Commands::Board { action } => match action {
             BoardCommands::Show => {
                 let (_, tree) = engine.load_working_tree()?;
-                let prj_hash = tree
-                    .projects
-                    .get(&tree.active_project_id)
-                    .ok_or_else(|| anyhow::anyhow!("Active project not found"))?;
-                let prj: ProjectPayload =
-                    engine.cas.get_typed_payload(prj_hash, OBJ_PROJECT)?;
-                let board_id = prj
-                    .board_ids
-                    .first()
-                    .ok_or_else(|| anyhow::anyhow!("No board found for active project"))?;
-                let board_hash = tree
-                    .boards
-                    .get(board_id)
-                    .ok_or_else(|| anyhow::anyhow!("Board '{}' not found", board_id))?;
-                let board: KanbanBoardPayload =
-                    engine.cas.get_typed_payload(board_hash, OBJ_BOARD)?;
+                let prj = engine.active_project(&tree)?;
+                let board = engine.active_board()?;
+                if cli.json {
+                    let mut tasks = Vec::new();
+                    for (thash, t) in tree.tasks.values().map(|h| {
+                        (h, engine.cas.get_typed_payload::<TaskPayload>(h, OBJ_TASK))
+                    }) {
+                        let t = t?;
+                        if t.board_id == board.id {
+                            tasks.push(serde_json::json!({ "hash": thash, "task": t }));
+                        }
+                    }
+                    return print_json(&serde_json::json!({
+                        "workspace_id": tree.active_workspace_id, "project": prj, "board": board, "tasks": tasks
+                    }));
+                }
 
                 println!(
                     "Workspace: {} | Project: {} ({}) | Board: {} ({})",
@@ -723,6 +893,96 @@ fn main() -> Result<()> {
                     println!("{} is already in '{}' (nothing changed)", res.id, column);
                 }
             }
+            BoardCommands::Rename { name } => {
+                let res = engine.rename_board(&name)?;
+                report_entity(&res, &format!("Renamed board {} to '{}'", res.id, name.trim()), cli.json)?;
+            }
+            BoardCommands::Rules {
+                enforce_deps,
+                enforce_wip,
+                require_assignee,
+            } => {
+                let rules = BoardRulesEdit {
+                    enforce_dependencies: parse_opt_bool(enforce_deps)?,
+                    enforce_wip_limits: parse_opt_bool(enforce_wip)?,
+                    require_assignee_in_progress: parse_opt_bool(require_assignee)?,
+                };
+                if !rules.is_empty() {
+                    let res = engine.set_board_rules(rules)?;
+                    if cli.json {
+                        return print_json(&res);
+                    }
+                    report_entity(&res, &format!("Updated workflow rules of {}", res.id), false)?;
+                }
+                let board = engine.active_board()?;
+                if cli.json {
+                    return print_json(&board.workflow);
+                }
+                let cfg = engine.cas.load_config()?;
+                println!("Workflow rules of {} ({}):", board.name, board.id);
+                println!("  enforce_deps     = {}{}", board.workflow.enforce_dependencies,
+                    if cfg.enforce_dependencies { "" } else { "  (off for the whole repository: config enforce_dependencies = false)" });
+                println!("  enforce_wip      = {}{}", board.workflow.enforce_wip_limits,
+                    if cfg.enforce_wip_limits { "" } else { "  (off for the whole repository: config enforce_wip_limits = false)" });
+                println!("  require_assignee = {}  (to enter in-progress)", board.workflow.require_assignee_in_progress);
+            }
+            BoardCommands::Column { action } => match action {
+                ColumnCommands::List => print_columns(&engine, cli.json)?,
+                ColumnCommands::Add {
+                    name,
+                    id,
+                    wip,
+                    done,
+                    after,
+                    position,
+                } => {
+                    let res = engine.add_column(NewColumn {
+                        name: name.clone(),
+                        id,
+                        wip_limit: wip,
+                        is_completed_state: done,
+                        after,
+                        position,
+                    })?;
+                    report_entity(&res, &format!("Added column '{}' to board {}", name.trim(), res.id), cli.json)?;
+                    if !cli.json {
+                        print_columns(&engine, false)?;
+                    }
+                }
+                ColumnCommands::Edit {
+                    column,
+                    name,
+                    wip,
+                    done,
+                    force,
+                } => {
+                    let wip_limit = match wip.as_deref().map(str::trim) {
+                        None => None,
+                        Some(w) if w.eq_ignore_ascii_case("none") || w.is_empty() => Some(None),
+                        Some(w) => Some(Some(w.parse::<usize>().map_err(|_| {
+                            anyhow::anyhow!("Invalid WIP limit '{}' (expected a number or 'none')", w)
+                        })?)),
+                    };
+                    let edit = ColumnEdit {
+                        name,
+                        wip_limit,
+                        is_completed_state: parse_opt_bool(done)?,
+                    };
+                    let res = engine.edit_column(&column, edit, force)?;
+                    report_entity(&res, &format!("Updated column '{}' of board {}", column, res.id), cli.json)?;
+                }
+                ColumnCommands::Remove { column, move_to } => {
+                    let res = engine.remove_column(&column, move_to.as_deref())?;
+                    report_entity(&res, &format!("Removed column '{}' from board {}", column, res.id), cli.json)?;
+                }
+                ColumnCommands::Move { column, position } => {
+                    let res = engine.move_column(&column, position)?;
+                    report_entity(&res, &format!("Moved column '{}' of board {}", column, res.id), cli.json)?;
+                    if !cli.json && res.changed {
+                        print_columns(&engine, false)?;
+                    }
+                }
+            },
         },
 
         Commands::Commit { message, author } => {

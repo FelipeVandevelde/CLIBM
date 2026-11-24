@@ -141,6 +141,24 @@ mod tests {
         assert!(tools.iter().any(|t| t["name"] == "clibm_task_add"));
         assert!(tools.iter().any(|t| t["name"] == "clibm_board_move"));
         assert!(tools.iter().any(|t| t["name"] == "clibm_workspace_switch"));
+        assert!(tools.iter().any(|t| t["name"] == "clibm_project_list"));
+        assert!(tools.iter().any(|t| t["name"] == "clibm_project_switch"));
+        assert!(tools.iter().any(|t| t["name"] == "clibm_board_columns"));
+    }
+
+    #[test]
+    fn test_permission_read_only_rejects_project_switch() {
+        let mut cfg = McpConfig::default();
+        cfg.read_only = true;
+        let adapter = McpAdapter::new(cfg);
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(8)),
+            method: "tools/call".to_string(),
+            params: json!({ "name": "clibm_project_switch", "arguments": { "project": "API" } }),
+        };
+        let err = adapter.handle_request(req).error.expect("Expected error in read-only mode");
+        assert_eq!(err.code, -32003);
     }
 
     #[test]

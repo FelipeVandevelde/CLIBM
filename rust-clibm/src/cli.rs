@@ -58,6 +58,12 @@ pub enum Commands {
         action: WorkspaceCommands,
     },
 
+    /// Manage the projects of a workspace: list, create, switch, edit, delete
+    Project {
+        #[command(subcommand)]
+        action: ProjectCommands,
+    },
+
     /// Manage repository configuration (.clibm/config.json) including auto_commit
     Config {
         #[command(subcommand)]
@@ -203,6 +209,48 @@ pub enum WorkspaceCommands {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum ProjectCommands {
+    /// List the projects of the active workspace (or of all workspaces)
+    List {
+        #[arg(long)]
+        all_workspaces: bool,
+    },
+    /// Create a project with its own Kanban board in the active workspace
+    Create {
+        name: String,
+        /// Project code, used as the task ID prefix (e.g. API -> API-101); must be unused
+        #[arg(short, long)]
+        code: String,
+        #[arg(short, long, default_value = "")]
+        description: String,
+        /// Make the new project the active one
+        #[arg(long)]
+        switch: bool,
+    },
+    /// Make a project active by ID, code or name (switches workspace too if needed)
+    Switch {
+        project: String,
+    },
+    /// Rename a project or change its description (the code cannot change)
+    Edit {
+        /// Project ID (PRJ-02), code or name
+        project: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Delete a project and its board (refuses while it has tasks, unless --move-to)
+    Delete {
+        /// Project ID (PRJ-02), code or name
+        project: String,
+        /// Project that receives the deleted project's tasks (they keep their IDs)
+        #[arg(long)]
+        move_to: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum ConfigCommands {
     /// Show all configuration settings in .clibm/config.json
     Show,
@@ -235,9 +283,9 @@ pub enum TaskCommands {
         /// low | medium | high | critical (defaults to `default_priority` in .clibm/config.json)
         #[arg(short, long)]
         priority: Option<String>,
-        /// Column ID or name
-        #[arg(short, long, default_value = "todo")]
-        column: String,
+        /// Column ID or name (defaults to the board's default column, normally todo)
+        #[arg(short, long)]
+        column: Option<String>,
         #[arg(short, long)]
         assignee: Option<String>,
         #[arg(long)]
@@ -304,11 +352,14 @@ pub enum TaskCommands {
         /// Task it depends on (ID, number or hash prefix)
         depends_on_id: String,
     },
-    /// Transfer or copy a task to another workspace
+    /// Transfer or copy a task to another workspace (or another project of it)
     Transfer {
         /// Task ID (CLIBM-101), number (101) or hash prefix from `board show`
         task_id: String,
         target_workspace: String,
+        /// Project of the target workspace (ID, code or name); defaults to its first project
+        #[arg(long)]
+        project: Option<String>,
         #[arg(long)]
         copy: bool,
     },
@@ -332,6 +383,80 @@ pub enum BoardCommands {
         /// Ignore dependency, WIP-limit and assignee rules
         #[arg(long)]
         force: bool,
+    },
+    /// Rename the active project's board
+    Rename { name: String },
+    /// List, add, edit, remove or reorder the board's columns
+    Column {
+        #[command(subcommand)]
+        action: ColumnCommands,
+    },
+    /// Show or change the board's workflow rules (no flags: show them)
+    Rules {
+        /// Moves past the default column need finished dependencies
+        #[arg(long)]
+        enforce_deps: Option<String>,
+        /// Columns refuse tasks beyond their WIP limit
+        #[arg(long)]
+        enforce_wip: Option<String>,
+        /// Tasks need an assignee to enter in-progress
+        #[arg(long)]
+        require_assignee: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ColumnCommands {
+    /// List the columns with their IDs, WIP limits and task counts
+    List,
+    /// Add a column (by default before the first completed column)
+    Add {
+        name: String,
+        /// Column ID (defaults to the name in lower case with dashes, e.g. qa-check)
+        #[arg(long)]
+        id: Option<String>,
+        /// WIP limit (maximum number of tasks)
+        #[arg(long)]
+        wip: Option<usize>,
+        /// Tasks in this column count as finished
+        #[arg(long)]
+        done: bool,
+        /// Insert after this column (ID or name)
+        #[arg(long, conflicts_with = "position")]
+        after: Option<String>,
+        /// Insert at this 0-based position
+        #[arg(long)]
+        position: Option<usize>,
+    },
+    /// Change a column's name, WIP limit or completed flag (its ID never changes)
+    Edit {
+        /// Column ID or name
+        column: String,
+        #[arg(long)]
+        name: Option<String>,
+        /// New WIP limit, or "none" to remove it
+        #[arg(long)]
+        wip: Option<String>,
+        /// Whether tasks in this column count as finished (true/false)
+        #[arg(long)]
+        done: Option<String>,
+        /// Allow a WIP limit below the column's current task count
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove a column (refuses while it has tasks, unless --move-to)
+    Remove {
+        /// Column ID or name
+        column: String,
+        /// Column that receives the removed column's tasks
+        #[arg(long)]
+        move_to: Option<String>,
+    },
+    /// Move a column to a 0-based position
+    Move {
+        /// Column ID or name
+        column: String,
+        position: usize,
     },
 }
 

@@ -118,7 +118,8 @@ client does not start it inside the project, add `"--root", "/absolute/path/to/p
 ```
 
 Tools that change the project (`clibm_task_add`, `clibm_board_move`,
-`clibm_workspace_switch`, and plugin tools declared as mutating) are refused.
+`clibm_workspace_switch`, `clibm_project_switch`, and plugin tools declared as mutating)
+are refused.
 
 ### Local HTTP endpoint
 
@@ -153,6 +154,9 @@ websites cannot reach it from your browser.
 | `clibm_task_add` | yes | Create a task (`title`, optional `description`, `priority`, `column`, `assignee`, `depends_on`) |
 | `clibm_board_move` | yes | Move a task to a column; refusals (dependency, WIP limit, plugin veto) explain why |
 | `clibm_workspace_switch` | yes | Switch workspace by ID/name, or cycle alphabetically |
+| `clibm_project_list` | no | Projects as JSON (ID, code, name, workspace, task count, active); `all_workspaces` |
+| `clibm_project_switch` | yes | Make a project active by ID, code or name (switches workspace too if needed) |
+| `clibm_board_columns` | no | The active board's columns (ID, position, WIP limit, done, task count, default) and workflow rules |
 
 When a tool fails (for example a move blocked by a dependency) the result is returned with
 `isError: true` and CLIBM's message, so the agent can read it and react.
