@@ -7,7 +7,9 @@ use clibm_core::cli::{
     BoardCommands, Cli, Commands, ConfigCommands, PluginCommands, TaskCommands, WorkspaceCommands,
 };
 use clibm_core::engine::{ClibmEngine, MutationResult, TaskEdit};
-use clibm_core::install::{clibm_home, InstallConfig};
+use clibm_core::install::{
+    clibm_home, default_plugins, normalize_install_profile, InstallConfig, INSTALL_PROFILES,
+};
 use clibm_core::models::*;
 use clibm_core::plugin::PluginManager;
 use clibm_core::update::{self, normalize_repo_url, official_plugin_folder, UpdateSource};
@@ -126,11 +128,17 @@ fn main() -> Result<()> {
 
             let commit_hash = engine.init(&workspace, &code, &name)?;
             let mut cfg = engine.cas.load_config().unwrap_or_default();
-            cfg.install_profile = if with_defaults {
-                "with-defaults".to_string()
+            // --with-defaults wins; otherwise the profile chosen in the installer, else pure.
+            let profile = if with_defaults {
+                "with-defaults"
             } else {
-                "pure".to_string()
+                machine
+                    .install_profile
+                    .as_deref()
+                    .and_then(normalize_install_profile)
+                    .unwrap_or("pure")
             };
+            cfg.install_profile = profile.to_string();
             cfg.language = lang.clone();
             if let Some(ac) = auto_commit {
                 cfg.auto_commit = ac;
@@ -150,14 +158,17 @@ fn main() -> Result<()> {
                 cfg.install_profile,
                 installed.len()
             );
-            if with_defaults {
-                for default in ["clibm-dep-audit", "clibm-export-md", "clibm-workflow-lint"] {
-                    if !installed.iter().any(|p| p.name == default) {
-                        println!(
-                            "  Default plugin '{}' is not installed yet: run `clibm plugin install {}`",
-                            default, default
-                        );
-                    }
+            let expected: Vec<String> = match profile {
+                "with-defaults" => default_plugins(),
+                "custom" => machine.plugins.clone().unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            for plugin in &expected {
+                if !installed.iter().any(|p| &p.name == plugin) {
+                    println!(
+                        "  Plugin '{}' of this profile is not installed yet: run `clibm plugin install {}`",
+                        plugin, plugin
+                    );
                 }
             }
             println!("Language          : {}", cfg.language);
@@ -338,7 +349,17 @@ fn main() -> Result<()> {
             ConfigCommands::Set { key, value } => {
                 let mut cfg = engine.cas.load_config()?;
                 match key.trim() {
-                    "install_profile" => cfg.install_profile = value.clone(),
+                    "install_profile" => {
+                        cfg.install_profile = normalize_install_profile(&value)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Invalid install_profile '{}' (expected {})",
+                                    value,
+                                    INSTALL_PROFILES.join(", ")
+                                )
+                            })?
+                            .to_string()
+                    }
                     "language" => cfg.language = value.clone(),
                     "auto_commit" => cfg.auto_commit = parse_bool(&value)?,
                     "install_path" => cfg.install_path = value.clone(),

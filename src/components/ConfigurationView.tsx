@@ -197,9 +197,14 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     triggerUtf8FileDownload(content, filename);
   };
 
-  const generatedInstallCliCmd = `./install.sh ${
-    config.install_profile === 'with-defaults' ? '--with-defaults' : '--pure'
-  } --lang ${config.language || 'en'} --auto-commit ${String(config.auto_commit)} --install-path "${
+  const repoPluginNames = repoState.plugins.map((p) => p.name);
+  const profileFlag =
+    config.install_profile === 'with-defaults'
+      ? '--with-defaults'
+      : config.install_profile === 'custom'
+        ? `--plugins ${repoPluginNames.length > 0 ? repoPluginNames.join(',') : 'all'}`
+        : '--pure';
+  const generatedInstallCliCmd = `./install.sh ${profileFlag} --lang ${config.language || 'en'} --auto-commit ${String(config.auto_commit)} --install-path "${
     config.install_path || '~/.local/bin'
   }"`;
 
@@ -274,8 +279,8 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
             </h3>
             <p className="text-xs text-zinc-400">
               During installation of the core, CLIBM presents these 4 options so you can choose
-              whether to keep the core 100% pure (0 plugins) or pre-install the 3 default plugins
-              from <code className="font-mono text-zinc-200">plugins/</code>, select your language,
+              whether to keep the core 100% pure (0 plugins), pre-install the 3 default plugins
+              or pick plugins from <code className="font-mono text-zinc-200">plugins/</code>, select your language,
               configure automatic commits, and choose the directory on your machine where{' '}
               <code className="font-mono text-zinc-200">clibm</code> is stored.
             </p>
@@ -315,9 +320,11 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
               or <strong className="text-zinc-200">Core + Default Plugins</strong> (compiles &amp;
               installs <code className="font-mono">clibm-dep-audit</code>,{' '}
               <code className="font-mono">clibm-export-md</code>, and{' '}
-              <code className="font-mono">clibm-workflow-lint</code>).
+              <code className="font-mono">clibm-workflow-lint</code>), or{' '}
+              <strong className="text-zinc-200">Core + Chosen Plugins</strong> (pick any plugins
+              from <code className="font-mono">plugins/catalog.json</code>).
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => handleSetProfile('pure')}
@@ -357,6 +364,25 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                   }`}
                 >
                   Installs dep-audit, export-md &amp; workflow-lint
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSetProfile('custom')}
+                className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
+                  config.install_profile === 'custom'
+                    ? 'bg-zinc-100 text-zinc-950 border-white font-semibold'
+                    : 'bg-zinc-900/60 text-zinc-300 border-zinc-800 hover:border-zinc-700'
+                }`}
+              >
+                <div className="text-xs font-mono font-bold">Core + Chosen Plugins</div>
+                <div
+                  className={`text-[11px] mt-0.5 ${
+                    config.install_profile === 'custom' ? 'text-zinc-800' : 'text-zinc-400'
+                  }`}
+                >
+                  Pick plugins from the catalog (--plugins)
                 </div>
               </button>
             </div>

@@ -36,16 +36,25 @@ its machine state in `~/.clibm`; project `.clibm` folders are only deleted with 
 ## Installing from this folder
 
 ```bash
-./install.sh                         # interactive
-./install.sh -y --no-modify-path     # non-interactive, PATH untouched
+./install.sh                         # interactive: core only / + defaults / choose plugins
+./install.sh -y --no-modify-path     # non-interactive core only, PATH untouched
 ./install.sh --with-defaults -y      # + dep-audit, export-md, workflow-lint
+./install.sh --plugins tui,web -y    # + the plugins you choose (or --plugins all)
+./install.sh --list-plugins          # print the plugin catalog
 ```
 
 ```powershell
 .\install.ps1
 .\install.ps1 -Yes -NoModifyPath
 .\install.ps1 -Profile with-defaults -Yes
+.\install.ps1 -Plugins tui,web -Yes
+.\install.ps1 -ListPlugins
 ```
+
+The plugins offered come from [`plugins/catalog.json`](plugins/catalog.json) (local copy in a
+clone, downloaded from GitHub otherwise). When you add an official plugin, list it there: a
+test (`cargo test`) fails while a `plugins/*` crate is missing from the catalog or the copies
+built into the installers differ from it.
 
 Requires the Rust toolchain (`cargo`, from https://rustup.rs). In a clone the installers build
 the local sources (`cargo build --release -p <crate>`); otherwise they run

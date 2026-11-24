@@ -8,12 +8,21 @@
 #     cd rust-clibm ; .\install.ps1
 # ==============================================================================
 # Presents interactive configuration options during installation:
-#   1. Core Mode: Pure Core (without plugins) vs. Core + Default Plugins
-#      (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)
+#   1. Install profile:
+#        1) Core only (no plugins)
+#        2) Core + default plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)
+#        3) Core + choose plugins from the catalog (plugins\catalog.json, read from the
+#           local clone or downloaded from GitHub)
 #   2. Language Selection: en (English), pt-BR (Portugues), es (Espanol)
 #   3. Automatic Per-Modification Commits: true (default) or false
 #   4. Machine Storage / Install Location: custom path (default: ~\.clibm-bin)
 #   5. User PATH Registration: add install directory to user PATH (or -NoModifyPath)
+#
+# Non-interactive parameters:
+#   .\install.ps1 -Profile pure|with-defaults|custom | -Plugins <LIST|all>
+#                 -Language en|pt-BR|es -AutoCommit true|false -InstallDir <PATH> [-NoModifyPath] [-Yes]
+#   .\install.ps1 -ListPlugins          # print the plugin catalog and exit
+# <LIST> takes catalog names or short names separated by commas: -Plugins tui,web,clibm-mcp
 
 $InstallProfile = ""
 $Language = ""
@@ -22,10 +31,14 @@ $InstallDir = ""
 $RawBaseUrl = ""
 $NoModifyPath = $false
 $Yes = $false
+$PluginsArg = ""
+$ListPlugins = $false
 
 for ($i = 0; $i -lt $args.Count; $i++) {
     switch -Regex ($args[$i]) {
         '^-+(?i)Profile$'      { $InstallProfile = $args[++$i] }
+        '^-+(?i)Plugins$'      { $InstallProfile = "custom"; $PluginsArg = (@($args[++$i]) -join ',') }
+        '^-+(?i)ListPlugins$'  { $ListPlugins = $true }
         '^-+(?i)Language$'     { $Language = $args[++$i] }
         '^-+(?i)AutoCommit$'   { $AutoCommit = $args[++$i] }
         '^-+(?i)InstallDir$'   { $InstallDir = $args[++$i] }
@@ -1068,20 +1081,190 @@ function Remove-ClibmGlobalState {
 try { . (Initialize-ClibmEnvPathHelper) } catch { Invoke-Expression $script:ClibmEmbeddedHelperContent }
 # <<< clibm-env-path (generated) <<<
 
+# ------------------------------------------------------------------------------
+# Plugin catalog (plugins\catalog.json): one JSON object per line with the fields
+# name, folder, default and description. A clone uses its own copy; otherwise the
+# file is downloaded from CLIBM_RAW_BASE (default: the official GitHub repository).
+# ------------------------------------------------------------------------------
+
+# Used only when the catalog can be neither found locally nor downloaded. Kept equal to
+# plugins/catalog.json by a test (src/install.rs).
+# >>> clibm-catalog-fallback >>>
+$ClibmCatalogFallback = @'
+[
+{"name":"clibm-dep-audit","folder":"clibm-dep-audit","default":true,"description":"DAG critical path and circular dependency auditor"},
+{"name":"clibm-export-md","folder":"clibm-export-md","default":true,"description":"Markdown sprint report exporter"},
+{"name":"clibm-mcp","folder":"clibm-mcp","default":false,"description":"MCP server for AI agents (stdio / HTTP)"},
+{"name":"clibm-tui","folder":"clibm-tui","default":false,"description":"Terminal user interface"},
+{"name":"clibm-web","folder":"clibm-web","default":false,"description":"Local web UI served by a single binary"},
+{"name":"clibm-workflow-lint","folder":"clibm-workflow-lint","default":true,"description":"Kanban WIP limit and workflow policy linter"}
+]
+'@
+# <<< clibm-catalog-fallback <<<
+
+$script:ClibmCatalog = $null
+$script:ClibmCatalogSource = ''
+
+function Get-ClibmPluginCatalog {
+    if ($null -ne $script:ClibmCatalog) { return $script:ClibmCatalog }
+    $Raw = ''
+    $LocalCore = ''
+    if (-not $env:CLIBM_FORCE_REMOTE) {
+        $LocalCore = Resolve-ClibmLocalSourceDir -CrateName 'clibm' -RemoteSubPath '' -CandidateDir $ScriptDir
+    }
+    $LocalCatalog = if ($LocalCore) { Join-Path (Join-Path $LocalCore 'plugins') 'catalog.json' } else { '' }
+    if ($LocalCatalog -and (Test-Path -LiteralPath $LocalCatalog)) {
+        $Raw = [System.IO.File]::ReadAllText($LocalCatalog, [System.Text.Encoding]::UTF8)
+        $script:ClibmCatalogSource = "local clone ($(Join-Path $LocalCore 'plugins'))"
+    } else {
+        $Base = if ($RawBaseUrl) { $RawBaseUrl.TrimEnd('/') } else { Get-ClibmRawRepoBase }
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $Raw = [string](Invoke-WebRequest -Uri "$Base/plugins/catalog.json" -UseBasicParsing -ErrorAction Stop).Content
+            $script:ClibmCatalogSource = "$Base/plugins"
+        } catch {
+            Write-Host "WARNING: could not download $Base/plugins/catalog.json; using the plugin list built into this installer." -ForegroundColor Yellow
+            $Raw = ''
+        }
+    }
+    # Windows PowerShell 5.1 returns a JSON array as one object: assign it first, then
+    # pipe it so it is unrolled into its entries.
+    $Entries = @()
+    if ($Raw) {
+        try {
+            $Parsed = ConvertFrom-Json -InputObject $Raw.TrimStart([char]0xFEFF)
+            $Entries = @($Parsed | Where-Object { $_ -and $_.name })
+        } catch { $Entries = @() }
+    }
+    if ($Entries.Count -eq 0) {
+        $Parsed = ConvertFrom-Json -InputObject $ClibmCatalogFallback
+        $Entries = @($Parsed | Where-Object { $_ -and $_.name })
+        $script:ClibmCatalogSource = 'built-in list'
+    }
+    $script:ClibmCatalog = @($Entries | ForEach-Object {
+        [PSCustomObject]@{
+            Name        = [string]$_.name
+            Folder      = $(if ($_.folder) { [string]$_.folder } else { [string]$_.name })
+            Default     = [bool]$_.default
+            Description = [string]$_.description
+        }
+    })
+    return $script:ClibmCatalog
+}
+
+function Get-ClibmDefaultPlugins {
+    return @(Get-ClibmPluginCatalog | Where-Object { $_.Default } | ForEach-Object { $_.Name })
+}
+
+function Write-ClibmPluginCatalog {
+    $Catalog = @(Get-ClibmPluginCatalog)
+    Write-Host "Available plugins ($script:ClibmCatalogSource):"
+    for ($n = 0; $n -lt $Catalog.Count; $n++) {
+        $Mark = if ($Catalog[$n].Default) { '*' } else { ' ' }
+        Write-Host ("  {0}) [{1}] {2,-20} {3}" -f ($n + 1), $Mark, $Catalog[$n].Name, $Catalog[$n].Description)
+    }
+    Write-Host "  [*] = default plugin"
+}
+
+# Turns a selection ("1,4", "tui web", "clibm-mcp", "all", "defaults", "none") into
+# catalog names in the order given. Throws on an unknown entry.
+function Resolve-ClibmPluginSelection {
+    param([AllowEmptyString()][string]$Selection)
+    $Catalog = @(Get-ClibmPluginCatalog)
+    $Result = New-Object System.Collections.Generic.List[string]
+    foreach ($Tok in ($Selection -split '[,;\s]+')) {
+        $T = $Tok.Trim().ToLowerInvariant()
+        if (-not $T) { continue }
+        $Found = @()
+        if ($T -eq 'all' -or $T -eq '*') {
+            $Found = @($Catalog | ForEach-Object { $_.Name })
+        } elseif ($T -eq 'default' -or $T -eq 'defaults') {
+            $Found = @(Get-ClibmDefaultPlugins)
+        } elseif ($T -eq 'none' -or $T -eq 'core') {
+            continue
+        } elseif ($T -match '^\d+$') {
+            $Idx = [int]$T - 1
+            if ($Idx -ge 0 -and $Idx -lt $Catalog.Count) { $Found = @($Catalog[$Idx].Name) }
+        } else {
+            $Found = @($Catalog | Where-Object { $_.Name -eq $T -or $_.Name -eq "clibm-$T" -or $_.Folder -eq $T } | Select-Object -First 1 | ForEach-Object { $_.Name })
+        }
+        if ($Found.Count -eq 0) {
+            throw "Unknown plugin '$T'. Use a number or name from the list (or 'all' / 'none')."
+        }
+        foreach ($F in $Found) {
+            if (-not $Result.Contains($F)) { $Result.Add($F) }
+        }
+    }
+    # Callers wrap the result in @(), so a plain array return is enough.
+    return $Result.ToArray()
+}
+
+if ($ListPlugins) {
+    Write-ClibmPluginCatalog
+    return
+}
+
 Write-Host "===================================================================="
 Write-Host " CLIBM v0.1.0 -- Interactive Core Installation Wizard (UTF-8)"
 Write-Host "===================================================================="
+
+if ($InstallProfile) {
+    switch -Regex ($InstallProfile.Trim()) {
+        '^(?i)(pure|core)$'                  { $InstallProfile = 'pure' }
+        '^(?i)(with-defaults|defaults)$'     { $InstallProfile = 'with-defaults' }
+        '^(?i)(custom|select)$'              { $InstallProfile = 'custom' }
+        default { throw "Unknown profile '$InstallProfile' (expected pure, with-defaults or custom)." }
+    }
+}
 
 if (-not $InstallProfile) {
     if ($Yes) {
         $InstallProfile = "pure"
     } else {
         Write-Host ""
-        Write-Host "[1/5] Select CLIBM Core Installation Profile:"
-        Write-Host "  1) Pure Core (without plugins -- 100% pure engine) [Default]"
-        Write-Host "  2) Core + Default Plugins (builds dep-audit, export-md, workflow-lint)"
-        $c = Read-Host "Select option [1-2, default: 1]"
-        if ($c -eq "2") { $InstallProfile = "with-defaults" } else { $InstallProfile = "pure" }
+        Write-Host "[1/5] Select CLIBM installation profile:"
+        Write-Host "  1) Core only (no plugins) [Default]"
+        Write-Host "  2) Core + default plugins (dep-audit, export-md, workflow-lint)"
+        Write-Host "  3) Core + choose plugins"
+        $c = Read-Host "Select option [1-3, default: 1]"
+        switch ($c) {
+            "2" { $InstallProfile = "with-defaults" }
+            "3" { $InstallProfile = "custom" }
+            default { $InstallProfile = "pure" }
+        }
+    }
+}
+
+$SelectedPlugins = @()
+if ($InstallProfile -eq "with-defaults") {
+    $SelectedPlugins = @(Get-ClibmDefaultPlugins)
+} elseif ($InstallProfile -eq "custom") {
+    if ($PluginsArg) {
+        $SelectedPlugins = @(Resolve-ClibmPluginSelection $PluginsArg)
+    } elseif ($Yes) {
+        $SelectedPlugins = @(Get-ClibmDefaultPlugins)
+    } else {
+        Write-Host ""
+        Write-ClibmPluginCatalog
+        while ($true) {
+            $Choice = Read-Host "Plugins to install (e.g. 1,4,5 | 'all' | 'none' | Enter = defaults)"
+            if ([string]::IsNullOrWhiteSpace($Choice)) {
+                $SelectedPlugins = @(Get-ClibmDefaultPlugins)
+                break
+            }
+            try {
+                $SelectedPlugins = @(Resolve-ClibmPluginSelection $Choice)
+                break
+            } catch {
+                Write-Host $_.Exception.Message -ForegroundColor Yellow
+            }
+        }
+    }
+    if ($SelectedPlugins.Count -eq 0) {
+        Write-Host "==> No plugins selected: installing the core only."
+        $InstallProfile = "pure"
+    } else {
+        Write-Host "==> Selected plugins: $($SelectedPlugins -join ', ')"
     }
 }
 
@@ -1169,6 +1352,9 @@ Write-Host "--------------------------------------------------------------------
 Write-Host " Installation Summary (Encoding: UTF-8):"
 Write-Host "   Install Mode   : $InstallMode"
 Write-Host "   Profile        : $InstallProfile"
+if ($SelectedPlugins.Count -gt 0) {
+    Write-Host "   Plugins        : $($SelectedPlugins -join ', ')"
+}
 Write-Host "   Language       : $Language"
 Write-Host "   Auto-Commit    : $AutoCommit"
 Write-Host "   Install Path   : $InstallDir"
@@ -1191,59 +1377,103 @@ $InstallCfg = [ordered]@{
     source_ref       = $(if ($InstallMode -eq 'local') { $null } else { $GitSource.Ref })
     source_commit    = $(if ($BuiltCommit) { $BuiltCommit } else { $null })
     version          = $(if ($CoreVersion) { $CoreVersion } else { $null })
-} | ConvertTo-Json -Depth 4
+}
+if ($SelectedPlugins.Count -gt 0) {
+    $InstallCfg['plugins'] = [string[]]$SelectedPlugins
+}
+$InstallCfg = $InstallCfg | ConvertTo-Json -Depth 4
 [System.IO.File]::WriteAllText((Join-Path $GlobalCfgDir "install-config.json"), $InstallCfg, $Utf8NoBom)
 
-if ($InstallProfile -eq "with-defaults") {
-    Write-Host "==> Installing default standalone plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)..."
+# Builds and installs each plugin with its own installer (local folder in a clone,
+# otherwise downloaded from GitHub). A failed plugin does not stop the others; the
+# names of the failed ones are returned.
+function Install-ClibmPlugins {
+    param([string[]]$Names)
+    $Failed = @()
     $EffectiveRawBase = if ($RawBaseUrl) { $RawBaseUrl.TrimEnd('/') } else { Get-ClibmRawRepoBase }
-    foreach ($PluginName in @("clibm-dep-audit", "clibm-export-md", "clibm-workflow-lint")) {
-        $LocalPluginDir = Resolve-ClibmLocalSourceDir -CrateName $PluginName -RemoteSubPath "plugins/$PluginName" -CandidateDir $ScriptDir
+    $PluginArgs = @('-InstallDir', $InstallDir, '-Yes')
+    if (-not $ModifyPath) { $PluginArgs += '-NoModifyPath' }
+    foreach ($PluginName in $Names) {
+        $Folder = (@(Get-ClibmPluginCatalog | Where-Object { $_.Name -eq $PluginName }) | Select-Object -First 1).Folder
+        if (-not $Folder) { $Folder = $PluginName }
+        $LocalPluginDir = ''
+        if (-not $env:CLIBM_FORCE_REMOTE) {
+            $LocalPluginDir = Resolve-ClibmLocalSourceDir -CrateName $PluginName -RemoteSubPath "plugins/$Folder" -CandidateDir $ScriptDir
+        }
         $LocalPluginPs1 = if ($LocalPluginDir) { Join-Path $LocalPluginDir "install.ps1" } else { "" }
-        if ($LocalPluginPs1 -and (Test-Path -LiteralPath $LocalPluginPs1)) {
-            Push-Location -LiteralPath $LocalPluginDir
-            try {
-                if ($ModifyPath) {
-                    & .\install.ps1 -InstallDir $InstallDir -Yes
-                } else {
-                    & .\install.ps1 -InstallDir $InstallDir -Yes -NoModifyPath
-                }
-            } finally {
-                Pop-Location
-            }
-        } else {
-            $RemotePluginPs1Url = "$EffectiveRawBase/plugins/$PluginName/install.ps1"
-            $TempPluginScript = Join-Path ([System.IO.Path]::GetTempPath()) ("$PluginName-install-" + [guid]::NewGuid().ToString('N') + ".ps1")
-            try {
+        $TempPluginScript = ''
+        Write-Host ""
+        # Plugin installers change the current folder, so it is restored afterwards.
+        Push-Location
+        try {
+            $global:LASTEXITCODE = 0
+            if ($LocalPluginPs1 -and (Test-Path -LiteralPath $LocalPluginPs1)) {
+                Write-Host "   -> [Local Mode] Building and installing $PluginName..."
+                Set-Location -LiteralPath $LocalPluginDir
+                & $LocalPluginPs1 @PluginArgs
+            } else {
+                Write-Host "   -> [Remote Mode] Fetching and installing $PluginName from $EffectiveRawBase..."
+                $TempPluginScript = Join-Path ([System.IO.Path]::GetTempPath()) ("$PluginName-install-" + [guid]::NewGuid().ToString('N') + ".ps1")
                 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                Invoke-WebRequest -Uri $RemotePluginPs1Url -OutFile $TempPluginScript -UseBasicParsing
-                if ($ModifyPath) {
-                    & $TempPluginScript -InstallDir $InstallDir -Yes -RawBaseUrl "$EffectiveRawBase/plugins/$PluginName"
-                } else {
-                    & $TempPluginScript -InstallDir $InstallDir -Yes -NoModifyPath -RawBaseUrl "$EffectiveRawBase/plugins/$PluginName"
-                }
-            } finally {
-                if (Test-Path -LiteralPath $TempPluginScript) {
-                    Remove-Item -LiteralPath $TempPluginScript -Force -ErrorAction SilentlyContinue
-                }
+                Invoke-WebRequest -Uri "$EffectiveRawBase/plugins/$Folder/install.ps1" -OutFile $TempPluginScript -UseBasicParsing -ErrorAction Stop
+                & $TempPluginScript @PluginArgs -RawBaseUrl "$EffectiveRawBase/plugins/$Folder"
+            }
+            if ($LASTEXITCODE -ne 0) { throw "installer exited with code $LASTEXITCODE" }
+        } catch {
+            Write-Host "==> WARNING: $PluginName failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            $Failed += $PluginName
+        } finally {
+            Pop-Location
+            if ($TempPluginScript -and (Test-Path -LiteralPath $TempPluginScript)) {
+                Remove-Item -LiteralPath $TempPluginScript -Force -ErrorAction SilentlyContinue
             }
         }
     }
-} else {
-    $GlobalRegFile = Join-Path $GlobalPluginsDir "registry.json"
-    if (-not (Test-Path -LiteralPath $GlobalRegFile)) {
-        [System.IO.File]::WriteAllText($GlobalRegFile, "[]`n", $Utf8NoBom)
-    }
-    Write-Host "==> Pure Core active (0 pre-installed plugins)."
+    return $Failed
 }
 
+$GlobalRegFile = Join-Path $GlobalPluginsDir "registry.json"
+if (-not (Test-Path -LiteralPath $GlobalRegFile)) {
+    [System.IO.File]::WriteAllText($GlobalRegFile, "[]`n", $Utf8NoBom)
+}
+
+$FailedPlugins = @()
+if ($SelectedPlugins.Count -gt 0) {
+    Write-Host "==> Installing $($SelectedPlugins.Count) plugin(s): $($SelectedPlugins -join ', ')"
+    $FailedPlugins = @(Install-ClibmPlugins -Names $SelectedPlugins)
+} else {
+    Write-Host "==> Core only (0 plugins installed)."
+    Write-Host "    Add plugins later with: clibm plugin install <name>  (list: .\install.ps1 -ListPlugins)"
+}
+
+Write-Host ""
 Write-Host "===================================================================="
-Write-Host " CLIBM v0.1.0 Installation Complete!"
+if ($FailedPlugins.Count -gt 0) {
+    Write-Host " CLIBM v0.1.0 installed, but some plugins failed." -ForegroundColor Yellow
+} else {
+    Write-Host " CLIBM v0.1.0 Installation Complete!"
+}
 Write-Host " Binary Location : $InstallDir\clibm.exe"
 Write-Host " User PATH       : $PathStatus"
+if ($SelectedPlugins.Count -gt 0) {
+    Write-Host " Plugins         : $($SelectedPlugins -join ', ')"
+}
+foreach ($P in $FailedPlugins) {
+    Write-Host " FAILED          : $P -- retry with: clibm plugin install $P" -ForegroundColor Yellow
+}
+if ($SelectedPlugins -contains 'clibm-mcp') {
+    Write-Host " Note            : clibm-mcp uses stdio; for HTTP run: clibm plugin install mcp --transport http"
+}
+if ($SelectedPlugins -contains 'clibm-web') {
+    Write-Host " Note            : clibm-web uses port 7878; rerun plugins\clibm-web\install.ps1 -Port <N> to change it"
+}
 if ($ModifyPath) {
     Write-Host " Open a new terminal to use 'clibm'."
 } else {
     Write-Host " Note: User PATH was not modified (-NoModifyPath)."
 }
 Write-Host "===================================================================="
+if ($FailedPlugins.Count -gt 0) {
+    $global:LASTEXITCODE = 1
+    if ($PSCommandPath) { exit 1 }
+}

@@ -1,0 +1,8 @@
+[
+{"name":"clibm-dep-audit","folder":"clibm-dep-audit","default":true,"description":"DAG critical path and circular dependency auditor"},
+{"name":"clibm-export-md","folder":"clibm-export-md","default":true,"description":"Markdown sprint report exporter"},
+{"name":"clibm-mcp","folder":"clibm-mcp","default":false,"description":"MCP server for AI agents (stdio / HTTP)"},
+{"name":"clibm-tui","folder":"clibm-tui","default":false,"description":"Terminal user interface"},
+{"name":"clibm-web","folder":"clibm-web","default":false,"description":"Local web UI served by a single binary"},
+{"name":"clibm-workflow-lint","folder":"clibm-workflow-lint","default":true,"description":"Kanban WIP limit and workflow policy linter"}
+]

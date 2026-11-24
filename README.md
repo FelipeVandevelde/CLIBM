@@ -203,18 +203,38 @@ The one-liners above ask a few questions (profile, language, automatic commits, 
 folder, PATH) and build CLIBM with `cargo install --git` from the official repository.
 To build another repository or branch, set `CLIBM_GIT_URL` / `CLIBM_GIT_REF` first.
 
+The first question picks one of three profiles:
+
+| Profile | What is installed | Flags |
+|---|---|---|
+| `pure` (default) | the core only | `--pure` / `-Profile pure` |
+| `with-defaults` | core + `clibm-dep-audit`, `clibm-export-md`, `clibm-workflow-lint` | `--with-defaults` / `-Profile with-defaults` |
+| `custom` | core + the plugins you pick from the catalog | `--plugins tui,web` / `-Plugins tui,web` |
+
+The catalog is [`rust-clibm/plugins/catalog.json`](rust-clibm/plugins/catalog.json): a clone
+reads its own copy, a remote install downloads it from GitHub (`CLIBM_RAW_BASE`). In the
+interactive list, enter numbers or names (`1,4,5`), `all`, `none`, or press Enter for the
+defaults. `--plugins` / `-Plugins` accept full names (`clibm-mcp`), short names (`mcp`) or
+`all`. `--list-plugins` / `-ListPlugins` prints the catalog and exits. Plugins are installed
+with their default options (clibm-mcp: stdio, clibm-web: port 7878); one failed plugin does
+not stop the others, and the installer ends with exit code 1 and lists it.
+
 Non-interactive:
 
 ```powershell
 # Windows: download, then run with flags
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1" -OutFile install.ps1
-.\install.ps1 -Yes                               # pure core
+.\install.ps1 -Yes                               # core only
 .\install.ps1 -Profile with-defaults -Yes        # + dep-audit, export-md, workflow-lint
+.\install.ps1 -Plugins tui,web,mcp -Yes          # + the plugins you choose
+.\install.ps1 -ListPlugins                       # show the plugin catalog
 ```
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- -y
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- --with-defaults -y
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- --plugins tui,web,mcp -y
+curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash -s -- --list-plugins
 ```
 
 From a clone, the installers build the local sources:
@@ -391,6 +411,10 @@ clibm fsck                      # verify every object's BLAKE3 hash (exit code 1
 clibm cat-object <HASH_PREFIX>  # print a stored object
 clibm export [-o <FILE>]        # whole repository as a portable JSON bundle
 ```
+
+`clibm init` records the install profile chosen in the installer (`pure`, `with-defaults` or
+`custom`) unless `--with-defaults` is given, and names the profile's plugins that are not
+installed yet. `clibm config set install_profile` accepts the same three values.
 
 ### Workspaces
 
