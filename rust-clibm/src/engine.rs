@@ -76,12 +76,12 @@ pub struct TaskEdit {
     pub remove_tags: Vec<String>,
 }
 
-/// Result of a mutation on an existing task.
+/// Result of a mutation on an existing task, project or board.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutationResult {
-    /// Resolved task ID (e.g. `CLIBM-101`).
+    /// Resolved entity ID (e.g. `CLIBM-101`, `PRJ-02`, `BRD-01`).
     pub id: String,
-    /// Hash of the task object after the mutation.
+    /// Hash of the entity's object after the mutation.
     pub hash: String,
     /// Auto-commit created for the mutation, if any.
     pub commit: Option<String>,
@@ -96,6 +96,109 @@ pub struct DeleteResult {
     /// Tasks whose `depends_on` lost a reference to the deleted task (`--force`).
     pub unlinked_dependents: Vec<String>,
     pub commit: Option<String>,
+}
+
+/// One row of [`ClibmEngine::list_projects`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectSummary {
+    pub id: String,
+    pub hash: String,
+    pub active: bool,
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub tasks: usize,
+    pub project: ProjectPayload,
+}
+
+/// Result of [`ClibmEngine::delete_project`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectDeleteResult {
+    pub id: String,
+    pub code: String,
+    /// Tasks moved to the `--move-to` project (they keep their IDs).
+    pub moved_tasks: Vec<String>,
+    /// Active project after the deletion.
+    pub active_project_id: String,
+    pub commit: Option<String>,
+}
+
+/// A column to add with [`ClibmEngine::add_column`].
+#[derive(Debug, Clone, Default)]
+pub struct NewColumn {
+    pub name: String,
+    /// Column ID; derived from the name when `None` (`"QA Check"` -> `qa-check`).
+    pub id: Option<String>,
+    pub wip_limit: Option<usize>,
+    pub is_completed_state: bool,
+    /// Insert after this column (ID or name).
+    pub after: Option<String>,
+    /// Insert at this 0-based position. Without `after`/`position` the column goes
+    /// before the first completed column.
+    pub position: Option<usize>,
+}
+
+/// Changes applied by [`ClibmEngine::edit_column`]. `None` leaves a field untouched;
+/// `wip_limit: Some(None)` removes the limit.
+#[derive(Debug, Clone, Default)]
+pub struct ColumnEdit {
+    pub name: Option<String>,
+    pub wip_limit: Option<Option<usize>>,
+    pub is_completed_state: Option<bool>,
+}
+
+/// Changes applied by [`ClibmEngine::set_board_rules`]; `None` leaves a rule untouched.
+#[derive(Debug, Clone, Default)]
+pub struct BoardRulesEdit {
+    pub enforce_dependencies: Option<bool>,
+    pub enforce_wip_limits: Option<bool>,
+    pub require_assignee_in_progress: Option<bool>,
+}
+
+impl BoardRulesEdit {
+    pub fn is_empty(&self) -> bool {
+        self.enforce_dependencies.is_none()
+            && self.enforce_wip_limits.is_none()
+            && self.require_assignee_in_progress.is_none()
+    }
+}
+
+/// Upper-cases and checks a project code (letters, digits or `_`).
+pub fn normalize_project_code(raw: &str) -> Result<String> {
+    let code = raw.trim().to_uppercase();
+    if code.is_empty() || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        bail!(
+            "Invalid project code '{}': use letters, digits or '_' (e.g. APP)",
+            raw
+        );
+    }
+    Ok(code)
+}
+
+/// Column ID derived from a display name: `"QA Check"` -> `qa-check`.
+pub fn column_slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').to_string()
+}
+
+fn validate_column_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    {
+        bail!(
+            "Invalid column ID '{}': use lower-case letters, digits, '-' or '_' (e.g. qa-check)",
+            id
+        );
+    }
+    Ok(())
 }
 
 fn clean_tags(tags: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -153,6 +256,55 @@ impl ClibmEngine {
         PluginManager::fire_hook(&self.cas, event, tree_hash, context, Duration::from_secs(timeout))
     }
 
+    /// A new project with its own board using the default columns and rules.
+    #[allow(clippy::too_many_arguments)]
+    fn new_project_with_board(
+        prj_id: &str,
+        brd_id: &str,
+        ws_id: &str,
+        code: &str,
+        name: &str,
+        description: &str,
+        board_name: &str,
+        now: &str,
+    ) -> (ProjectPayload, KanbanBoardPayload) {
+        let project = ProjectPayload {
+            id: prj_id.to_string(),
+            workspace_id: ws_id.to_string(),
+            code: code.to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            created_at: now.to_string(),
+            participants: Vec::new(),
+            metadata: BTreeMap::new(),
+            board_ids: vec![brd_id.to_string()],
+        };
+        let board = KanbanBoardPayload {
+            id: brd_id.to_string(),
+            project_id: prj_id.to_string(),
+            name: board_name.to_string(),
+            columns: Self::default_columns(),
+            workflow: WorkflowConfig {
+                enforce_dependencies: true,
+                enforce_wip_limits: true,
+                require_assignee_in_progress: false,
+            },
+        };
+        (project, board)
+    }
+
+    /// Column that new tasks land in by default: `todo` when the board has one, else the
+    /// first open column that is not `backlog`, else the first column.
+    pub fn default_column(board: &KanbanBoardPayload) -> Option<&KanbanColumn> {
+        let mut cols: Vec<&KanbanColumn> = board.columns.iter().collect();
+        cols.sort_by_key(|c| c.order);
+        cols.iter()
+            .find(|c| c.id == "todo")
+            .or_else(|| cols.iter().find(|c| !c.is_completed_state && c.id != "backlog"))
+            .or_else(|| cols.first())
+            .copied()
+    }
+
     fn default_columns() -> Vec<KanbanColumn> {
         vec![
             KanbanColumn {
@@ -205,13 +357,7 @@ impl ClibmEngine {
                 self.cas.clibm_dir().display()
             );
         }
-        let code = project_code.trim().to_uppercase();
-        if code.is_empty() || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            bail!(
-                "Invalid project code '{}': use letters, digits or '_' (e.g. APP)",
-                project_code
-            );
-        }
+        let code = normalize_project_code(project_code)?;
         self.cas.init()?;
 
         let now = Utc::now().to_rfc3339();
@@ -375,6 +521,69 @@ impl ClibmEngine {
         self.cas.get_typed_payload(prj_hash, OBJ_PROJECT)
     }
 
+    pub fn load_project(&self, tree: &TreeSnapshotPayload, project_id: &str) -> Result<ProjectPayload> {
+        let hash = tree
+            .projects
+            .get(project_id)
+            .ok_or_else(|| anyhow!("Project '{}' not found", project_id))?;
+        self.cas.get_typed_payload(hash, OBJ_PROJECT)
+    }
+
+    fn load_workspace(&self, tree: &TreeSnapshotPayload, ws_id: &str) -> Result<WorkspacePayload> {
+        let hash = tree
+            .workspaces
+            .get(ws_id)
+            .ok_or_else(|| anyhow!("Workspace '{}' not found", ws_id))?;
+        self.cas.get_typed_payload(hash, OBJ_WORKSPACE)
+    }
+
+    /// Finds a project by ID (`PRJ-02`), code (`API`) or name, ignoring case.
+    pub fn resolve_project_ref(&self, tree: &TreeSnapshotPayload, input: &str) -> Result<ProjectPayload> {
+        let q = input.trim();
+        if q.is_empty() {
+            bail!("Project reference cannot be empty");
+        }
+        let mut by_name = Vec::new();
+        for hash in tree.projects.values() {
+            let p: ProjectPayload = self.cas.get_typed_payload(hash, OBJ_PROJECT)?;
+            if p.id.eq_ignore_ascii_case(q) || p.code.eq_ignore_ascii_case(q) {
+                return Ok(p);
+            }
+            if p.name.eq_ignore_ascii_case(q) {
+                by_name.push(p);
+            }
+        }
+        match by_name.len() {
+            1 => Ok(by_name.remove(0)),
+            0 => bail!(
+                "Project '{}' not found. Use its ID (PRJ-01), code or name; see `clibm project list --all-workspaces`.",
+                q
+            ),
+            _ => bail!(
+                "Project name '{}' is ambiguous: it matches {}. Use the project ID or code.",
+                q,
+                by_name.iter().map(|p| format!("{} ({})", p.id, p.code)).collect::<Vec<_>>().join(", ")
+            ),
+        }
+    }
+
+    /// Refuses a project code that another project already uses: task IDs (`CODE-101`)
+    /// must stay unique in the whole repository.
+    fn ensure_code_free(&self, tree: &TreeSnapshotPayload, code: &str) -> Result<()> {
+        for hash in tree.projects.values() {
+            let p: ProjectPayload = self.cas.get_typed_payload(hash, OBJ_PROJECT)?;
+            if p.code.eq_ignore_ascii_case(code) {
+                bail!(
+                    "Project code '{}' is already used by {} ('{}'). Pick another code.",
+                    code,
+                    p.id,
+                    p.name
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// First board of `project`.
     pub fn project_board(
         &self,
@@ -518,11 +727,11 @@ impl ClibmEngine {
         col: &KanbanColumn,
         cfg: &ClibmConfig,
     ) -> Result<()> {
-        if cfg.enforce_dependencies
-            && board.workflow.enforce_dependencies
-            && col.id != "backlog"
-            && col.id != "todo"
-        {
+        // Columns up to the default one (backlog and todo on the default board) are for
+        // work that has not started, so open dependencies are fine there.
+        let entry_order = Self::default_column(board).map(|c| c.order).unwrap_or(0);
+        let not_started = col.order <= entry_order && !col.is_completed_state;
+        if cfg.enforce_dependencies && board.workflow.enforce_dependencies && !not_started {
             for dep_id in &task.depends_on {
                 if let Some(dep_hash) = tree.tasks.get(dep_id) {
                     let dep_task: TaskPayload = self.cas.get_typed_payload(dep_hash, OBJ_TASK)?;
@@ -663,10 +872,9 @@ impl ClibmEngine {
         let brd_id = next_entity_id(tree.boards.keys(), "BRD");
         let now = Utc::now().to_rfc3339();
 
-        let derived_code = code
-            .map(|c| c.trim().to_uppercase())
-            .filter(|c| !c.is_empty())
-            .unwrap_or_else(|| {
+        let derived_code = match code.map(str::trim).filter(|c| !c.is_empty()) {
+            Some(c) => normalize_project_code(c)?,
+            None => {
                 let letters: String = name
                     .chars()
                     .filter(|c| c.is_ascii_alphanumeric())
@@ -677,7 +885,9 @@ impl ClibmEngine {
                 } else {
                     letters.to_uppercase()
                 }
-            });
+            }
+        };
+        self.ensure_code_free(&tree, &derived_code)?;
 
         let workspace = WorkspacePayload {
             id: ws_id.clone(),
@@ -692,29 +902,16 @@ impl ClibmEngine {
             project_ids: vec![prj_id.clone()],
         };
 
-        let project = ProjectPayload {
-            id: prj_id.clone(),
-            workspace_id: ws_id.clone(),
-            code: derived_code,
-            name: format!("{} Project", name),
-            description: format!("Default project in workspace {}", name),
-            created_at: now,
-            participants: Vec::new(),
-            metadata: BTreeMap::new(),
-            board_ids: vec![brd_id.clone()],
-        };
-
-        let board = KanbanBoardPayload {
-            id: brd_id.clone(),
-            project_id: prj_id.clone(),
-            name: format!("{} Board", name),
-            columns: Self::default_columns(),
-            workflow: WorkflowConfig {
-                enforce_dependencies: true,
-                enforce_wip_limits: true,
-                require_assignee_in_progress: false,
-            },
-        };
+        let (project, board) = Self::new_project_with_board(
+            &prj_id,
+            &brd_id,
+            &ws_id,
+            &derived_code,
+            &format!("{} Project", name),
+            &format!("Default project in workspace {}", name),
+            &format!("{} Board", name),
+            &now,
+        );
 
         let ws_hash = self.cas.put_object(OBJ_WORKSPACE, &workspace)?;
         let prj_hash = self.cas.put_object(OBJ_PROJECT, &project)?;
@@ -794,11 +991,14 @@ impl ClibmEngine {
         Ok((chosen, auto_commit))
     }
 
-    /// Transfers (or copies if `copy_mode` is true) a task to a target workspace.
+    /// Transfers (or copies if `copy_mode` is true) a task to a target workspace: into
+    /// `target_project` (ID, code or name of a project of that workspace) or else the
+    /// workspace's first project.
     pub fn transfer_task(
         &self,
         task_ref: &str,
         target_workspace: &str,
+        target_project: Option<&str>,
         copy_mode: bool,
     ) -> Result<(TaskPayload, String, Option<String>)> {
         let (_, mut tree) = self.load_working_tree()?;
@@ -816,16 +1016,29 @@ impl ClibmEngine {
             }
         }
         let ws = target_ws.ok_or_else(|| anyhow!("Target workspace '{}' not found", target_workspace))?;
-        let target_prj_id = ws
-            .project_ids
-            .first()
-            .cloned()
-            .ok_or_else(|| anyhow!("Workspace '{}' has no projects", ws.id))?;
-        let prj_hash = tree
-            .projects
-            .get(&target_prj_id)
-            .ok_or_else(|| anyhow!("Project '{}' not found", target_prj_id))?;
-        let prj: ProjectPayload = self.cas.get_typed_payload(prj_hash, OBJ_PROJECT)?;
+        let prj = match target_project {
+            Some(p) => {
+                let prj = self.resolve_project_ref(&tree, p)?;
+                if prj.workspace_id != ws.id {
+                    bail!(
+                        "Project '{}' ({}) belongs to workspace {}, not {}",
+                        prj.code,
+                        prj.id,
+                        prj.workspace_id,
+                        ws.id
+                    );
+                }
+                prj
+            }
+            None => {
+                let first = ws
+                    .project_ids
+                    .first()
+                    .ok_or_else(|| anyhow!("Workspace '{}' has no projects", ws.id))?;
+                self.load_project(&tree, first)?
+            }
+        };
+        let target_prj_id = prj.id.clone();
         let target_board = self.project_board(&tree, &prj)?;
 
         let now = Utc::now().to_rfc3339();
@@ -838,11 +1051,7 @@ impl ClibmEngine {
         task.project_id = target_prj_id;
         task.board_id = target_board.id.clone();
         if !target_board.columns.iter().any(|c| c.id == task.column_id) {
-            task.column_id = target_board
-                .columns
-                .iter()
-                .find(|c| !c.is_completed_state && c.id != "backlog")
-                .or_else(|| target_board.columns.first())
+            task.column_id = Self::default_column(&target_board)
                 .map(|c| c.id.clone())
                 .unwrap_or_else(|| "todo".to_string());
         }
@@ -862,9 +1071,489 @@ impl ClibmEngine {
         Ok((task, new_task_hash, auto_commit))
     }
 
+    // --- Projects ---
+
+    /// Projects of the active workspace (or of every workspace), ordered by workspace
+    /// then project ID.
+    pub fn list_projects(&self, all_workspaces: bool) -> Result<Vec<ProjectSummary>> {
+        let (_, tree) = self.load_working_tree()?;
+        let tasks = self.load_all_tasks(&tree)?;
+        let mut out = Vec::new();
+        for (pid, hash) in &tree.projects {
+            let p: ProjectPayload = self.cas.get_typed_payload(hash, OBJ_PROJECT)?;
+            if !all_workspaces && p.workspace_id != tree.active_workspace_id {
+                continue;
+            }
+            let workspace_name = self
+                .load_workspace(&tree, &p.workspace_id)
+                .map(|w| w.name)
+                .unwrap_or_default();
+            out.push(ProjectSummary {
+                id: pid.clone(),
+                hash: hash.clone(),
+                active: pid == &tree.active_project_id,
+                workspace_id: p.workspace_id.clone(),
+                workspace_name,
+                tasks: tasks.values().filter(|t| &t.project_id == pid).count(),
+                project: p,
+            });
+        }
+        out.sort_by(|a, b| a.workspace_id.cmp(&b.workspace_id).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
+
+    /// Creates a project (with its own board using the default columns) in the active
+    /// workspace. `code` must be unused in the repository. With `switch`, the new project
+    /// becomes the active one.
+    pub fn create_project(
+        &self,
+        name: &str,
+        code: &str,
+        description: &str,
+        switch: bool,
+    ) -> Result<(ProjectPayload, String, Option<String>)> {
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("Project name cannot be empty");
+        }
+        let (_, mut tree) = self.load_working_tree()?;
+        let code = normalize_project_code(code)?;
+        self.ensure_code_free(&tree, &code)?;
+        let mut ws = self.load_workspace(&tree, &tree.active_workspace_id.clone())?;
+
+        let prj_id = next_entity_id(tree.projects.keys(), "PRJ");
+        let brd_id = next_entity_id(tree.boards.keys(), "BRD");
+        let now = Utc::now().to_rfc3339();
+        let description = if description.trim().is_empty() {
+            format!("Project {} in workspace {}", name, ws.name)
+        } else {
+            description.trim().to_string()
+        };
+        let (project, board) = Self::new_project_with_board(
+            &prj_id,
+            &brd_id,
+            &ws.id,
+            &code,
+            name,
+            &description,
+            &format!("{} Board", name),
+            &now,
+        );
+
+        let prj_hash = self.cas.put_object(OBJ_PROJECT, &project)?;
+        let brd_hash = self.cas.put_object(OBJ_BOARD, &board)?;
+        ws.project_ids.push(prj_id.clone());
+        let ws_hash = self.cas.put_object(OBJ_WORKSPACE, &ws)?;
+        tree.projects.insert(prj_id.clone(), prj_hash.clone());
+        tree.boards.insert(brd_id, brd_hash);
+        tree.workspaces.insert(ws.id.clone(), ws_hash);
+        if switch {
+            tree.active_project_id = prj_id.clone();
+        }
+
+        let (_, auto_commit) = self.record_mutation(
+            &tree,
+            &format!("auto(project): create {} {} \"{}\" in {}", prj_id, code, name, ws.id),
+        )?;
+        Ok((project, prj_hash, auto_commit))
+    }
+
+    /// Makes a project the active one. A project of another workspace also switches the
+    /// active workspace (and fires `on-workspace-switch`).
+    pub fn switch_project(&self, target: &str) -> Result<(ProjectPayload, Option<String>)> {
+        let (_, mut tree) = self.load_working_tree()?;
+        let prj = self.resolve_project_ref(&tree, target)?;
+        if tree.active_project_id == prj.id && tree.active_workspace_id == prj.workspace_id {
+            return Ok((prj, None));
+        }
+        let workspace_changed = tree.active_workspace_id != prj.workspace_id;
+        tree.active_project_id = prj.id.clone();
+        tree.active_workspace_id = prj.workspace_id.clone();
+        let (tree_hash, auto_commit) = self.record_mutation(
+            &tree,
+            &format!("auto(project): switch active project to {} ({})", prj.id, prj.code),
+        )?;
+        if workspace_changed {
+            let ws_name = self
+                .load_workspace(&tree, &prj.workspace_id)
+                .map(|w| w.name)
+                .unwrap_or_default();
+            self.fire_hook(
+                "on-workspace-switch",
+                &tree_hash,
+                json!({ "workspace_id": prj.workspace_id, "workspace_name": ws_name, "commit": auto_commit }),
+            )?;
+        }
+        Ok((prj, auto_commit))
+    }
+
+    /// Renames a project or changes its description. The code cannot change: it is part
+    /// of every task ID of the project.
+    pub fn edit_project(
+        &self,
+        project_ref: &str,
+        name: Option<String>,
+        description: Option<String>,
+    ) -> Result<MutationResult> {
+        let (_, mut tree) = self.load_working_tree()?;
+        let mut prj = self.resolve_project_ref(&tree, project_ref)?;
+        let old_hash = tree.projects[&prj.id].clone();
+        let before = prj.clone();
+        if let Some(n) = name {
+            let n = n.trim();
+            if n.is_empty() {
+                bail!("Project name cannot be empty");
+            }
+            prj.name = n.to_string();
+        }
+        if let Some(d) = description {
+            prj.description = d.trim().to_string();
+        }
+        if prj == before {
+            return Ok(MutationResult { id: prj.id, hash: old_hash, commit: None, changed: false });
+        }
+        let hash = self.cas.put_object(OBJ_PROJECT, &prj)?;
+        tree.projects.insert(prj.id.clone(), hash.clone());
+        let (_, commit) =
+            self.record_mutation(&tree, &format!("auto(project): edit {} ({})", prj.id, prj.code))?;
+        Ok(MutationResult { id: prj.id, hash, commit, changed: true })
+    }
+
+    /// Deletes a project and its board(s). Refuses to delete the last project of a
+    /// workspace, and a project that still has tasks unless `move_to` names the project
+    /// that receives them (tasks keep their IDs; a column missing on the new board is
+    /// replaced by its default column).
+    pub fn delete_project(&self, project_ref: &str, move_to: Option<&str>) -> Result<ProjectDeleteResult> {
+        let (_, mut tree) = self.load_working_tree()?;
+        let prj = self.resolve_project_ref(&tree, project_ref)?;
+        let mut ws = self.load_workspace(&tree, &prj.workspace_id)?;
+        if ws.project_ids.len() <= 1 {
+            bail!(
+                "Project {} ({}) is the only project of workspace {} ('{}'); a workspace needs at least one project.",
+                prj.id,
+                prj.code,
+                ws.id,
+                ws.name
+            );
+        }
+
+        let tasks: Vec<TaskPayload> = self
+            .load_all_tasks(&tree)?
+            .into_values()
+            .filter(|t| t.project_id == prj.id)
+            .collect();
+        let mut moved = Vec::new();
+        if !tasks.is_empty() {
+            let target_ref = move_to.ok_or_else(|| {
+                anyhow!(
+                    "Project {} ({}) still has {} task(s). Pass --move-to <project> to move them, or delete them first.",
+                    prj.id,
+                    prj.code,
+                    tasks.len()
+                )
+            })?;
+            let target = self.resolve_project_ref(&tree, target_ref)?;
+            if target.id == prj.id {
+                bail!("--move-to must name a different project than the one being deleted");
+            }
+            let target_board = self.project_board(&tree, &target)?;
+            let now = Utc::now().to_rfc3339();
+            for mut t in tasks {
+                t.project_id = target.id.clone();
+                t.board_id = target_board.id.clone();
+                if !target_board.columns.iter().any(|c| c.id == t.column_id) {
+                    if let Some(c) = Self::default_column(&target_board) {
+                        t.column_id = c.id.clone();
+                    }
+                }
+                t.metadata.insert("workspace_id".to_string(), target.workspace_id.clone());
+                t.updated_at = now.clone();
+                let h = self.cas.put_object(OBJ_TASK, &t)?;
+                tree.tasks.insert(t.id.clone(), h);
+                moved.push(t.id);
+            }
+        }
+
+        tree.projects.remove(&prj.id);
+        for bid in &prj.board_ids {
+            tree.boards.remove(bid);
+        }
+        ws.project_ids.retain(|p| p != &prj.id);
+        let ws_hash = self.cas.put_object(OBJ_WORKSPACE, &ws)?;
+        tree.workspaces.insert(ws.id.clone(), ws_hash);
+        if tree.active_project_id == prj.id {
+            tree.active_project_id = ws.project_ids[0].clone();
+        }
+
+        let (_, commit) = self.record_mutation(
+            &tree,
+            &format!("auto(project): delete {} ({})", prj.id, prj.code),
+        )?;
+        Ok(ProjectDeleteResult {
+            id: prj.id,
+            code: prj.code,
+            moved_tasks: moved,
+            active_project_id: tree.active_project_id,
+            commit,
+        })
+    }
+
+    // --- Board configuration (the active project's board) ---
+
+    /// The active project's board, with its columns in display order.
+    pub fn active_board(&self) -> Result<KanbanBoardPayload> {
+        let (_, tree) = self.load_working_tree()?;
+        let prj = self.active_project(&tree)?;
+        let mut board = self.project_board(&tree, &prj)?;
+        board.columns.sort_by_key(|c| c.order);
+        Ok(board)
+    }
+
+    /// Number of tasks of `board` in each column.
+    pub fn column_task_counts(&self, board: &KanbanBoardPayload) -> Result<BTreeMap<String, usize>> {
+        let (_, tree) = self.load_working_tree()?;
+        let mut counts: BTreeMap<String, usize> =
+            board.columns.iter().map(|c| (c.id.clone(), 0)).collect();
+        for t in self.load_all_tasks(&tree)?.values() {
+            if t.board_id == board.id {
+                *counts.entry(t.column_id.clone()).or_insert(0) += 1;
+            }
+        }
+        Ok(counts)
+    }
+
+    fn validate_board(board: &KanbanBoardPayload) -> Result<()> {
+        if board.columns.is_empty() {
+            bail!("A board needs at least one column");
+        }
+        if !board.columns.iter().any(|c| c.is_completed_state) {
+            bail!("A board needs at least one completed column (mark one with --done true)");
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for c in &board.columns {
+            if !seen.insert(c.id.as_str()) {
+                bail!("Column ID '{}' is used twice", c.id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Loads the active project's board, lets `f` change it (and tasks in `tree`), and
+    /// records the result. `f` returns the commit message. Nothing is written when the
+    /// board and the tasks are unchanged.
+    fn mutate_active_board(
+        &self,
+        f: impl FnOnce(&mut KanbanBoardPayload, &mut TreeSnapshotPayload) -> Result<String>,
+    ) -> Result<MutationResult> {
+        let (_, mut tree) = self.load_working_tree()?;
+        let prj = self.active_project(&tree)?;
+        let mut board = self.project_board(&tree, &prj)?;
+        let old_hash = tree.boards[&board.id].clone();
+        board.columns.sort_by_key(|c| c.order);
+        let before_board = board.clone();
+        let before_tasks = tree.tasks.clone();
+
+        let message = f(&mut board, &mut tree)?;
+        for (i, c) in board.columns.iter_mut().enumerate() {
+            c.order = i;
+        }
+        if board == before_board && tree.tasks == before_tasks {
+            return Ok(MutationResult { id: board.id, hash: old_hash, commit: None, changed: false });
+        }
+        Self::validate_board(&board)?;
+        let hash = self.cas.put_object(OBJ_BOARD, &board)?;
+        tree.boards.insert(board.id.clone(), hash.clone());
+        let (_, commit) = self.record_mutation(&tree, &message)?;
+        Ok(MutationResult { id: board.id, hash, commit, changed: true })
+    }
+
+    /// Tasks of `board_id` currently in `column_id`.
+    fn tasks_in_column(
+        &self,
+        tree: &TreeSnapshotPayload,
+        board_id: &str,
+        column_id: &str,
+    ) -> Result<Vec<TaskPayload>> {
+        Ok(self
+            .load_all_tasks(tree)?
+            .into_values()
+            .filter(|t| t.board_id == board_id && t.column_id == column_id)
+            .collect())
+    }
+
+    pub fn rename_board(&self, name: &str) -> Result<MutationResult> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            bail!("Board name cannot be empty");
+        }
+        self.mutate_active_board(|board, _| {
+            board.name = name.clone();
+            Ok(format!("auto(board): rename {} to \"{}\"", board.id, name))
+        })
+    }
+
+    pub fn add_column(&self, new: NewColumn) -> Result<MutationResult> {
+        let name = new.name.trim().to_string();
+        if name.is_empty() {
+            bail!("Column name cannot be empty");
+        }
+        let id = match new.id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => id.to_string(),
+            None => column_slug(&name),
+        };
+        validate_column_id(&id)?;
+        if new.wip_limit == Some(0) {
+            bail!("WIP limit must be at least 1 (use no limit instead)");
+        }
+        if new.after.is_some() && new.position.is_some() {
+            bail!("Use either --after or --position, not both");
+        }
+        self.mutate_active_board(|board, _| {
+            if board.columns.iter().any(|c| c.id == id) {
+                bail!("Column '{}' already exists on board '{}'", id, board.name);
+            }
+            if board.columns.iter().any(|c| c.name.eq_ignore_ascii_case(&name)) {
+                bail!("A column named '{}' already exists on board '{}'", name, board.name);
+            }
+            let index = if let Some(after) = new.after.as_deref() {
+                let after_id = Self::resolve_column(board, after)?.id.clone();
+                board.columns.iter().position(|c| c.id == after_id).unwrap_or(0) + 1
+            } else if let Some(p) = new.position {
+                p.min(board.columns.len())
+            } else {
+                board
+                    .columns
+                    .iter()
+                    .position(|c| c.is_completed_state)
+                    .unwrap_or(board.columns.len())
+            };
+            board.columns.insert(
+                index,
+                KanbanColumn {
+                    id: id.clone(),
+                    name: name.clone(),
+                    order: index,
+                    wip_limit: new.wip_limit,
+                    is_completed_state: new.is_completed_state,
+                },
+            );
+            Ok(format!("auto(board): add column {} to {}", id, board.id))
+        })
+    }
+
+    /// Changes a column's name, WIP limit or completed flag. Its ID never changes, so
+    /// tasks keep pointing at it. A WIP limit below the column's current task count is
+    /// refused unless `force` is set.
+    pub fn edit_column(&self, column: &str, edit: ColumnEdit, force: bool) -> Result<MutationResult> {
+        if edit.wip_limit == Some(Some(0)) {
+            bail!("WIP limit must be at least 1 (use 'none' to remove it)");
+        }
+        self.mutate_active_board(|board, tree| {
+            let col_id = Self::resolve_column(board, column)?.id.clone();
+            if let Some(n) = edit.name.as_deref() {
+                let n = n.trim();
+                if n.is_empty() {
+                    bail!("Column name cannot be empty");
+                }
+                if board
+                    .columns
+                    .iter()
+                    .any(|c| c.id != col_id && c.name.eq_ignore_ascii_case(n))
+                {
+                    bail!("A column named '{}' already exists on board '{}'", n, board.name);
+                }
+            }
+            if let Some(Some(limit)) = edit.wip_limit {
+                let count = self.tasks_in_column(tree, &board.id, &col_id)?.len();
+                if count > limit && !force {
+                    bail!(
+                        "Column '{}' already has {} tasks, more than the new limit {}. Move tasks out first or pass --force.",
+                        col_id,
+                        count,
+                        limit
+                    );
+                }
+            }
+            let col = board
+                .columns
+                .iter_mut()
+                .find(|c| c.id == col_id)
+                .expect("column was resolved");
+            if let Some(n) = edit.name {
+                col.name = n.trim().to_string();
+            }
+            if let Some(w) = edit.wip_limit {
+                col.wip_limit = w;
+            }
+            if let Some(done) = edit.is_completed_state {
+                col.is_completed_state = done;
+            }
+            Ok(format!("auto(board): edit column {} of {}", col_id, board.id))
+        })
+    }
+
+    /// Removes a column. Refuses while tasks are in it, unless `move_to` names the column
+    /// that receives them (the move ignores WIP and dependency rules).
+    pub fn remove_column(&self, column: &str, move_to: Option<&str>) -> Result<MutationResult> {
+        self.mutate_active_board(|board, tree| {
+            let col_id = Self::resolve_column(board, column)?.id.clone();
+            let tasks = self.tasks_in_column(tree, &board.id, &col_id)?;
+            if !tasks.is_empty() {
+                let target = move_to.ok_or_else(|| {
+                    anyhow!(
+                        "Column '{}' still has {} task(s). Pass --move-to <column> to move them first.",
+                        col_id,
+                        tasks.len()
+                    )
+                })?;
+                let target_id = Self::resolve_column(board, target)?.id.clone();
+                if target_id == col_id {
+                    bail!("--move-to must name a different column than the one being removed");
+                }
+                let now = Utc::now().to_rfc3339();
+                for mut t in tasks {
+                    t.column_id = target_id.clone();
+                    t.updated_at = now.clone();
+                    let h = self.cas.put_object(OBJ_TASK, &t)?;
+                    tree.tasks.insert(t.id.clone(), h);
+                }
+            }
+            board.columns.retain(|c| c.id != col_id);
+            Ok(format!("auto(board): remove column {} from {}", col_id, board.id))
+        })
+    }
+
+    /// Moves a column to a 0-based position (clamped to the last position).
+    pub fn move_column(&self, column: &str, position: usize) -> Result<MutationResult> {
+        self.mutate_active_board(|board, _| {
+            let col_id = Self::resolve_column(board, column)?.id.clone();
+            let idx = board.columns.iter().position(|c| c.id == col_id).expect("column was resolved");
+            let col = board.columns.remove(idx);
+            let to = position.min(board.columns.len());
+            board.columns.insert(to, col);
+            Ok(format!("auto(board): move column {} of {} to position {}", col_id, board.id, to))
+        })
+    }
+
+    pub fn set_board_rules(&self, rules: BoardRulesEdit) -> Result<MutationResult> {
+        self.mutate_active_board(|board, _| {
+            if let Some(v) = rules.enforce_dependencies {
+                board.workflow.enforce_dependencies = v;
+            }
+            if let Some(v) = rules.enforce_wip_limits {
+                board.workflow.enforce_wip_limits = v;
+            }
+            if let Some(v) = rules.require_assignee_in_progress {
+                board.workflow.require_assignee_in_progress = v;
+            }
+            Ok(format!("auto(board): update workflow rules of {}", board.id))
+        })
+    }
+
     // --- Task Operations ---
 
-    /// Creates a task in the active project. `column_id` may be a column ID or name.
+    /// Creates a task in the active project. `column_id` may be a column ID or name, or
+    /// empty for the board's default column (see [`ClibmEngine::default_column`]).
     /// `depends_on` entries are resolved like any task reference. Dependency, WIP-limit
     /// and assignee rules apply to the target column unless `force` is set.
     #[allow(clippy::too_many_arguments)]
@@ -887,7 +1576,13 @@ impl ClibmEngine {
         let cfg = self.cas.load_config()?;
         let prj = self.active_project(&tree)?;
         let board = self.project_board(&tree, &prj)?;
-        let col = Self::resolve_column(&board, column_id)?.clone();
+        let col = if column_id.trim().is_empty() {
+            Self::default_column(&board)
+                .ok_or_else(|| anyhow!("Board '{}' has no columns", board.id))?
+                .clone()
+        } else {
+            Self::resolve_column(&board, column_id)?.clone()
+        };
 
         let mut deps: Vec<String> = Vec::new();
         for raw in depends_on.iter().map(|d| d.trim()).filter(|d| !d.is_empty()) {

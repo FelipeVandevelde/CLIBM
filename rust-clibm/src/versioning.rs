@@ -187,6 +187,12 @@ impl VersioningEngine {
                     if old_t.title != new_t.title {
                         details.push(format!("title: '{}' -> '{}'", old_t.title, new_t.title));
                     }
+                    if old_t.project_id != new_t.project_id {
+                        details.push(format!(
+                            "project: '{}' -> '{}'",
+                            old_t.project_id, new_t.project_id
+                        ));
+                    }
                     if old_t.column_id != new_t.column_id {
                         details.push(format!(
                             "column: '{}' -> '{}'",
@@ -270,18 +276,70 @@ impl VersioningEngine {
                     });
                 }
                 (Some(old_h), Some(new_h)) if old_h != new_h => {
+                    let old_b: KanbanBoardPayload = cas.get_typed_payload(old_h, OBJ_BOARD)?;
+                    let new_b: KanbanBoardPayload = cas.get_typed_payload(new_h, OBJ_BOARD)?;
+                    let mut details = Self::board_details(&old_b, &new_b);
+                    if details.is_empty() {
+                        details.push("Updated Kanban columns or workflow rules".to_string());
+                    }
                     changes.push(EntityChange {
                         entity_type: OBJ_BOARD.to_string(),
                         entity_id: bid.clone(),
                         change_kind: "modified".to_string(),
                         old_hash: Some(old_h.clone()),
                         new_hash: Some(new_h.clone()),
-                        details: vec!["Updated Kanban columns or workflow rules".to_string()],
+                        details,
                     });
                 }
                 _ => {}
             }
         }
+
+        // Compare projects
+        Self::diff_named::<ProjectPayload>(
+            cas,
+            OBJ_PROJECT,
+            &from_tree.projects,
+            &to_tree.projects,
+            |p| format!("{} '{}'", p.code, p.name),
+            |old, new| {
+                let mut d = Vec::new();
+                if old.name != new.name {
+                    d.push(format!("name: '{}' -> '{}'", old.name, new.name));
+                }
+                if old.description != new.description {
+                    d.push("description changed".to_string());
+                }
+                if old.board_ids != new.board_ids {
+                    d.push(format!("boards: {:?} -> {:?}", old.board_ids, new.board_ids));
+                }
+                d
+            },
+            &mut changes,
+        )?;
+
+        // Compare workspaces
+        Self::diff_named::<WorkspacePayload>(
+            cas,
+            OBJ_WORKSPACE,
+            &from_tree.workspaces,
+            &to_tree.workspaces,
+            |w| format!("'{}'", w.name),
+            |old, new| {
+                let mut d = Vec::new();
+                if old.name != new.name {
+                    d.push(format!("name: '{}' -> '{}'", old.name, new.name));
+                }
+                if old.project_ids != new.project_ids {
+                    d.push(format!("projects: {:?} -> {:?}", old.project_ids, new.project_ids));
+                }
+                if old.description != new.description {
+                    d.push("description changed".to_string());
+                }
+                d
+            },
+            &mut changes,
+        )?;
 
         Ok(DiffReport {
             from_ref: from_label.to_string(),
@@ -290,6 +348,101 @@ impl VersioningEngine {
             to_tree_hash: to_tree_hash.to_string(),
             changes,
         })
+    }
+
+    /// Added / deleted / modified entries of one entity map (projects, workspaces).
+    #[allow(clippy::too_many_arguments)]
+    fn diff_named<T: serde::de::DeserializeOwned>(
+        cas: &CasStore,
+        entity_type: &str,
+        from: &BTreeMap<String, String>,
+        to: &BTreeMap<String, String>,
+        label: impl Fn(&T) -> String,
+        details: impl Fn(&T, &T) -> Vec<String>,
+        changes: &mut Vec<EntityChange>,
+    ) -> Result<()> {
+        let ids: BTreeSet<&String> = from.keys().chain(to.keys()).collect();
+        for id in ids {
+            let (kind, old_hash, new_hash, d) = match (from.get(id), to.get(id)) {
+                (None, Some(new_h)) => {
+                    let v: T = cas.get_typed_payload(new_h, entity_type)?;
+                    ("added", None, Some(new_h), vec![format!("Created {} {}", entity_type, label(&v))])
+                }
+                (Some(old_h), None) => {
+                    let v: T = cas.get_typed_payload(old_h, entity_type)?;
+                    ("deleted", Some(old_h), None, vec![format!("Removed {} {}", entity_type, label(&v))])
+                }
+                (Some(old_h), Some(new_h)) if old_h != new_h => {
+                    let old: T = cas.get_typed_payload(old_h, entity_type)?;
+                    let new: T = cas.get_typed_payload(new_h, entity_type)?;
+                    ("modified", Some(old_h), Some(new_h), details(&old, &new))
+                }
+                _ => continue,
+            };
+            changes.push(EntityChange {
+                entity_type: entity_type.to_string(),
+                entity_id: id.clone(),
+                change_kind: kind.to_string(),
+                old_hash: old_hash.cloned(),
+                new_hash: new_hash.cloned(),
+                details: d,
+            });
+        }
+        Ok(())
+    }
+
+    /// Readable list of what changed between two versions of a board.
+    fn board_details(old: &KanbanBoardPayload, new: &KanbanBoardPayload) -> Vec<String> {
+        let mut d = Vec::new();
+        if old.name != new.name {
+            d.push(format!("name: '{}' -> '{}'", old.name, new.name));
+        }
+        for c in &new.columns {
+            match old.columns.iter().find(|o| o.id == c.id) {
+                None => d.push(format!("added column {} ('{}')", c.id, c.name)),
+                Some(o) => {
+                    if o.name != c.name {
+                        d.push(format!("column {}: name '{}' -> '{}'", c.id, o.name, c.name));
+                    }
+                    if o.wip_limit != c.wip_limit {
+                        d.push(format!("column {}: wip {:?} -> {:?}", c.id, o.wip_limit, c.wip_limit));
+                    }
+                    if o.is_completed_state != c.is_completed_state {
+                        d.push(format!("column {}: done {} -> {}", c.id, o.is_completed_state, c.is_completed_state));
+                    }
+                }
+            }
+        }
+        for o in &old.columns {
+            if !new.columns.iter().any(|c| c.id == o.id) {
+                d.push(format!("removed column {} ('{}')", o.id, o.name));
+            }
+        }
+        let order = |b: &KanbanBoardPayload| {
+            let mut cols: Vec<&KanbanColumn> = b.columns.iter().collect();
+            cols.sort_by_key(|c| c.order);
+            cols.into_iter().map(|c| c.id.clone()).collect::<Vec<_>>()
+        };
+        let (old_order, new_order) = (order(old), order(new));
+        let kept_old: Vec<&String> = old_order.iter().filter(|id| new_order.contains(id)).collect();
+        let kept_new: Vec<&String> = new_order.iter().filter(|id| old_order.contains(id)).collect();
+        if kept_old != kept_new {
+            d.push(format!("column order: {} -> {}", old_order.join(","), new_order.join(",")));
+        }
+        let (ow, nw) = (&old.workflow, &new.workflow);
+        if ow.enforce_dependencies != nw.enforce_dependencies {
+            d.push(format!("rule enforce_deps: {} -> {}", ow.enforce_dependencies, nw.enforce_dependencies));
+        }
+        if ow.enforce_wip_limits != nw.enforce_wip_limits {
+            d.push(format!("rule enforce_wip: {} -> {}", ow.enforce_wip_limits, nw.enforce_wip_limits));
+        }
+        if ow.require_assignee_in_progress != nw.require_assignee_in_progress {
+            d.push(format!(
+                "rule require_assignee: {} -> {}",
+                ow.require_assignee_in_progress, nw.require_assignee_in_progress
+            ));
+        }
+        d
     }
 
     /// All commits reachable from `start` (including `start`).

@@ -51,6 +51,20 @@ CLIBM is project management for developers, teams and AI agents without a databa
 6. **Plugins**: standalone binaries that you run on demand or that react to lifecycle hooks
    (and may veto actions).
 
+### How work is organized
+
+```
+Repository (.clibm/)        one per project folder, with branches like Git
+└── Workspace  WS-01        a team, product or area; one is active at a time
+    └── Project PRJ-01      has a code (APP) that prefixes its task IDs: APP-101, APP-102, ...
+        └── Board BRD-01    one Kanban board per project: columns, WIP limits, workflow rules
+            └── Task        priority, assignee, due date, tags, dependencies, comments
+```
+
+A workspace can hold several projects (`clibm project create`), and each project's board can
+be reshaped with `clibm board column …` and `clibm board rules`. New tasks go to the active
+project.
+
 ---
 
 ## Key Architectural Highlights
@@ -424,6 +438,25 @@ clibm workspace create <NAME> [-c <CODE>] [-d <DESCRIPTION>]
 clibm workspace switch [<ID_OR_NAME>]            # without a target: next workspace alphabetically
 ```
 
+`workspace create` also creates the workspace's first project and board. Its project code
+(`-c`, or the first letters of the name) must not be used by another project.
+
+### Projects
+
+```bash
+clibm project list [--all-workspaces]                         # * marks the active project
+clibm project create <NAME> -c <CODE> [-d <DESC>] [--switch]  # new project + board in the active workspace
+clibm project switch <ID|CODE|NAME>                           # switches workspace too when needed
+clibm project edit <ID|CODE|NAME> [--name <NAME>] [-d <DESC>]
+clibm project delete <ID|CODE|NAME> [--move-to <ID|CODE|NAME>]
+```
+
+- Project codes are unique in the repository, because task IDs (`CODE-101`) are. The code
+  cannot be changed afterwards.
+- `project delete` refuses to delete a workspace's last project, and a project that still
+  has tasks unless `--move-to` names the project that receives them (they keep their IDs;
+  a column missing on the new board is replaced by its default column).
+
 ### Tasks & dependencies
 
 ```bash
@@ -434,18 +467,44 @@ clibm task edit <TASK> [--title …] [-d …] [-p …] [-a …] [--due …] [--t
 clibm task delete <TASK> [--force]               # refuses while other tasks depend on it
 clibm task comment <TASK> <MESSAGE> [-a <AUTHOR>]
 clibm task depend <TASK> <DEPENDS_ON>            # cycles are refused
-clibm task transfer <TASK> <WORKSPACE> [--copy]
+clibm task transfer <TASK> <WORKSPACE> [--project <ID|CODE|NAME>] [--copy]
 clibm task history <TASK>
 ```
 
-`task add` without `-p` uses `default_priority` from the config.
+`task add` without `-p` uses `default_priority` from the config, and without `-c` the board's
+default column (`todo`, or the first open column after `backlog` when there is no `todo`).
+`task transfer` moves the task into the workspace's first project unless `--project` names
+another project of that workspace.
 
 ### Kanban board
+
+Each project has one board. These commands act on the active project's board.
 
 ```bash
 clibm board show
 clibm board move <TASK> <COLUMN> [--force]       # dependencies, WIP limits and required assignees apply
+clibm board rename <NAME>
+
+clibm board column list                          # position, ID, name, task count, WIP limit, done/default flags
+clibm board column add <NAME> [--id <ID>] [--wip <N>] [--done] [--after <COL> | --position <N>]
+clibm board column edit <COL> [--name <NAME>] [--wip <N|none>] [--done <true|false>] [--force]
+clibm board column remove <COL> [--move-to <COL>]
+clibm board column move <COL> <POSITION>         # 0-based
+
+clibm board rules                                # show the workflow rules
+clibm board rules [--enforce-deps <bool>] [--enforce-wip <bool>] [--require-assignee <bool>]
 ```
+
+- A new column goes before the first completed column unless `--after` / `--position` says
+  otherwise; its ID comes from the name (`"QA Check"` → `qa-check`) unless `--id` is given.
+- Column IDs never change (`edit` changes the display name), so tasks keep pointing at them.
+- `remove` refuses while tasks are in the column, unless `--move-to` names where they go.
+  `edit --wip` refuses a limit below the column's current task count unless `--force`.
+- A board always keeps at least one column marked done.
+- **Dependency rule**: a task with unfinished dependencies may sit in any column up to the
+  default column (backlog and todo on the default board); moving it further is refused.
+  `--require-assignee` applies to the `in-progress` column. The repository-wide switches
+  `enforce_dependencies` / `enforce_wip_limits` in `clibm config` still apply on top.
 
 ### Versioning, branching & merges
 
@@ -462,6 +521,14 @@ clibm merge <BRANCH> [--ours | --theirs] [-a <AUTHOR>]
 deletions) are applied, and changes made differently on both sides are conflicts. Conflicts stop
 the merge (nothing is changed) unless you pass `--ours` or `--theirs`. Tasks added on both
 branches with the same ID are renumbered. When possible the merge fast-forwards.
+
+`diff` lists changed tasks, boards (added/removed columns, WIP limits, rules, column order),
+projects and workspaces.
+
+Known limitation: creating a project (or a workspace) on two branches gives both the same ID
+(for example `PRJ-02` and its board `BRD-02`), so merging them stops with conflicts. Resolving
+them with `--ours` or `--theirs` keeps only one of the two projects, and the other branch's
+tasks end up attached to it. Create projects on one branch.
 
 ### Plugins
 

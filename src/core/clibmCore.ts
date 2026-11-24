@@ -17,6 +17,7 @@ import {
   EntityChange,
   FORMAT_VERSION,
   KanbanBoardPayload,
+  KanbanColumn,
   ObjectType,
   PluginManifest,
   ProjectPayload,
@@ -1006,6 +1007,108 @@ function tokenizeCommand(input: string): string[] {
  * Executes a `clibm` CLI command against a cloned `ClibmRepositoryState`
  * and returns the updated state + formatted terminal output.
  */
+// --- Project & board helpers (mirror clibm_core::engine) ---
+
+/** Column new tasks land in: `todo`, else the first open non-backlog column, else the first. */
+function simDefaultColumn(board: KanbanBoardPayload): KanbanColumn | undefined {
+  const cols = [...board.columns].sort((a, b) => a.order - b.order);
+  return (
+    cols.find((c) => c.id === 'todo') ||
+    cols.find((c) => !c.is_completed_state && c.id !== 'backlog') ||
+    cols[0]
+  );
+}
+
+/** `"QA Check"` -> `qa-check`. */
+function simColumnSlug(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function simResolveColumn(board: KanbanBoardPayload, input: string): KanbanColumn {
+  const q = input.trim().toLowerCase();
+  const col = board.columns.find((c) => c.id === q) || board.columns.find((c) => c.name.toLowerCase() === q);
+  if (!col) {
+    throw new Error(
+      `Column '${input}' does not exist on board '${board.name}' (valid: ${board.columns.map((c) => c.id).join(', ')})`
+    );
+  }
+  return col;
+}
+
+function simNormalizeCode(raw: string): string {
+  const code = raw.trim().toUpperCase();
+  if (!code || !/^[A-Z0-9_]+$/.test(code)) {
+    throw new Error(`Invalid project code '${raw}': use letters, digits or '_' (e.g. APP)`);
+  }
+  return code;
+}
+
+function simAllProjects(state: ClibmRepositoryState, tree: TreeSnapshotPayload): ProjectPayload[] {
+  return Object.values(tree.projects).map((h) => getTypedPayload<ProjectPayload>(state, h, 'project').payload);
+}
+
+function simEnsureCodeFree(state: ClibmRepositoryState, tree: TreeSnapshotPayload, code: string): void {
+  const used = simAllProjects(state, tree).find((p) => p.code.toUpperCase() === code.toUpperCase());
+  if (used) {
+    throw new Error(`Project code '${code}' is already used by ${used.id} ('${used.name}'). Pick another code.`);
+  }
+}
+
+function simResolveProject(state: ClibmRepositoryState, tree: TreeSnapshotPayload, input: string): ProjectPayload {
+  const q = input.trim().toLowerCase();
+  const all = simAllProjects(state, tree);
+  const exact = all.find((p) => p.id.toLowerCase() === q || p.code.toLowerCase() === q);
+  if (exact) return exact;
+  const byName = all.filter((p) => p.name.toLowerCase() === q);
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) {
+    throw new Error(
+      `Project name '${input}' is ambiguous: it matches ${byName.map((p) => `${p.id} (${p.code})`).join(', ')}. Use the project ID or code.`
+    );
+  }
+  throw new Error(`Project '${input}' not found. Use its ID (PRJ-01), code or name; see \`clibm project list --all-workspaces\`.`);
+}
+
+/** Next `PREFIX-NN` id (e.g. `PRJ-03`) above every existing one. */
+function simNextEntityId(ids: string[], prefix: string): string {
+  const nums = ids
+    .filter((id) => id.toUpperCase().startsWith(`${prefix}-`))
+    .map((id) => parseInt(id.slice(prefix.length + 1), 10))
+    .filter((n) => !Number.isNaN(n));
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `${prefix}-${String(next).padStart(2, '0')}`;
+}
+
+/** Next task number for `code`: highest existing `CODE-n` + 1, never below 101. */
+function simNextTaskNumber(tree: TreeSnapshotPayload, code: string): number {
+  const nums = Object.keys(tree.tasks)
+    .filter((k) => k.toUpperCase().startsWith(`${code.toUpperCase()}-`))
+    .map((k) => parseInt(k.slice(code.length + 1), 10))
+    .filter((n) => !Number.isNaN(n));
+  return Math.max(101, nums.length ? Math.max(...nums) + 1 : 101);
+}
+
+function simDefaultBoardColumns(): KanbanColumn[] {
+  return [
+    { id: 'backlog', name: 'Backlog', order: 0, wip_limit: null, is_completed_state: false },
+    { id: 'todo', name: 'To Do', order: 1, wip_limit: 8, is_completed_state: false },
+    { id: 'in-progress', name: 'In Progress', order: 2, wip_limit: 4, is_completed_state: false },
+    { id: 'review', name: 'Review', order: 3, wip_limit: 3, is_completed_state: false },
+    { id: 'done', name: 'Done', order: 4, wip_limit: null, is_completed_state: true },
+  ];
+}
+
+function simParseBool(val: string): boolean {
+  const v = val.trim().toLowerCase();
+  if (['true', '1', 'on', 'yes', 'enabled'].includes(v)) return true;
+  if (['false', '0', 'off', 'no', 'disabled'].includes(v)) return false;
+  throw new Error(`Invalid boolean value '${val}' (expected true/false)`);
+}
+
 export function executeCliCommand(
   prevState: ClibmRepositoryState,
   rawCommand: string
@@ -1067,14 +1170,22 @@ export function executeCliCommand(
           '  workspace list                          List all workspaces sorted alphabetically (A -> Z)',
           '  workspace switch [id-or-name]           Switch workspace (if omitted, cycles to next workspace A -> Z)',
           '  workspace create <name> [--code <C>]    Create workspace with its own project & Kanban board',
+          '  project list [--all-workspaces]         List projects (* = active)',
+          '  project create "<name>" -c <CODE> [-d "<desc>"] [--switch]   New project + board in the active workspace',
+          '  project switch <ID|CODE|NAME>           Make a project active (switches workspace too if needed)',
+          '  project edit <REF> [--name ...] [-d ...] | project delete <REF> [--move-to <REF>]',
           '  status                                  Show active workspace, Pure Core profile, HEAD & tree hash',
           '  task list [--all-workspaces] [--column <c>] [--priority <p>] [--tag <t>]',
           '  task add "<title>" [-p <prio>] [-c <col>] [-a <user>] [--tags a,b] [--depends-on ID]',
           '  task show <ID> | task edit <ID> [--title ...] | task delete <ID> [--force] | task comment <ID> "<msg>"',
           '  task depend <ID> <DEPENDS_ON_ID>        Link task dependency (supports cross-workspace DAG)',
-          '  task transfer <ID> <TARGET_WS> [--copy] Transfer or copy a task to another workspace',
+          '  task transfer <ID> <TARGET_WS> [--project <REF>] [--copy]  Transfer or copy a task to another workspace',
           '  task history <ID>                       Trace single task changes across commit DAG',
-          '  board show | board move <ID> <column> [--force]',
+          '  board show | board move <ID> <column> [--force] | board rename "<name>"',
+          '  board column list | add "<Name>" [--id <id>] [--wip <n>] [--done] [--after <col> | --position <n>]',
+          '  board column edit <col> [--name ...] [--wip <n|none>] [--done <bool>] [--force]',
+          '  board column remove <col> [--move-to <col>] | board column move <col> <position>',
+          '  board rules [--enforce-deps <bool>] [--enforce-wip <bool>] [--require-assignee <bool>]',
           '',
           'STANDALONE PLUGINS & AI INTEGRATION (plugins/*):',
           '  plugin list                             List installed plugins (starts at 0 in Pure Core mode)',
@@ -1091,7 +1202,6 @@ export function executeCliCommand(
           '  (native only, not simulated in this terminal: export [-o <file>])',
           '',
           'SIMULATOR-ONLY COMMANDS (this web workbench only — the native clibm CLI does NOT have them):',
-          '  board column-add <id> "<Name>" [--wip <limit>]  Add a Kanban column',
           '  project show | project participant "<Name>" [Role]',
           '  plugin install --defaults               Shortcut for the 3 default plugins (native: install each folder)',
           '  plugin run mcp --call task_list|dag_audit  Preview an MCP tool result without an AI client',
@@ -1427,12 +1537,11 @@ export function executeCliCommand(
           throw new Error('Usage: clibm workspace create "<name>" [--code <CODE>] [description]');
         }
         const codeIdx = args.findIndex((a) => a === '--code' || a === '-c');
-        const customCode = codeIdx !== -1 && args[codeIdx + 1] ? args[codeIdx + 1].toUpperCase() : null;
+        const customCode = codeIdx !== -1 && args[codeIdx + 1] ? simNormalizeCode(args[codeIdx + 1]) : null;
 
-        const nextIdx = Object.keys(tree.workspaces).length + 1;
-        const id = `WS-0${nextIdx}`;
-        const prjId = `PRJ-0${Object.keys(tree.projects).length + 1}`;
-        const brdId = `BRD-0${Object.keys(tree.boards).length + 1}`;
+        const id = simNextEntityId(Object.keys(tree.workspaces), 'WS');
+        const prjId = simNextEntityId(Object.keys(tree.projects), 'PRJ');
+        const brdId = simNextEntityId(Object.keys(tree.boards), 'BRD');
         const now = new Date().toISOString();
         const derivedCode =
           customCode ||
@@ -1440,7 +1549,9 @@ export function executeCliCommand(
             .replace(/[^a-zA-Z0-9]/g, '')
             .slice(0, 4)
             .toUpperCase() ||
-          `WS${nextIdx}`;
+          id.replace('-', '');
+        // Task IDs (CODE-101) are global keys: a code can only belong to one project.
+        simEnsureCodeFree(state, tree, derivedCode);
 
         const ws: WorkspacePayload = {
           id,
@@ -1474,16 +1585,10 @@ export function executeCliCommand(
           id: brdId,
           project_id: prjId,
           name: `${name} Kanban Board`,
-          columns: [
-            { id: 'backlog', name: 'Backlog', order: 0, wip_limit: null, is_completed_state: false },
-            { id: 'todo', name: 'To Do', order: 1, wip_limit: 6, is_completed_state: false },
-            { id: 'in-progress', name: 'In Progress', order: 2, wip_limit: 4, is_completed_state: false },
-            { id: 'review', name: 'Review', order: 3, wip_limit: 3, is_completed_state: false },
-            { id: 'done', name: 'Done', order: 4, wip_limit: null, is_completed_state: true },
-          ],
+          columns: simDefaultBoardColumns(),
           workflow: {
-            enforce_dependencies: state.config.enforce_dependencies,
-            enforce_wip_limits: state.config.enforce_wip_limits,
+            enforce_dependencies: true,
+            enforce_wip_limits: true,
             require_assignee_in_progress: false,
           },
         };
@@ -1511,14 +1616,188 @@ export function executeCliCommand(
       throw new Error('Usage: clibm workspace <list | switch [id-or-name] | create "<name>">');
     }
 
-    // SIMULATOR-ONLY: the native clibm CLI has no `project` command.
     if (sub === 'project') {
-      const action = (args[1] || 'show').toLowerCase();
+      const action = (args[1] || 'list').toLowerCase();
       const tree = getStagedTree(state);
       const prjHash = tree.projects[tree.active_project_id];
       const { payload: prj } = getTypedPayload<ProjectPayload>(state, prjHash, 'project');
+      const optVal = (...names: string[]) => {
+        const i = args.findIndex((a) => names.includes(a));
+        return i !== -1 && args[i + 1] !== undefined ? args[i + 1] : null;
+      };
+      const taskPayloads = () =>
+        Object.values(tree.tasks).map((h) => getTypedPayload<TaskPayload>(state, h, 'task').payload);
 
-      if (action === 'list' || action === 'show') {
+      if (action === 'list') {
+        const all = args.includes('--all-workspaces');
+        const tasks = taskPayloads();
+        const lines = [
+          `  ${'ID'.padEnd(8)} ${'CODE'.padEnd(8)} ${'HASH'.padEnd(10)} ${'NAME'.padEnd(26)} ${'TASKS'.padEnd(6)} WORKSPACE`,
+          '-'.repeat(82),
+        ];
+        const rows = Object.entries(tree.projects)
+          .map(([pid, h]) => ({ pid, h, p: getTypedPayload<ProjectPayload>(state, h, 'project').payload }))
+          .filter((r) => all || r.p.workspace_id === tree.active_workspace_id)
+          .sort((a, b) => a.p.workspace_id.localeCompare(b.p.workspace_id) || a.pid.localeCompare(b.pid));
+        for (const r of rows) {
+          const wsHash = tree.workspaces[r.p.workspace_id];
+          const wsName = wsHash ? getTypedPayload<WorkspacePayload>(state, wsHash, 'workspace').payload.name : '';
+          lines.push(
+            `${r.pid === tree.active_project_id ? '*' : ' '} ${r.pid.padEnd(8)} ${r.p.code.padEnd(8)} ${r.h.slice(0, 8).padEnd(
+              10
+            )} ${r.p.name.padEnd(26)} ${String(tasks.filter((t) => t.project_id === r.pid).length).padEnd(6)} ${
+              r.p.workspace_id
+            } (${wsName})`
+          );
+        }
+        return { nextState: state, status: 'ok', output: lines.join('\n') };
+      }
+
+      if (action === 'create') {
+        const name = (args[2] || '').trim();
+        const rawCode = optVal('-c', '--code');
+        if (!name || name.startsWith('-') || !rawCode) {
+          throw new Error('Usage: clibm project create "<name>" -c <CODE> [-d "<description>"] [--switch]');
+        }
+        const code = simNormalizeCode(rawCode);
+        simEnsureCodeFree(state, tree, code);
+        const wsHash = tree.workspaces[tree.active_workspace_id];
+        const { payload: ws } = getTypedPayload<WorkspacePayload>(state, wsHash, 'workspace');
+        const newPrjId = simNextEntityId(Object.keys(tree.projects), 'PRJ');
+        const newBrdId = simNextEntityId(Object.keys(tree.boards), 'BRD');
+        const now = new Date().toISOString();
+        const switchTo = args.includes('--switch');
+        const newPrj: ProjectPayload = {
+          id: newPrjId,
+          workspace_id: ws.id,
+          code,
+          name,
+          description: optVal('-d', '--description') || `Project ${name} in workspace ${ws.name}`,
+          created_at: now,
+          participants: [],
+          metadata: {},
+          board_ids: [newBrdId],
+        };
+        const newBoard: KanbanBoardPayload = {
+          id: newBrdId,
+          project_id: newPrjId,
+          name: `${name} Board`,
+          columns: simDefaultBoardColumns(),
+          workflow: { enforce_dependencies: true, enforce_wip_limits: true, require_assignee_in_progress: false },
+        };
+        const { hash: newPrjHash } = putCasObject(state, 'project', newPrj);
+        tree.projects[newPrjId] = newPrjHash;
+        tree.boards[newBrdId] = putCasObject(state, 'board', newBoard).hash;
+        ws.project_ids = [...ws.project_ids, newPrjId];
+        tree.workspaces[ws.id] = putCasObject(state, 'workspace', ws).hash;
+        if (switchTo) tree.active_project_id = newPrjId;
+        const commitMsg = `auto(project): create ${newPrjId} ${code} "${name}" in ${ws.id}`;
+        const { autoCommitHash } = recordMutation(state, tree, commitMsg);
+        saveRepository(state);
+        return {
+          nextState: state,
+          status: 'ok',
+          output: `Created project ${newPrjId} ${code} ('${name}') in workspace ${ws.id} -> object ${newPrjHash.slice(0, 12)}\n${
+            switchTo
+              ? `  It is now the active project: new tasks are numbered ${code}-101, ...`
+              : `  Switch to it with \`clibm project switch ${code}\``
+          }${formatAutoCommitNotice(autoCommitHash, commitMsg)}`,
+        };
+      }
+
+      if (action === 'switch') {
+        if (!args[2]) throw new Error('Usage: clibm project switch <ID|CODE|NAME>');
+        const target = simResolveProject(state, tree, args[2]);
+        const label = `Active project: ${target.id} ${target.code} ('${target.name}') in workspace ${target.workspace_id}`;
+        if (tree.active_project_id === target.id && tree.active_workspace_id === target.workspace_id) {
+          return { nextState: state, status: 'ok', output: label };
+        }
+        tree.active_project_id = target.id;
+        tree.active_workspace_id = target.workspace_id;
+        const commitMsg = `auto(project): switch active project to ${target.id} (${target.code})`;
+        const { autoCommitHash } = recordMutation(state, tree, commitMsg);
+        saveRepository(state);
+        return { nextState: state, status: 'ok', output: `${label}${formatAutoCommitNotice(autoCommitHash, commitMsg)}` };
+      }
+
+      if (action === 'edit') {
+        if (!args[2]) throw new Error('Usage: clibm project edit <REF> [--name "<name>"] [-d "<description>"]');
+        const target = simResolveProject(state, tree, args[2]);
+        const newName = optVal('--name');
+        const newDesc = optVal('-d', '--description');
+        if (newName !== null && !newName.trim()) throw new Error('Project name cannot be empty');
+        const updated = { ...target, name: newName?.trim() ?? target.name, description: newDesc?.trim() ?? target.description };
+        if (updated.name === target.name && updated.description === target.description) {
+          return { nextState: state, status: 'ok', output: `Nothing changed (${target.id} already matches)` };
+        }
+        const { hash } = putCasObject(state, 'project', updated);
+        tree.projects[target.id] = hash;
+        const commitMsg = `auto(project): edit ${target.id} (${target.code})`;
+        const { autoCommitHash } = recordMutation(state, tree, commitMsg);
+        saveRepository(state);
+        return {
+          nextState: state,
+          status: 'ok',
+          output: `Updated project ${target.id} -> object ${hash.slice(0, 12)}${formatAutoCommitNotice(autoCommitHash, commitMsg)}`,
+        };
+      }
+
+      if (action === 'delete') {
+        if (!args[2]) throw new Error('Usage: clibm project delete <REF> [--move-to <REF>]');
+        const target = simResolveProject(state, tree, args[2]);
+        const wsHash = tree.workspaces[target.workspace_id];
+        const { payload: ws } = getTypedPayload<WorkspacePayload>(state, wsHash, 'workspace');
+        if (ws.project_ids.length <= 1) {
+          throw new Error(
+            `Project ${target.id} (${target.code}) is the only project of workspace ${ws.id} ('${ws.name}'); a workspace needs at least one project.`
+          );
+        }
+        const owned = taskPayloads().filter((t) => t.project_id === target.id);
+        const moved: string[] = [];
+        if (owned.length > 0) {
+          const moveTo = optVal('--move-to');
+          if (!moveTo) {
+            throw new Error(
+              `Project ${target.id} (${target.code}) still has ${owned.length} task(s). Pass --move-to <project> to move them, or delete them first.`
+            );
+          }
+          const dest = simResolveProject(state, tree, moveTo);
+          if (dest.id === target.id) throw new Error('--move-to must name a different project than the one being deleted');
+          const { payload: destBoard } = getTypedPayload<KanbanBoardPayload>(state, tree.boards[dest.board_ids[0]], 'board');
+          const now = new Date().toISOString();
+          for (const t of owned) {
+            t.project_id = dest.id;
+            t.board_id = destBoard.id;
+            if (!destBoard.columns.some((c) => c.id === t.column_id)) {
+              t.column_id = simDefaultColumn(destBoard)?.id || 'todo';
+            }
+            t.metadata = { ...t.metadata, workspace_id: dest.workspace_id };
+            t.updated_at = now;
+            tree.tasks[t.id] = putCasObject(state, 'task', t).hash;
+            moved.push(t.id);
+          }
+        }
+        delete tree.projects[target.id];
+        for (const bid of target.board_ids) delete tree.boards[bid];
+        ws.project_ids = ws.project_ids.filter((p) => p !== target.id);
+        tree.workspaces[ws.id] = putCasObject(state, 'workspace', ws).hash;
+        if (tree.active_project_id === target.id) tree.active_project_id = ws.project_ids[0];
+        const commitMsg = `auto(project): delete ${target.id} (${target.code})`;
+        const { autoCommitHash } = recordMutation(state, tree, commitMsg);
+        saveRepository(state);
+        return {
+          nextState: state,
+          status: 'ok',
+          output: [
+            `Deleted project ${target.id} (${target.code}) and its board (they remain in earlier commits)`,
+            ...(moved.length ? [`  Moved ${moved.length} task(s): ${moved.join(', ')}`] : []),
+            `  Active project: ${tree.active_project_id}`,
+          ].join('\n') + formatAutoCommitNotice(autoCommitHash, commitMsg),
+        };
+      }
+
+      // SIMULATOR-ONLY: `project show` and `project participant` have no native equivalent.
+      if (action === 'show') {
         const lines = [
           SIMULATOR_ONLY_NOTICE('project'),
           `Project:      ${prj.name} (${prj.id} / code: ${prj.code})`,
@@ -1555,6 +1834,7 @@ export function executeCliCommand(
           )}${formatAutoCommitNotice(autoCommitHash, commitMsg)}`,
         };
       }
+      throw new Error('Usage: clibm project <list [--all-workspaces] | create | switch | edit | delete>');
     }
 
     if (sub === 'task') {
@@ -1610,7 +1890,7 @@ export function executeCliCommand(
         const prioRaw = getOpt('-p', '--priority', state.config.default_priority || 'medium').toLowerCase();
         const priority: TaskPriority =
           prioRaw === 'critical' || prioRaw === 'high' || prioRaw === 'low' ? prioRaw : 'medium';
-        const column_id = getOpt('-c', '--column', 'todo').toLowerCase();
+        const columnArg = getOpt('-c', '--column', '');
         const description = getOpt('-d', '--description', 'Created via CLIBM CLI');
         const assignee = getOpt('-a', '--assignee', '') || null;
         const due_date = getOpt('--due', '--due-date', '') || null;
@@ -1632,10 +1912,17 @@ export function executeCliCommand(
         const prjHash = tree.projects[tree.active_project_id];
         const { payload: activePrj } = getTypedPayload<ProjectPayload>(state, prjHash, 'project');
         const activeBoardId = activePrj.board_ids[0] || 'BRD-01';
+        const { payload: activeBoard } = getTypedPayload<KanbanBoardPayload>(
+          state,
+          tree.boards[activeBoardId],
+          'board'
+        );
+        // Like the native CLI: -c takes a column ID or name, else the board's default column.
+        const column_id = columnArg
+          ? simResolveColumn(activeBoard, columnArg).id
+          : simDefaultColumn(activeBoard)?.id || 'todo';
 
-        const nums = Object.keys(tree.tasks).map((k) => parseInt(k.split('-')[1] || '100', 10));
-        const nextNum = (nums.length > 0 ? Math.max(...nums) : 100) + 1;
-        const id = `${activePrj.code}-${nextNum}`;
+        const id = `${activePrj.code}-${simNextTaskNumber(tree, activePrj.code)}`;
         const now = new Date().toISOString();
 
         const newTask: TaskPayload = {
@@ -1745,7 +2032,7 @@ export function executeCliCommand(
         const targetWsArg = (args[3] || '').trim();
         const isCopy = args.includes('--copy');
         if (!id || !targetWsArg) {
-          throw new Error('Usage: clibm task transfer <TASK_ID> <TARGET_WORKSPACE_ID_OR_NAME> [--copy]');
+          throw new Error('Usage: clibm task transfer <TASK_ID> <TARGET_WORKSPACE_ID_OR_NAME> [--project <REF>] [--copy]');
         }
         const thash = tree.tasks[id];
         if (!thash) throw new Error(`Task '${id}' not found`);
@@ -1765,23 +2052,36 @@ export function executeCliCommand(
         if (!matchedWs) {
           throw new Error(`Target workspace '${targetWsArg}' not found`);
         }
-        const targetPrjId = matchedWs.project_ids[0];
-        if (!targetPrjId || !tree.projects[targetPrjId]) {
-          throw new Error(`Workspace '${matchedWs.id}' has no active project`);
+        const prjOptIdx = args.indexOf('--project');
+        const prjOpt = prjOptIdx !== -1 ? args[prjOptIdx + 1] : undefined;
+        let targetPrj: ProjectPayload;
+        if (prjOpt) {
+          targetPrj = simResolveProject(state, tree, prjOpt);
+          if (targetPrj.workspace_id !== matchedWs.id) {
+            throw new Error(
+              `Project '${targetPrj.code}' (${targetPrj.id}) belongs to workspace ${targetPrj.workspace_id}, not ${matchedWs.id}`
+            );
+          }
+        } else {
+          const targetPrjId = matchedWs.project_ids[0];
+          if (!targetPrjId || !tree.projects[targetPrjId]) {
+            throw new Error(`Workspace '${matchedWs.id}' has no projects`);
+          }
+          targetPrj = getTypedPayload<ProjectPayload>(state, tree.projects[targetPrjId], 'project').payload;
         }
-        const { payload: targetPrj } = getTypedPayload<ProjectPayload>(
-          state,
-          tree.projects[targetPrjId],
-          'project'
-        );
         const targetBoardId = targetPrj.board_ids[0] || 'BRD-01';
         const now = new Date().toISOString();
 
         if (isCopy) {
-          const nums = Object.keys(tree.tasks).map((k) => parseInt(k.split('-')[1] || '100', 10));
-          const nextNum = (nums.length > 0 ? Math.max(...nums) : 100) + 1;
-          task.id = `${targetPrj.code}-${nextNum}`;
+          task.id = `${targetPrj.code}-${simNextTaskNumber(tree, targetPrj.code)}`;
           task.created_at = now;
+        }
+        const targetBoardHash = tree.boards[targetBoardId];
+        if (targetBoardHash) {
+          const { payload: targetBoard } = getTypedPayload<KanbanBoardPayload>(state, targetBoardHash, 'board');
+          if (!targetBoard.columns.some((c) => c.id === task.column_id)) {
+            task.column_id = simDefaultColumn(targetBoard)?.id || 'todo';
+          }
         }
         task.project_id = targetPrj.id;
         task.board_id = targetBoardId;
@@ -1967,12 +2267,15 @@ export function executeCliCommand(
           );
         }
 
-        // Enforce blocking dependencies unless --force
+        // Enforce blocking dependencies unless --force. Columns up to the board's default
+        // column (backlog and todo on the default board) are for work not started yet.
+        const entryOrder = simDefaultColumn(taskBoard)?.order ?? 0;
+        const notStarted = targetCol.order <= entryOrder && !targetCol.is_completed_state;
         if (
           !force &&
           state.config.enforce_dependencies &&
           taskBoard.workflow.enforce_dependencies &&
-          !['backlog', 'todo'].includes(targetCol.id)
+          !notStarted
         ) {
           for (const depId of task.depends_on) {
             const depHash = tree.tasks[depId];
@@ -2006,34 +2309,214 @@ export function executeCliCommand(
         };
       }
 
-      // SIMULATOR-ONLY: the native clibm CLI has no `board column-add` command.
-      if (action === 'column-add') {
-        const colId = (args[2] || '').toLowerCase();
-        const colName = args[3] || colId;
-        if (!colId) throw new Error('Usage: clibm board column-add <id> "<Name>" [--wip <limit>]');
-        const wipIdx = args.indexOf('--wip');
-        const wipLimit = wipIdx !== -1 && args[wipIdx + 1] ? parseInt(args[wipIdx + 1], 10) : null;
-        board.columns.push({
-          id: colId,
-          name: colName,
-          order: board.columns.length,
-          wip_limit: wipLimit,
-          is_completed_state: false,
-        });
-        const { hash: newBoardHash } = putCasObject(state, 'board', board);
-        tree.boards[board.id] = newBoardHash;
-        const commitMsg = `auto(board): add column ${colId} "${colName}"`;
+      const optVal = (...names: string[]) => {
+        const i = args.findIndex((a) => names.includes(a));
+        return i !== -1 && args[i + 1] !== undefined ? args[i + 1] : null;
+      };
+      board.columns.sort((a, b) => a.order - b.order);
+      const boardTasks = () =>
+        Object.values(tree.tasks)
+          .map((h) => getTypedPayload<TaskPayload>(state, h, 'task').payload)
+          .filter((t) => t.board_id === board.id);
+      const columnTable = () => {
+        const def = simDefaultColumn(board)?.id;
+        const tasks = boardTasks();
+        return [
+          `Board: ${board.name} (${board.id})`,
+          `  ${'POS'.padEnd(4)} ${'ID'.padEnd(16)} ${'NAME'.padEnd(20)} ${'TASKS'.padEnd(7)} ${'WIP'.padEnd(10)} FLAGS`,
+          '-'.repeat(72),
+          ...board.columns.map((c) => {
+            const flags = [c.is_completed_state ? 'done' : '', c.id === def ? 'default' : ''].filter(Boolean).join(',');
+            return `  ${String(c.order).padEnd(4)} ${c.id.padEnd(16)} ${c.name.padEnd(20)} ${String(
+              tasks.filter((t) => t.column_id === c.id).length
+            ).padEnd(7)} ${String(c.wip_limit ?? '-').padEnd(10)} ${flags}`;
+          }),
+        ].join('\n');
+      };
+      /** Saves `board` (renumbered, validated) and records the change; no-op when unchanged. */
+      const saveBoard = (before: string, done: string, commitMsg: string, extra = '') => {
+        board.columns.forEach((c, i) => (c.order = i));
+        if (JSON.stringify(board) === before) {
+          return { nextState: state, status: 'ok' as const, output: `Nothing changed (${board.id} already matches)` };
+        }
+        if (board.columns.length === 0) throw new Error('A board needs at least one column');
+        if (!board.columns.some((c) => c.is_completed_state)) {
+          throw new Error('A board needs at least one completed column (mark one with --done true)');
+        }
+        const { hash } = putCasObject(state, 'board', board);
+        tree.boards[board.id] = hash;
         const { autoCommitHash } = recordMutation(state, tree, commitMsg);
         saveRepository(state);
         return {
           nextState: state,
-          status: 'ok',
-          output: `${SIMULATOR_ONLY_NOTICE('board column-add')}\nAdded column '${colName}' (${colId}) -> new board CAS hash ${newBoardHash.slice(
-            0,
-            12
-          )}${formatAutoCommitNotice(autoCommitHash, commitMsg)}`,
+          status: 'ok' as const,
+          output: `${done} -> object ${hash.slice(0, 12)}${formatAutoCommitNotice(autoCommitHash, commitMsg)}${extra}`,
         };
+      };
+
+      if (action === 'rename') {
+        const name = (args[2] || '').trim();
+        if (!name) throw new Error('Usage: clibm board rename "<name>"');
+        const before = JSON.stringify(board);
+        board.name = name;
+        return saveBoard(before, `Renamed board ${board.id} to '${name}'`, `auto(board): rename ${board.id} to "${name}"`);
       }
+
+      if (action === 'rules') {
+        const flags: [string, keyof KanbanBoardPayload['workflow']][] = [
+          ['--enforce-deps', 'enforce_dependencies'],
+          ['--enforce-wip', 'enforce_wip_limits'],
+          ['--require-assignee', 'require_assignee_in_progress'],
+        ];
+        const before = JSON.stringify(board);
+        let changedAny = false;
+        for (const [flag, key] of flags) {
+          const v = optVal(flag);
+          if (v !== null) {
+            board.workflow[key] = simParseBool(v);
+            changedAny = true;
+          }
+        }
+        const summary = [
+          `Workflow rules of ${board.name} (${board.id}):`,
+          `  enforce_deps     = ${board.workflow.enforce_dependencies}`,
+          `  enforce_wip      = ${board.workflow.enforce_wip_limits}`,
+          `  require_assignee = ${board.workflow.require_assignee_in_progress}  (to enter in-progress)`,
+        ].join('\n');
+        if (!changedAny) return { nextState: state, status: 'ok', output: summary };
+        return saveBoard(
+          before,
+          `Updated workflow rules of ${board.id}`,
+          `auto(board): update workflow rules of ${board.id}`,
+          `\n${summary}`
+        );
+      }
+
+      if (action === 'column') {
+        const colAction = (args[2] || 'list').toLowerCase();
+        const before = JSON.stringify(board);
+
+        if (colAction === 'list') {
+          return { nextState: state, status: 'ok', output: columnTable() };
+        }
+
+        if (colAction === 'add') {
+          const name = (args[3] || '').trim();
+          if (!name || name.startsWith('-')) {
+            throw new Error(
+              'Usage: clibm board column add "<Name>" [--id <id>] [--wip <n>] [--done] [--after <col> | --position <n>]'
+            );
+          }
+          const id = (optVal('--id') || simColumnSlug(name)).trim();
+          if (!/^[a-z0-9_-]+$/.test(id)) {
+            throw new Error(`Invalid column ID '${id}': use lower-case letters, digits, '-' or '_' (e.g. qa-check)`);
+          }
+          if (board.columns.some((c) => c.id === id)) throw new Error(`Column '${id}' already exists on board '${board.name}'`);
+          if (board.columns.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+            throw new Error(`A column named '${name}' already exists on board '${board.name}'`);
+          }
+          const wipRaw = optVal('--wip');
+          const wip = wipRaw !== null ? parseInt(wipRaw, 10) : null;
+          if (wip !== null && (Number.isNaN(wip) || wip < 1)) throw new Error('WIP limit must be at least 1 (use no limit instead)');
+          const after = optVal('--after');
+          const position = optVal('--position');
+          if (after !== null && position !== null) throw new Error('Use either --after or --position, not both');
+          let index: number;
+          if (after !== null) {
+            const afterId = simResolveColumn(board, after).id;
+            index = board.columns.findIndex((c) => c.id === afterId) + 1;
+          } else if (position !== null) {
+            index = Math.min(Math.max(parseInt(position, 10) || 0, 0), board.columns.length);
+          } else {
+            const firstDone = board.columns.findIndex((c) => c.is_completed_state);
+            index = firstDone === -1 ? board.columns.length : firstDone;
+          }
+          board.columns.splice(index, 0, {
+            id,
+            name,
+            order: index,
+            wip_limit: wip,
+            is_completed_state: args.includes('--done'),
+          });
+          const res = saveBoard(before, `Added column '${name}' to board ${board.id}`, `auto(board): add column ${id} to ${board.id}`);
+          return { ...res, output: `${res.output}\n${columnTable()}` };
+        }
+
+        if (colAction === 'edit') {
+          if (!args[3]) {
+            throw new Error('Usage: clibm board column edit <column> [--name "<name>"] [--wip <n|none>] [--done <true|false>] [--force]');
+          }
+          const col = simResolveColumn(board, args[3]);
+          const newName = optVal('--name');
+          if (newName !== null) {
+            if (!newName.trim()) throw new Error('Column name cannot be empty');
+            if (board.columns.some((c) => c.id !== col.id && c.name.toLowerCase() === newName.trim().toLowerCase())) {
+              throw new Error(`A column named '${newName.trim()}' already exists on board '${board.name}'`);
+            }
+            col.name = newName.trim();
+          }
+          const wipRaw = optVal('--wip');
+          if (wipRaw !== null) {
+            if (wipRaw.trim().toLowerCase() === 'none' || wipRaw.trim() === '') {
+              col.wip_limit = null;
+            } else {
+              const n = parseInt(wipRaw, 10);
+              if (Number.isNaN(n)) throw new Error(`Invalid WIP limit '${wipRaw}' (expected a number or 'none')`);
+              if (n < 1) throw new Error("WIP limit must be at least 1 (use 'none' to remove it)");
+              const count = boardTasks().filter((t) => t.column_id === col.id).length;
+              if (count > n && !args.includes('--force')) {
+                throw new Error(
+                  `Column '${col.id}' already has ${count} tasks, more than the new limit ${n}. Move tasks out first or pass --force.`
+                );
+              }
+              col.wip_limit = n;
+            }
+          }
+          const doneRaw = optVal('--done');
+          if (doneRaw !== null) col.is_completed_state = simParseBool(doneRaw);
+          return saveBoard(before, `Updated column '${col.id}' of board ${board.id}`, `auto(board): edit column ${col.id} of ${board.id}`);
+        }
+
+        if (colAction === 'remove') {
+          if (!args[3]) throw new Error('Usage: clibm board column remove <column> [--move-to <column>]');
+          const col = simResolveColumn(board, args[3]);
+          const inCol = boardTasks().filter((t) => t.column_id === col.id);
+          if (inCol.length > 0) {
+            const moveTo = optVal('--move-to');
+            if (!moveTo) {
+              throw new Error(`Column '${col.id}' still has ${inCol.length} task(s). Pass --move-to <column> to move them first.`);
+            }
+            const dest = simResolveColumn(board, moveTo);
+            if (dest.id === col.id) throw new Error('--move-to must name a different column than the one being removed');
+            const now = new Date().toISOString();
+            for (const t of inCol) {
+              t.column_id = dest.id;
+              t.updated_at = now;
+              tree.tasks[t.id] = putCasObject(state, 'task', t).hash;
+            }
+          }
+          board.columns = board.columns.filter((c) => c.id !== col.id);
+          return saveBoard(before, `Removed column '${col.id}' from board ${board.id}`, `auto(board): remove column ${col.id} from ${board.id}`);
+        }
+
+        if (colAction === 'move') {
+          if (!args[3] || args[4] === undefined) throw new Error('Usage: clibm board column move <column> <position>');
+          const col = simResolveColumn(board, args[3]);
+          const pos = parseInt(args[4], 10);
+          if (Number.isNaN(pos) || pos < 0) throw new Error(`Invalid position '${args[4]}' (expected 0, 1, 2, ...)`);
+          board.columns = board.columns.filter((c) => c.id !== col.id);
+          const to = Math.min(pos, board.columns.length);
+          board.columns.splice(to, 0, col);
+          const res = saveBoard(
+            before,
+            `Moved column '${col.id}' of board ${board.id}`,
+            `auto(board): move column ${col.id} of ${board.id} to position ${to}`
+          );
+          return { ...res, output: `${res.output}\n${columnTable()}` };
+        }
+        throw new Error('Usage: clibm board column <list | add | edit | remove | move>');
+      }
+      throw new Error('Usage: clibm board <show | move | rename | column | rules>');
     }
 
     if (sub === 'commit') {

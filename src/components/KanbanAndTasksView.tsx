@@ -218,8 +218,7 @@ export const KanbanAndTasksView: React.FC<KanbanAndTasksViewProps> = ({
   const handleAddColumn = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newColName.trim()) return;
-    const slug = newColName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    onRunCommand(`clibm board column-add ${slug} "${newColName.trim()}" --wip 5`);
+    onRunCommand(`clibm board column add "${newColName.trim()}" --wip 5`);
     setNewColName('');
   };
 
@@ -679,9 +678,9 @@ export const KanbanAndTasksView: React.FC<KanbanAndTasksViewProps> = ({
             className="border border-zinc-800 bg-zinc-900/40 rounded-lg p-3 flex items-center justify-between gap-3"
           >
             <span className="text-xs text-zinc-400">
-              Customize Kanban Workflow (simulator-only{' '}
-              <code className="text-zinc-200">clibm board column-add</code>; the native CLI has
-              no column command):
+              Customize Kanban Workflow (
+              <code className="text-zinc-200">clibm board column add</code>, same as the native
+              CLI; edit, remove or reorder with <code className="text-zinc-200">board column</code>):
             </span>
             <div className="flex items-center gap-2">
               <input
