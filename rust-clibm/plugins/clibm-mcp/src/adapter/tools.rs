@@ -128,7 +128,7 @@ impl ToolRegistry {
         self.register(ToolDefinition {
             info: McpToolInfo {
                 name: "clibm_status".to_string(),
-                description: "Project status as JSON: branch, HEAD commit, uncommitted changes, active workspace/project, task counts per column".to_string(),
+                description: "Project status as JSON: HEAD commit, number of commits in the history, uncommitted changes, active workspace/project, task counts per column".to_string(),
                 input_schema: json!({ "type": "object", "properties": {} }),
             },
             is_mutating: false,

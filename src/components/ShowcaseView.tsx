@@ -23,7 +23,7 @@ import { CasInspectorView } from './CasInspectorView';
 
 interface ShowcaseViewProps {
   repoState: ClibmRepositoryState;
-  activeBranch: string | null;
+  headLabel: string | null;
   terminalHistory: TerminalHistoryEntry[];
   onExecuteCommand: (cmd: string) => void;
   onClearTerminal: () => void;
@@ -32,7 +32,7 @@ interface ShowcaseViewProps {
 
 export const ShowcaseView: React.FC<ShowcaseViewProps> = ({
   repoState,
-  activeBranch,
+  headLabel,
   terminalHistory,
   onExecuteCommand,
   onClearTerminal,
@@ -94,7 +94,7 @@ export const ShowcaseView: React.FC<ShowcaseViewProps> = ({
                 CLIBM replaces heavyweight cloud trackers and relational databases with a fast,
                 portable Rust core engine. Organize workspaces, tasks, dependencies, and Kanban
                 workflows as immutable, cryptographically verified JSON objects with Git-style
-                commits, branches, structural diffs, and optional TUI &amp; Web plugins.
+                commit history, structural diffs, and optional TUI &amp; Web plugins.
               </p>
             </div>
 
@@ -268,7 +268,7 @@ export const ShowcaseView: React.FC<ShowcaseViewProps> = ({
             <p className="text-xs text-zinc-400">
               All four views below read and mutate the exact same local BLAKE3 repository (
               <span className="font-mono text-zinc-200 tabular-nums">{objectCount} objects</span>{' '}
-              on branch <span className="font-mono text-white font-semibold">{activeBranch}</span>).
+              at HEAD <span className="font-mono text-white font-semibold">{headLabel || 'none'}</span>).
             </p>
           </div>
 
@@ -329,7 +329,7 @@ export const ShowcaseView: React.FC<ShowcaseViewProps> = ({
         <div>
           {demoStageMode === 'cli' && (
             <TerminalPane
-              activeBranch={activeBranch}
+              headLabel={headLabel}
               stagedTreeHash={repoState.stagedTreeHash}
               history={terminalHistory}
               onExecute={onExecuteCommand}
@@ -406,12 +406,12 @@ export const ShowcaseView: React.FC<ShowcaseViewProps> = ({
                 02. Git-Style Versioning &amp; Structural Diffs
               </div>
               <h3 className="text-base font-semibold text-white">
-                Branch, Diff, Checkout &amp; Merge Project States
+                Track, Compare &amp; Restore Project States
               </h3>
               <p className="text-sm text-zinc-300 leading-relaxed">
-                Create experimental workflow branches (<code className="text-zinc-200">clibm branch</code>),
-                compare any two versions at the field level (<code className="text-zinc-200">clibm diff</code>),
-                and recover historical project snapshots in <span className="tabular-nums">&lt;1ms</span>.
+                Every change is a commit on one straight history (<code className="text-zinc-200">clibm log</code>),
+                compare any two versions at the field level (<code className="text-zinc-200">clibm diff HEAD~1 HEAD</code>),
+                and bring back an earlier state as a new commit (<code className="text-zinc-200">clibm restore</code>).
               </p>
             </div>
             <div className="pt-3 border-t border-zinc-800 text-xs font-mono text-zinc-400 flex items-center justify-between">

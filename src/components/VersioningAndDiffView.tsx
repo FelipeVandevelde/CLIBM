@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { GitBranch, GitCommit, GitMerge, GitCompare, History, RotateCcw } from 'lucide-react';
-import { ClibmRepositoryState } from '../core/types';
+import { GitCommit, GitCompare, History, RotateCcw, Undo2 } from 'lucide-react';
+import { ClibmRepositoryState, CommitPayload } from '../core/types';
 import {
   diffRefs,
-  getActiveBranch,
   getCommitHistory,
+  getTypedPayload,
+  historyNote,
   resolveHeadCommit,
 } from '../core/clibmCore';
 
@@ -18,27 +19,20 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
   onRunCommand,
 }) => {
   const [commitMessage, setCommitMessage] = useState('');
-  const [newBranchName, setNewBranchName] = useState('');
-  const [diffFromRef, setDiffFromRef] = useState('main');
-  const [diffToRef, setDiffToRef] = useState('feat/plugin-hooks');
+  const [diffFromRef, setDiffFromRef] = useState('HEAD~1');
+  const [diffToRef, setDiffToRef] = useState('HEAD');
 
-  const activeBranch = getActiveBranch(repoState);
   const headCommitHash = resolveHeadCommit(repoState);
-  const branchNames = Object.keys(repoState.branches);
+  const note = historyNote(repoState);
 
-  const commitLog = useMemo(() => {
-    const allHashes = new Set<string>();
-    const combined: ReturnType<typeof getCommitHistory> = [];
-    for (const b of Object.keys(repoState.branches)) {
-      for (const item of getCommitHistory(repoState, b)) {
-        if (!allHashes.has(item.hash)) {
-          allHashes.add(item.hash);
-          combined.push(item);
-        }
-      }
-    }
-    return combined.sort((a, b) => b.commit.timestamp.localeCompare(a.commit.timestamp));
-  }, [repoState]);
+  // One straight history: HEAD and everything before it, newest first.
+  const commitLog = useMemo(() => getCommitHistory(repoState), [repoState]);
+
+  const dirty = useMemo(() => {
+    if (!headCommitHash) return true;
+    const { payload } = getTypedPayload<CommitPayload>(repoState, headCommitHash, 'commit');
+    return payload.tree_hash !== repoState.stagedTreeHash;
+  }, [repoState, headCommitHash]);
 
   const diffReport = useMemo(() => {
     try {
@@ -55,17 +49,21 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
     setCommitMessage('');
   };
 
-  const handleCreateBranch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newBranchName.trim()) return;
-    const clean = newBranchName.trim().replace(/\s+/g, '-');
-    onRunCommand(`clibm branch ${clean}`);
-    setNewBranchName('');
-  };
+  const refOptions = (
+    <>
+      <option value="HEAD">HEAD (latest)</option>
+      {commitLog.length > 1 && <option value="HEAD~1">HEAD~1 (one before)</option>}
+      {commitLog.map((c, i) => (
+        <option key={c.hash} value={c.hash.slice(0, 12)}>
+          {c.hash.slice(0, 10)} · HEAD~{i} · {c.commit.message.slice(0, 32)}
+        </option>
+      ))}
+    </>
+  );
 
   return (
     <div className="space-y-6">
-      {/* Top Action Row: Create Commit & Create/Switch Branch */}
+      {/* Top Action Row: Create Commit & Restore */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Create Commit Box */}
         <form
@@ -86,6 +84,7 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
           <p className="text-xs text-zinc-400">
             Commits record a lightweight <code className="text-zinc-300">TreeSnapshotPayload</code>{' '}
             mapping task and board IDs to their BLAKE3 hashes without duplicating unchanged objects.
+            With auto_commit on, every change is already a commit.
           </p>
           <div className="flex items-center gap-2">
             <input
@@ -104,86 +103,56 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
           </div>
         </form>
 
-        {/* Branch & Merge Controls */}
+        {/* Restore Box */}
         <div className="border border-zinc-800 bg-zinc-900/60 rounded-lg p-5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold text-white">
-              <GitBranch className="w-4 h-4 text-zinc-200" />
+              <Undo2 className="w-4 h-4 text-zinc-200" />
               <span>
-                Branches &amp; Merging (<code className="text-zinc-200">refs/heads/*</code>)
+                Go Back to an Earlier State (<code className="text-zinc-200">clibm restore</code>)
               </span>
             </div>
-            <span className="text-xs font-mono text-white font-semibold">
-              HEAD: {activeBranch || headCommitHash?.slice(0, 10)}
+            <span className="text-xs font-mono text-white font-semibold tabular-nums">
+              HEAD: {headCommitHash?.slice(0, 10) || 'none'}
             </span>
           </div>
-
+          <p className="text-xs text-zinc-400">
+            CLIBM keeps one straight history, without branches. <code className="text-zinc-300">Restore</code>{' '}
+            on a commit below brings its tasks and boards back as a <em>new</em> commit, so nothing in
+            the history is lost and task numbers used since then are never reused.
+          </p>
+          {note && <p className="text-xs text-zinc-300 border-l border-zinc-600 pl-2">{note}</p>}
           <div className="flex flex-wrap items-center gap-2">
-            {Object.entries(repoState.branches).map(([branch, commitHash]) => {
-              const isCurrent = branch === activeBranch;
-              return (
-                <div
-                  key={branch}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs font-mono ${
-                    isCurrent
-                      ? 'bg-zinc-800 border-zinc-300 text-white font-semibold'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-300'
-                  }`}
-                >
-                  <span>{branch}</span>
-                  <span className="text-zinc-500 tabular-nums">({commitHash.slice(0, 8)})</span>
-                  {!isCurrent && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => onRunCommand(`clibm checkout ${branch}`)}
-                        className="text-zinc-200 hover:text-white hover:underline ml-1 cursor-pointer"
-                      >
-                        checkout
-                      </button>
-                      <span aria-hidden="true" className="text-zinc-700">|</span>
-                      <button
-                        type="button"
-                        onClick={() => onRunCommand(`clibm merge ${branch}`)}
-                        className="text-zinc-100 hover:text-white hover:underline flex items-center gap-0.5 cursor-pointer"
-                      >
-                        <GitMerge className="w-3 h-3" />
-                        merge
-                      </button>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <form onSubmit={handleCreateBranch} className="flex items-center gap-2 pt-1">
-            <input
-              type="text"
-              value={newBranchName}
-              onChange={(e) => setNewBranchName(e.target.value)}
-              placeholder="New branch name (e.g. release/v0.2)..."
-              className="flex-1 px-3 py-1.5 text-xs bg-zinc-950 border border-zinc-800 rounded text-white font-mono"
-            />
             <button
-              type="submit"
-              className="px-3.5 py-1.5 text-xs font-semibold bg-zinc-100 hover:bg-white text-zinc-950 rounded whitespace-nowrap shrink-0 cursor-pointer"
+              type="button"
+              disabled={commitLog.length < 2}
+              onClick={() => onRunCommand('clibm restore HEAD~1')}
+              className="px-3.5 py-1.5 text-xs font-semibold bg-zinc-100 hover:bg-white text-zinc-950 rounded whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Create Branch
+              Undo latest commit (restore HEAD~1)
             </button>
-          </form>
+            <button
+              type="button"
+              disabled={!dirty}
+              onClick={() => onRunCommand('clibm restore HEAD --force')}
+              className="px-3.5 py-1.5 text-xs font-mono text-zinc-200 bg-zinc-950 border border-zinc-700 hover:border-zinc-400 rounded whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Discard changes that are not committed yet"
+            >
+              Discard uncommitted changes
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Main Split: Commit History DAG (Left 6 cols) + Structural Diff Inspector (Right 6 cols) */}
+      {/* Main Split: Commit History (Left 6 cols) + Structural Diff Inspector (Right 6 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left: Commit History DAG */}
+        {/* Left: Commit History */}
         <div className="lg:col-span-6 border border-zinc-800 bg-zinc-900/60 rounded-lg p-5 space-y-4">
           <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-white">
               <History className="w-4 h-4 text-zinc-200" />
               <span>
-                Immutable Commit Graph (<code className="text-zinc-200">clibm log</code>)
+                Commit History (<code className="text-zinc-200">clibm log</code>)
               </span>
             </div>
             <span className="text-xs font-mono text-zinc-400 tabular-nums">
@@ -192,10 +161,7 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
           </div>
 
           <div className="space-y-3">
-            {commitLog.map(({ hash, commit }) => {
-              const pointingBranches = Object.entries(repoState.branches)
-                .filter(([, h]) => h === hash)
-                .map(([b]) => b);
+            {commitLog.map(({ hash, commit }, index) => {
               const isHead = headCommitHash === hash;
 
               return (
@@ -212,22 +178,23 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
                       <span className="font-semibold text-zinc-100 tabular-nums">
                         commit {hash.slice(0, 14)}
                       </span>
-                      {pointingBranches.length > 0 && (
-                        <span className="text-zinc-300">
-                          [{pointingBranches.join(', ')}]
-                        </span>
+                      {isHead ? (
+                        <span className="text-white font-bold underline">(HEAD)</span>
+                      ) : (
+                        <span className="text-zinc-500 tabular-nums">HEAD~{index}</span>
                       )}
-                      {isHead && <span className="text-white font-bold underline">(HEAD)</span>}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onRunCommand(`clibm checkout ${hash.slice(0, 12)}`)}
-                      className="px-2 py-0.5 text-[11px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                      title="Recover this exact project state"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Checkout State</span>
-                    </button>
+                    {!isHead && (
+                      <button
+                        type="button"
+                        onClick={() => onRunCommand(`clibm restore ${hash.slice(0, 12)}`)}
+                        className="px-2 py-0.5 text-[11px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                        title="Bring this project state back as a new commit"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Restore</span>
+                      </button>
+                    )}
                   </div>
 
                   <p className="text-sm font-medium text-white">{commit.message}</p>
@@ -238,14 +205,6 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
                     <span>{commit.timestamp.slice(0, 19).replace('T', ' ')}</span>
                     <span aria-hidden="true">·</span>
                     <span>tree: {commit.tree_hash.slice(0, 12)}</span>
-                    {commit.parent_hashes.length > 0 && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span>
-                          parents: {commit.parent_hashes.map((p) => p.slice(0, 8)).join(', ')}
-                        </span>
-                      </>
-                    )}
                   </div>
                 </div>
               );
@@ -263,39 +222,23 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center gap-2 text-xs font-mono">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-mono min-w-0 max-w-full">
               <select
                 value={diffFromRef}
                 onChange={(e) => setDiffFromRef(e.target.value)}
-                className="px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-zinc-200"
+                aria-label="Compare from"
+                className="min-w-0 max-w-[12rem] flex-1 px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-zinc-200"
               >
-                {branchNames.map((b) => (
-                  <option key={b} value={b}>
-                    branch: {b}
-                  </option>
-                ))}
-                {commitLog.map((c) => (
-                  <option key={c.hash} value={c.hash.slice(0, 12)}>
-                    commit: {c.hash.slice(0, 10)}
-                  </option>
-                ))}
+                {refOptions}
               </select>
               <span className="text-zinc-500">..</span>
               <select
                 value={diffToRef}
                 onChange={(e) => setDiffToRef(e.target.value)}
-                className="px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-zinc-200"
+                aria-label="Compare to"
+                className="min-w-0 max-w-[12rem] flex-1 px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-zinc-200"
               >
-                {branchNames.map((b) => (
-                  <option key={b} value={b}>
-                    branch: {b}
-                  </option>
-                ))}
-                {commitLog.map((c) => (
-                  <option key={c.hash} value={c.hash.slice(0, 12)}>
-                    commit: {c.hash.slice(0, 10)}
-                  </option>
-                ))}
+                {refOptions}
               </select>
             </div>
           </div>
@@ -348,7 +291,9 @@ export const VersioningAndDiffView: React.FC<VersioningAndDiffViewProps> = ({
             </div>
           ) : (
             <div className="py-8 text-center text-xs text-zinc-500">
-              Select two valid references to compare.
+              {commitLog.length < 2
+                ? 'Make a change first: there is only one commit to compare.'
+                : 'Select two commits to compare.'}
             </div>
           )}
         </div>

@@ -5,11 +5,12 @@
 //! - JSON as serialization format
 //! - BLAKE3 as cryptographic hashing algorithm
 //! - Immutable objects identified by hashes (`Type`, `Version`, `Hash`, `Payload`)
-//! - References (`refs/heads/*`, `HEAD`) to identify versions and branches
+//! - References (`HEAD` -> `refs/heads/main`) marking the latest commit of the history
+//!   (CLIBM keeps one straight line of commits; other refs only exist in old repositories)
 //! - Configuration management (`.clibm/config.json`) with `auto_commit = true` by default
 
 use crate::canonical::{compute_object_hash, normalize_value};
-use crate::models::ClibmConfig;
+use crate::models::{ClibmConfig, CommitPayload, OBJ_COMMIT};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -51,12 +52,13 @@ fn legacy_plugin_hash(object_type: &str, version: &str, payload: &Value) -> Opti
     Some(blake3::hash(preimage.as_bytes()).to_hex().to_string())
 }
 
-/// Validates a branch name before it is used as a path under `.clibm/refs/heads/`.
+/// Validates a ref name before it is used as a path under `.clibm/refs/heads/`, so a
+/// user-supplied string (e.g. `../../x`) never becomes a path outside it.
 /// Allows `[A-Za-z0-9._/-]`, rejects `..`, empty segments, a leading `-`, `/` or `.`,
 /// a trailing `/` or `.lock`, and the reserved name `HEAD`.
 pub fn validate_ref_name(name: &str) -> Result<()> {
     let invalid = |reason: &str| -> Result<()> {
-        bail!("Invalid branch name '{}': {}", name, reason)
+        bail!("Invalid ref name '{}': {}", name, reason)
     };
     if name.is_empty() || name.len() > 100 {
         return invalid("must be 1-100 characters long");
@@ -444,10 +446,33 @@ impl CasStore {
         Ok(())
     }
 
-    pub fn set_head_branch(&self, branch: &str) -> Result<()> {
-        validate_ref_name(branch)?;
-        fs::write(self.head_file(), format!("ref: refs/heads/{}\n", branch))?;
-        Ok(())
+    /// A note for repositories made before CLIBM dropped branches: HEAD detached on an
+    /// old commit, HEAD on a branch other than `main`, or extra branch refs. `None` for a
+    /// normal repository (HEAD -> refs/heads/main and no other refs).
+    pub fn history_note(&self) -> Result<Option<String>> {
+        let current = self.current_branch()?;
+        let others: Vec<String> = self
+            .list_branches()?
+            .into_iter()
+            .map(|(name, _)| name)
+            .filter(|name| Some(name) != current.as_ref())
+            .collect();
+        let head = match current.as_deref() {
+            Some("main") => None,
+            Some(other) => Some(format!("HEAD is on the old branch '{}'", other)),
+            None => Some("HEAD is on an old commit (detached)".to_string()),
+        };
+        if head.is_none() && others.is_empty() {
+            return Ok(None);
+        }
+        let mut parts: Vec<String> = head.into_iter().collect();
+        if !others.is_empty() {
+            parts.push(format!("unused branch refs remain: {}", others.join(", ")));
+        }
+        Ok(Some(format!(
+            "{}. CLIBM no longer uses branches: new commits continue from HEAD, and the other refs are ignored (nothing was deleted).",
+            parts.join("; ")
+        )))
     }
 
     pub fn set_detached_head(&self, commit_hash: &str) -> Result<()> {
@@ -489,16 +514,45 @@ impl CasStore {
         Ok(())
     }
 
-    /// Resolves a reference name (`HEAD`, branch name, or full/short commit hash) to a commit hash.
+    /// Resolves a reference to a commit hash: `HEAD`, `HEAD~N` (N commits before HEAD),
+    /// `main` (or another ref name), or a full/short commit hash.
     pub fn resolve_ref(&self, reference: &str) -> Result<String> {
-        if reference.eq_ignore_ascii_case("HEAD") {
+        let reference = reference.trim();
+        let upper = reference.to_ascii_uppercase();
+        if upper == "HEAD" {
             return self
                 .resolve_head_commit()?
                 .ok_or_else(|| anyhow!("HEAD does not point to any commit yet"));
         }
+        if let Some(n) = upper.strip_prefix("HEAD~") {
+            let steps: usize = if n.is_empty() {
+                1
+            } else {
+                n.parse()
+                    .map_err(|_| anyhow!("Invalid reference '{}': use HEAD~N, e.g. HEAD~2", reference))?
+            };
+            let mut hash = self
+                .resolve_head_commit()?
+                .ok_or_else(|| anyhow!("HEAD does not point to any commit yet"))?;
+            for done in 0..steps {
+                let commit: CommitPayload = self.get_typed_payload(&hash, OBJ_COMMIT)?;
+                hash = commit.parent_hashes.first().cloned().ok_or_else(|| {
+                    anyhow!(
+                        "'{}' goes past the first commit: the history has only {} commit(s) before HEAD",
+                        reference,
+                        done
+                    )
+                })?;
+            }
+            return Ok(hash);
+        }
         if let Some(commit_hash) = self.get_branch_commit(reference)? {
             return Ok(commit_hash);
         }
-        self.resolve_hash_prefix(reference)
+        let hash = self.resolve_hash_prefix(reference)?;
+        // Only commits are valid here (not task or board objects).
+        self.get_typed_payload::<CommitPayload>(&hash, OBJ_COMMIT)
+            .map_err(|_| anyhow!("'{}' is not a commit (use a hash from `clibm log`)", reference))?;
+        Ok(hash)
     }
 }

@@ -2,8 +2,8 @@
  * Headless CLIBM Core Engine & CLI Command Dispatcher
  *
  * Implements the exact same BLAKE3 Content-Addressable Storage, RFC 8785 Canonical JSON,
- * Git-style commit DAG, structural diff, 3-way merge, computed indices, and CLI command
- * grammar as the native Rust crate (`/rust-clibm/`).
+ * linear commit history (no branches), structural diff, restore, computed indices, and CLI
+ * command grammar as the native Rust crate (`/rust-clibm/`).
  */
 
 import { computeCanonicalObjectHash } from './blake3';
@@ -130,7 +130,8 @@ export function resolveObjectHash(state: ClibmRepositoryState, prefix: string): 
   return matches[0];
 }
 
-export function getActiveBranch(state: ClibmRepositoryState): string | null {
+/** Ref HEAD points at (`main`), or null when HEAD holds a commit hash (old saved states). */
+function headRefName(state: ClibmRepositoryState): string | null {
   if (state.head.startsWith('ref: refs/heads/')) {
     return state.head.replace('ref: refs/heads/', '').trim();
   }
@@ -138,24 +139,69 @@ export function getActiveBranch(state: ClibmRepositoryState): string | null {
 }
 
 export function resolveHeadCommit(state: ClibmRepositoryState): string | null {
-  const branch = getActiveBranch(state);
-  if (branch) {
-    return state.branches[branch] || null;
+  const ref = headRefName(state);
+  if (ref) {
+    return state.branches[ref] || null;
   }
   return state.head || null;
 }
 
+/** Number of commits in the history (HEAD and everything before it). */
+export function countCommits(state: ClibmRepositoryState): number {
+  return getCommitHistory(state).length;
+}
+
+/**
+ * Like `clibm_core::cas::CasStore::history_note`: a note for saved simulator states made
+ * when CLIBM still had branches. `null` for a normal history.
+ */
+export function historyNote(state: ClibmRepositoryState): string | null {
+  const current = headRefName(state);
+  const others = Object.keys(state.branches).filter((b) => b !== current);
+  const parts: string[] = [];
+  if (current === null) parts.push('HEAD is on an old commit (detached)');
+  else if (current !== 'main') parts.push(`HEAD is on the old branch '${current}'`);
+  if (others.length) parts.push(`unused branch refs remain: ${others.join(', ')}`);
+  if (!parts.length) return null;
+  return `${parts.join('; ')}. CLIBM no longer uses branches: new commits continue from HEAD, and the other refs are ignored (nothing was deleted).`;
+}
+
+/** Resolves `HEAD`, `HEAD~N`, `main` or a commit hash prefix to a commit hash. */
 export function resolveRefToCommit(state: ClibmRepositoryState, ref: string): string {
   const trimmed = ref.trim();
-  if (trimmed.toUpperCase() === 'HEAD') {
+  const upper = trimmed.toUpperCase();
+  const head = () => {
     const h = resolveHeadCommit(state);
-    if (!h) throw new Error('HEAD does not point to any commit');
+    if (!h) throw new Error('HEAD does not point to any commit yet');
     return h;
+  };
+  if (upper === 'HEAD') return head();
+  if (upper.startsWith('HEAD~')) {
+    const n = upper.slice(5);
+    const steps = n === '' ? 1 : Number(n);
+    if (!Number.isInteger(steps) || steps < 0) {
+      throw new Error(`Invalid reference '${trimmed}': use HEAD~N, e.g. HEAD~2`);
+    }
+    let hash = head();
+    for (let done = 0; done < steps; done++) {
+      const { payload: commit } = getTypedPayload<CommitPayload>(state, hash, 'commit');
+      if (!commit.parent_hashes.length) {
+        throw new Error(
+          `'${trimmed}' goes past the first commit: the history has only ${done} commit(s) before HEAD`
+        );
+      }
+      hash = commit.parent_hashes[0];
+    }
+    return hash;
   }
   if (state.branches[trimmed]) {
     return state.branches[trimmed];
   }
-  return resolveObjectHash(state, trimmed);
+  const hash = resolveObjectHash(state, trimmed);
+  if (state.objects[hash]?.Type !== 'commit') {
+    throw new Error(`'${trimmed}' is not a commit (use a hash from \`clibm log\`)`);
+  }
+  return hash;
 }
 
 export function getStagedTree(state: ClibmRepositoryState): TreeSnapshotPayload {
@@ -278,20 +324,9 @@ export function validateNewDependency(
   }
 }
 
-export function createCommit(
-  state: ClibmRepositoryState,
-  author: string,
-  message: string,
-  extraParent?: string
-): string {
-  const parents: string[] = [];
+export function createCommit(state: ClibmRepositoryState, author: string, message: string): string {
   const currentHead = resolveHeadCommit(state);
-  if (currentHead) {
-    parents.push(currentHead);
-  }
-  if (extraParent && !parents.includes(extraParent)) {
-    parents.push(extraParent);
-  }
+  const parents: string[] = currentHead ? [currentHead] : [];
 
   const commitPayload: CommitPayload = {
     tree_hash: state.stagedTreeHash,
@@ -302,9 +337,9 @@ export function createCommit(
   };
 
   const { hash: commitHash } = putCasObject(state, 'commit', commitPayload);
-  const activeBranch = getActiveBranch(state);
-  if (activeBranch) {
-    state.branches[activeBranch] = commitHash;
+  const ref = headRefName(state);
+  if (ref) {
+    state.branches[ref] = commitHash;
   } else {
     state.head = commitHash;
   }
@@ -313,7 +348,7 @@ export function createCommit(
 
 /**
  * Updates the staged working tree and, if `state.config.auto_commit` is enabled (default: true),
- * immediately records an individual immutable BLAKE3 commit on the active branch.
+ * immediately records an individual immutable BLAKE3 commit on top of HEAD.
  */
 export function recordMutation(
   state: ClibmRepositoryState,
@@ -368,6 +403,7 @@ export function getCommitHistory(
 }
 
 export function getTaskHistory(state: ClibmRepositoryState, taskId: string): TaskHistoryEntry[] {
+  // Mirrors VersioningEngine::task_history (a task that is deleted and comes back is listed again).
   const commits = getCommitHistory(state).reverse();
   const entries: TaskHistoryEntry[] = [];
   let lastSeenHash: string | null = null;
@@ -386,6 +422,8 @@ export function getTaskHistory(state: ClibmRepositoryState, taskId: string): Tas
         task_snapshot: taskSnapshot,
       });
       lastSeenHash = taskObjHash;
+    } else if (!taskObjHash) {
+      lastSeenHash = null;
     }
   }
 
@@ -499,7 +537,7 @@ export function diffRefs(state: ClibmRepositoryState, fromRef: string, toRef: st
 }
 
 /**
- * Seeds a rich, realistic initial CLIBM repository with multiple commits and a feature branch.
+ * Seeds a rich, realistic initial CLIBM repository with a short straight history of commits.
  * By default (`installProfile = 'pure'`), the core is 100% pure and starts with 0 pre-installed plugins.
  * If the user selects `installProfile = 'with-defaults'` during installation, the 3 default plugins
  * (`clibm-dep-audit`, `clibm-export-md`, `clibm-workflow-lint`) are pre-installed from `plugins/`.
@@ -621,7 +659,7 @@ export function createSeededRepository(options?: {
     project_id: 'PRJ-01',
     board_id: 'BRD-01',
     column_id: 'todo',
-    title: 'Build Git-inspired Commit DAG, Branch refs & Tree Snapshot engine',
+    title: 'Build linear commit history & Tree Snapshot engine',
     description:
       'Store lightweight TreeSnapshotPayload mapping task IDs to their immutable BLAKE3 object hashes.',
     priority: 'high',
@@ -683,7 +721,7 @@ export function createSeededRepository(options?: {
         id: 'CMT-01',
         author: 'K. Novak',
         timestamp: t1,
-        body: 'Implemented structural tree diff and 3-way branch merge.',
+        body: 'Implemented structural tree diff and restore of earlier states.',
       },
     ],
   };
@@ -865,7 +903,8 @@ export function createSeededRepository(options?: {
     message: 'Complete CAS & DAG core; add WS-02 platform-ops workspace and cross-workspace tasks',
   });
 
-  // Feature branch commit (`feat/plugin-hooks`) so user can immediately test `clibm diff main feat/plugin-hooks` or `clibm merge`
+  // Third commit on the same straight history, so `clibm diff HEAD~1 HEAD` and
+  // `clibm restore HEAD~1` have something to show right away.
   const task105Branch: TaskPayload = {
     ...task105,
     column_id: 'in-progress',
@@ -917,10 +956,9 @@ export function createSeededRepository(options?: {
     message: 'Advance CLIBM-105 plugin contract to in-progress and add CLIBM-106 installer task',
   });
 
-  state.branches['main'] = commit2Hash;
-  state.branches['feat/plugin-hooks'] = commitBranchHash;
+  state.branches['main'] = commitBranchHash;
   state.head = 'ref: refs/heads/main';
-  state.stagedTreeHash = tree2Hash;
+  state.stagedTreeHash = treeBranchHash;
 
   return state;
 }
@@ -1083,13 +1121,20 @@ function simNextEntityId(ids: string[], prefix: string): string {
   return `${prefix}-${String(next).padStart(2, '0')}`;
 }
 
-/** Next task number for `code`: highest existing `CODE-n` + 1, never below 101. */
+/**
+ * Next task number for `code`: above every existing `CODE-n` and every number ever issued
+ * (`task_counters`), never below 101. Records the number in the tree's counters.
+ */
 function simNextTaskNumber(tree: TreeSnapshotPayload, code: string): number {
+  const key = code.toUpperCase();
   const nums = Object.keys(tree.tasks)
-    .filter((k) => k.toUpperCase().startsWith(`${code.toUpperCase()}-`))
+    .filter((k) => k.toUpperCase().startsWith(`${key}-`))
     .map((k) => parseInt(k.slice(code.length + 1), 10))
     .filter((n) => !Number.isNaN(n));
-  return Math.max(101, nums.length ? Math.max(...nums) + 1 : 101);
+  const issued = tree.task_counters?.[key] ?? 0;
+  const next = Math.max(101, nums.length ? Math.max(...nums) + 1 : 101, issued + 1);
+  tree.task_counters = { ...(tree.task_counters || {}), [key]: next };
+  return next;
 }
 
 function simDefaultBoardColumns(): KanbanColumn[] {
@@ -1196,8 +1241,9 @@ export function executeCliCommand(
           '  plugin new <name> [-d "<desc>"] [--hooks a,b]          Scaffold a new standalone plugin crate from template',
           '',
           'VERSIONING & LIFECYCLE COMMANDS:',
-          '  commit -m "<msg>" | log [ref] | branch [name] | checkout <ref> [--force] | diff <A> <B>',
-          '  merge <branch> [--ours|--theirs] | cat-object <hash> | fsck',
+          '  commit -m "<msg>" | log [ref] | diff <A> <B>   (refs: commit hash, HEAD or HEAD~N; one straight history, no branches)',
+          '  restore <commit> [--force] [-m "<msg>"]   Bring back an earlier state as a new commit (restore HEAD --force drops uncommitted changes)',
+          '  cat-object <hash> | fsck',
           '  update [--check] [--plugins] [--repo <url>] [--branch <b>] | uninstall [--purge] [--yes]',
           '  (native only, not simulated in this terminal: export [-o <file>])',
           '',
@@ -1259,13 +1305,13 @@ export function executeCliCommand(
           `  2. Language          : ${language}`,
           `  3. Automatic Commits : ${autoCommit ? 'ENABLED (records each modification individually)' : 'DISABLED (manual clibm commit)'}`,
           `  4. Storage Location  : ${installPath}`,
-          `  Active Workspace     : WS-01 (systems-engineering) | Branch: ${getActiveBranch(fresh)}`,
+          `  Active Workspace     : WS-01 (systems-engineering) | History: ${countCommits(fresh)} commit(s)`,
         ].join('\n'),
       };
     }
 
     if (sub === 'status') {
-      const branch = getActiveBranch(state) || '(detached HEAD)';
+      const note = historyNote(state);
       const headCommitHash = resolveHeadCommit(state);
       const { payload: headCommit } = getTypedPayload<CommitPayload>(state, headCommitHash!, 'commit');
       const tree = getStagedTree(state);
@@ -1277,8 +1323,8 @@ export function executeCliCommand(
         `Core profile:     ${state.config.install_profile === 'pure' ? 'pure (100% Pure Core)' : state.config.install_profile} | Installed plugins: ${state.plugins.length}`,
         `Language & Path:  lang=${state.config.language} | install_path=${state.config.install_path} | mcp_transport=${state.config.mcp_transport}`,
         `Auto-Commit mode: ${state.config.auto_commit ? 'ENABLED (records every change individually)' : 'DISABLED (manual clibm commit)'}`,
-        `On branch:        ${branch}`,
-        `HEAD commit:      ${headCommitHash?.slice(0, 16)} (${headCommit.message})`,
+        `HEAD commit:      ${headCommitHash?.slice(0, 16)} (${headCommit.message}) — ${countCommits(state)} commit(s) in history`,
+        ...(note ? [`Note:             ${note}`] : []),
         `HEAD tree hash:   ${headCommit.tree_hash.slice(0, 16)}`,
         `Staged tree hash: ${state.stagedTreeHash.slice(0, 16)}`,
         `CAS object count: ${Object.keys(state.objects).length} immutable BLAKE3 objects`,
@@ -2528,19 +2574,17 @@ export function executeCliCommand(
       return {
         nextState: state,
         status: 'ok',
-        output: `[${getActiveBranch(state) || 'HEAD'} ${commitHash.slice(0, 12)}] ${msg}\n  Tree Snapshot BLAKE3: ${state.stagedTreeHash}`,
+        output: `[commit ${commitHash.slice(0, 12)}] ${msg}\n  Tree Snapshot BLAKE3: ${state.stagedTreeHash}`,
       };
     }
 
     if (sub === 'log') {
       const ref = args[1] && !args[1].startsWith('-') ? args[1] : undefined;
       const history = getCommitHistory(state, ref);
+      const headHash = resolveHeadCommit(state);
       const lines: string[] = [];
       for (const { hash, commit } of history) {
-        const branchTags = Object.entries(state.branches)
-          .filter(([, h]) => h === hash)
-          .map(([b]) => b);
-        const deco = branchTags.length ? ` (${branchTags.join(', ')})` : '';
+        const deco = hash === headHash ? ' (HEAD)' : '';
         lines.push(`* commit ${hash}${deco}`);
         lines.push(`| Tree:   ${commit.tree_hash.slice(0, 16)}...`);
         lines.push(`| Author: ${commit.author}  <${commit.timestamp.slice(0, 19)}>`);
@@ -2551,57 +2595,83 @@ export function executeCliCommand(
       return { nextState: state, status: 'ok', output: lines.join('\n') };
     }
 
-    if (sub === 'branch') {
-      const newBranch = args[1];
-      if (!newBranch) {
-        const active = getActiveBranch(state);
-        const lines = Object.entries(state.branches).map(([b, h]) => {
-          const prefix = b === active ? '* ' : '  ';
-          return `${prefix}${b.padEnd(22)} -> ${h.slice(0, 14)}`;
-        });
-        return { nextState: state, status: 'ok', output: lines.join('\n') };
-      }
-      const headCommit = resolveHeadCommit(state);
-      if (!headCommit) throw new Error('Cannot branch from unborn HEAD');
-      state.branches[newBranch] = headCommit;
-      saveRepository(state);
-      return {
-        nextState: state,
-        status: 'ok',
-        output: `Created branch '${newBranch}' pointing to commit ${headCommit.slice(0, 12)}`,
-      };
+    if (sub === 'branch' || sub === 'checkout' || sub === 'merge') {
+      throw new Error(
+        `error: unrecognized subcommand '${sub}'. CLIBM keeps one straight history without branches: ` +
+          'use `clibm log`, `clibm diff <A> <B>` and `clibm restore <commit>` (commit = hash, HEAD or HEAD~N).'
+      );
     }
 
-    if (sub === 'checkout') {
+    if (sub === 'restore') {
       const target = args[1];
-      if (!target) throw new Error('Usage: clibm checkout <branch-name | commit-hash>');
-      if (state.branches[target]) {
-        const commitHash = state.branches[target];
-        const { payload: commit } = getTypedPayload<CommitPayload>(state, commitHash, 'commit');
-        state.head = `ref: refs/heads/${target}`;
-        state.stagedTreeHash = commit.tree_hash;
-        saveRepository(state);
-        return {
-          nextState: state,
-          status: 'ok',
-          output: `Switched to branch '${target}' (commit ${commitHash.slice(0, 12)}, tree ${commit.tree_hash.slice(0, 12)})`,
-        };
+      if (!target || target.startsWith('-')) {
+        throw new Error('Usage: clibm restore <COMMIT> [--force] [-m "<message>"]   (COMMIT = hash, HEAD or HEAD~N)');
       }
-      const commitHash = resolveRefToCommit(state, target);
-      const { payload: commit } = getTypedPayload<CommitPayload>(state, commitHash, 'commit');
-      state.head = commitHash;
-      state.stagedTreeHash = commit.tree_hash;
+      const force = args.includes('--force');
+      const mIdx = args.findIndex((a) => a === '-m' || a === '--message');
+      const customMsg = mIdx !== -1 ? args[mIdx + 1]?.trim() : '';
+
+      const headHash = resolveHeadCommit(state);
+      const headTreeHash = headHash
+        ? getTypedPayload<CommitPayload>(state, headHash, 'commit').payload.tree_hash
+        : null;
+      const dirty = headTreeHash !== state.stagedTreeHash;
+      if (dirty && !force) {
+        throw new Error(
+          'You have uncommitted changes. Commit them with `clibm commit -m <msg>` or pass --force to discard them.'
+        );
+      }
+      const targetHash = resolveRefToCommit(state, target);
+      const { payload: targetCommit } = getTypedPayload<CommitPayload>(state, targetHash, 'commit');
+      const { payload: tree } = getTypedPayload<TreeSnapshotPayload>(state, targetCommit.tree_hash, 'tree');
+
+      if (headTreeHash) {
+        const { payload: headTree } = getTypedPayload<TreeSnapshotPayload>(state, headTreeHash, 'tree');
+        // Keep every task number issued up to HEAD reserved.
+        const counters: Record<string, number> = { ...(tree.task_counters || {}) };
+        const reserve = (code: string, n: number) => {
+          const key = code.toUpperCase();
+          counters[key] = Math.max(counters[key] || 0, n);
+        };
+        for (const [code, n] of Object.entries(headTree.task_counters || {})) reserve(code, n);
+        for (const id of Object.keys(headTree.tasks)) {
+          const cut = id.lastIndexOf('-');
+          const n = parseInt(id.slice(cut + 1), 10);
+          if (cut > 0 && !Number.isNaN(n)) reserve(id.slice(0, cut), n);
+        }
+        if (Object.keys(counters).length) tree.task_counters = counters;
+        // Stay in the active project when it still exists.
+        if (tree.projects[headTree.active_project_id] && tree.workspaces[headTree.active_workspace_id]) {
+          tree.active_project_id = headTree.active_project_id;
+          tree.active_workspace_id = headTree.active_workspace_id;
+        }
+      }
+
+      const short = targetHash.slice(0, 12);
+      const { hash: newTreeHash } = putCasObject(state, 'tree', tree);
+      if (newTreeHash === headTreeHash) {
+        if (dirty) {
+          updateStagedTree(state, tree);
+          saveRepository(state);
+          return { nextState: state, status: 'ok', output: `Discarded the uncommitted changes (back to HEAD ${short})` };
+        }
+        return { nextState: state, status: 'info', output: `Nothing to restore: the state of ${short} already matches HEAD` };
+      }
+      const commitMsg = customMsg || `restore state of ${short}`;
+      const { autoCommitHash } = recordMutation(state, tree, commitMsg);
       saveRepository(state);
       return {
         nextState: state,
         status: 'ok',
-        output: `HEAD is now detached at commit ${commitHash.slice(0, 12)} ("${commit.message}")`,
+        output: autoCommitHash
+          ? `Restored the state of ${short} as new commit ${autoCommitHash.slice(0, 12)} (the history before it is kept)`
+          : `Restored the state of ${short} in the working tree (auto_commit is off: run \`clibm commit -m <msg>\`)`,
       };
     }
 
     if (sub === 'diff') {
-      let fromRef = args[1] || 'main';
-      let toRef = args[2] || 'feat/plugin-hooks';
+      let fromRef = args[1] || 'HEAD~1';
+      let toRef = args[2] || 'HEAD';
       if (fromRef.includes('..')) {
         const parts = fromRef.split('..');
         fromRef = parts[0];
@@ -2623,54 +2693,6 @@ export function executeCliCommand(
         }
       }
       return { nextState: state, status: 'ok', output: lines.join('\n') };
-    }
-
-    if (sub === 'merge') {
-      const sourceBranch = args[1];
-      if (!sourceBranch) throw new Error('Usage: clibm merge <branch-name>');
-      const sourceCommitHash = state.branches[sourceBranch];
-      if (!sourceCommitHash) throw new Error(`Branch '${sourceBranch}' not found`);
-      const targetCommitHash = resolveHeadCommit(state);
-      if (!targetCommitHash) throw new Error('No current HEAD commit');
-      if (sourceCommitHash === targetCommitHash) {
-        return { nextState: state, status: 'info', output: `Already up to date with '${sourceBranch}'.` };
-      }
-
-      const { payload: targetCommit } = getTypedPayload<CommitPayload>(state, targetCommitHash, 'commit');
-      const { payload: sourceCommit } = getTypedPayload<CommitPayload>(state, sourceCommitHash, 'commit');
-      const { payload: targetTree } = getTypedPayload<TreeSnapshotPayload>(
-        state,
-        targetCommit.tree_hash,
-        'tree'
-      );
-      const { payload: sourceTree } = getTypedPayload<TreeSnapshotPayload>(
-        state,
-        sourceCommit.tree_hash,
-        'tree'
-      );
-
-      const mergedTree: TreeSnapshotPayload = {
-        active_workspace_id: targetTree.active_workspace_id,
-        active_project_id: targetTree.active_project_id,
-        workspaces: { ...targetTree.workspaces, ...sourceTree.workspaces },
-        projects: { ...targetTree.projects, ...sourceTree.projects },
-        boards: { ...targetTree.boards, ...sourceTree.boards },
-        tasks: { ...targetTree.tasks, ...sourceTree.tasks },
-      };
-
-      updateStagedTree(state, mergedTree);
-      const mergeCommitHash = createCommit(
-        state,
-        'V. Souza',
-        `Merge branch '${sourceBranch}' into ${getActiveBranch(state) || 'HEAD'}`,
-        sourceCommitHash
-      );
-      saveRepository(state);
-      return {
-        nextState: state,
-        status: 'ok',
-        output: `Merged branch '${sourceBranch}' -> created merge commit ${mergeCommitHash.slice(0, 12)}\n  New Tree Hash: ${state.stagedTreeHash.slice(0, 16)}`,
-      };
     }
 
     if (sub === 'cat-object') {
@@ -3143,13 +3165,13 @@ export function executeCliCommand(
         }
 
         if (plugin.name === 'clibm-tui') {
-          const branch = getActiveBranch(state) || 'detached';
+          const head = resolveHeadCommit(state)?.slice(0, 12) || 'none';
           return {
             nextState: state,
             status: 'ok',
             output: [
               `[CLIBM_PLUGIN_CONTRACT_V1 :: clibm-tui (${plugin.executable})]`,
-              `Attached to ongoing project (.clibm/) on branch '${branch}' (staged tree ${state.stagedTreeHash.slice(0, 12)})`,
+              `Attached to ongoing project (.clibm/) at HEAD ${head} (staged tree ${state.stagedTreeHash.slice(0, 12)})`,
               `Loaded ${Object.keys(tree.tasks).length} tasks across 5 Kanban columns into Ratatui AlternateScreen.`,
               `Keybindings: [h/l] Column  [j/k] Task  [m] Move Right  [c] Commit  [f] BLAKE3 fsck  [q] Quit`,
               `(Tip: Open the 'TUI & Web' tab above to interact with the live Ratatui terminal screen!)`,

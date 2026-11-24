@@ -77,7 +77,7 @@ clibm update [--plugins]    # rebuild and replace the installed binaries
 |---|---|
 | `src/` | `clibm` binary (`main.rs`, `cli.rs`) and the `clibm_core` library |
 | `src/canonical.rs`, `cas.rs` | canonical JSON, BLAKE3 object store, refs, fsck |
-| `src/engine.rs`, `versioning.rs`, `index.rs` | tasks, rules, status, commits, 3-way merge, index |
+| `src/engine.rs`, `versioning.rs`, `index.rs` | tasks, rules, status, commit history, restore, diff, index |
 | `src/plugin.rs`, `plugin_sdk.rs` | plugin registry, install/uninstall, lifecycle hooks, plugin helper |
 | `src/install.rs`, `update.rs` | install record and `clibm update` |
 | `tests/` | end-to-end tests of the `clibm` binary (isolated temp folders and home) |

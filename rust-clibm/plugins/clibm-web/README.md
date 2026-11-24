@@ -60,7 +60,7 @@ The server is meant for your own browser only:
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | The dashboard |
-| `GET` | `/api/state` | Branch, HEAD, uncommitted changes, active project, board and its tasks |
+| `GET` | `/api/state` | HEAD commit and history size, uncommitted changes, active project, board and its tasks |
 | `GET` | `/api/fsck` | Integrity check of every stored object |
 | `POST` | `/api/task` | `{"title", "priority"?, "column_id"?}` — create a task |
 | `POST` | `/api/move` | `{"task_id", "column_id", "force"?}` — move a task (`task_id` accepts `101`, `APP-101` or a hash prefix) |

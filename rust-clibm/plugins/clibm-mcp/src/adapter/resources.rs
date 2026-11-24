@@ -75,7 +75,7 @@ impl ResourceRegistry {
             info: McpResourceInfo {
                 uri: "clibm://config".to_string(),
                 name: "Repository Configuration (.clibm/config.json)".to_string(),
-                description: Some("Repository-level settings, branch heads, and active workspace metadata".to_string()),
+                description: Some("Repository-level settings and active workspace metadata".to_string()),
                 mime_type: Some("application/json".to_string()),
             },
             reader: Arc::new(|uri, bridge| {

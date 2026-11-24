@@ -128,6 +128,8 @@ export interface TreeSnapshotPayload {
   projects: Record<string, string>;
   boards: Record<string, string>;
   tasks: Record<string, string>;
+  /** Highest task number issued per project code; omitted while empty (like the native tree). */
+  task_counters?: Record<string, number>;
 }
 
 export interface CommitPayload {

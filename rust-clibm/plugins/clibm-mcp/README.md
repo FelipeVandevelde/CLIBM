@@ -148,7 +148,7 @@ websites cannot reach it from your browser.
 
 | Tool | Changes the project | What it does |
 |---|---|---|
-| `clibm_status` | no | Branch, HEAD, uncommitted changes, active workspace/project, counts per column (JSON) |
+| `clibm_status` | no | HEAD commit, history size, uncommitted changes, active workspace/project, counts per column (JSON) |
 | `clibm_task_list` | no | Tasks as JSON; filters `all_workspaces`, `priority`, `column`, `tag` |
 | `clibm_task_show` | no | One task as JSON; `task` = `APP-101`, `101` or a hash prefix |
 | `clibm_task_add` | yes | Create a task (`title`, optional `description`, `priority`, `column`, `assignee`, `depends_on`) |
