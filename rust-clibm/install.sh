@@ -9,15 +9,21 @@
 #     cd rust-clibm && ./install.sh
 # ==============================================================================
 # Presents interactive configuration options during installation:
-#   1. Core Mode: Pure Core (without plugins) vs. Core + Default Plugins
-#      (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)
+#   1. Install profile:
+#        1) Core only (no plugins)
+#        2) Core + default plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)
+#        3) Core + choose plugins from the catalog (plugins/catalog.json, read from the
+#           local clone or downloaded from GitHub)
 #   2. Language Selection: en (English), pt-BR (Portugues), es (Espanol)
 #   3. Automatic Per-Modification Commits: true (default) or false
 #   4. Machine Storage / Install Location: custom path (default: ~/.local/bin)
 #   5. User PATH Registration: add install directory to user PATH (or --no-modify-path)
 #
 # Also supports non-interactive flags:
-#   ./install.sh --pure|--with-defaults --lang en|pt-BR|es --auto-commit true|false --install-dir <PATH> [--no-modify-path]
+#   ./install.sh --pure | --with-defaults | --plugins <LIST|all> | --profile pure|with-defaults|custom
+#                --lang en|pt-BR|es --auto-commit true|false --install-dir <PATH> [--no-modify-path] [-y]
+#   ./install.sh --list-plugins        # print the plugin catalog and exit
+# <LIST> takes catalog names or short names separated by commas: --plugins tui,web,clibm-mcp
 
 set -euo pipefail
 
@@ -36,6 +42,8 @@ INSTALL_DIR=""
 RAW_BASE_URL=""
 NO_MODIFY_PATH=false
 NON_INTERACTIVE=false
+PLUGINS_ARG=""
+LIST_PLUGINS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +53,19 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-defaults)
       PROFILE="with-defaults"
+      shift
+      ;;
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
+    --plugins)
+      PROFILE="custom"
+      PLUGINS_ARG="$2"
+      shift 2
+      ;;
+    --list-plugins)
+      LIST_PLUGINS=true
       shift
       ;;
     --lang|--language)
@@ -1091,24 +1112,236 @@ CLIBM_ENV_PATH_EOF
 clibm_init_env_path_helper
 # <<< clibm-env-path (generated) <<<
 
+# ------------------------------------------------------------------------------
+# Plugin catalog (plugins/catalog.json): one JSON object per line with the fields
+# name, folder, default and description. A clone uses its own copy; otherwise the
+# file is downloaded from CLIBM_RAW_BASE (default: the official GitHub repository).
+# ------------------------------------------------------------------------------
+CATALOG_NAMES=()
+CATALOG_FOLDERS=()
+CATALOG_DEFAULTS=()
+CATALOG_DESCS=()
+CATALOG_SOURCE=""
+
+# Used only when the catalog can be neither found locally nor downloaded. Kept equal to
+# plugins/catalog.json by a test (src/install.rs).
+# >>> clibm-catalog-fallback >>>
+CLIBM_CATALOG_FALLBACK='[
+{"name":"clibm-dep-audit","folder":"clibm-dep-audit","default":true,"description":"DAG critical path and circular dependency auditor"},
+{"name":"clibm-export-md","folder":"clibm-export-md","default":true,"description":"Markdown sprint report exporter"},
+{"name":"clibm-mcp","folder":"clibm-mcp","default":false,"description":"MCP server for AI agents (stdio / HTTP)"},
+{"name":"clibm-tui","folder":"clibm-tui","default":false,"description":"Terminal user interface"},
+{"name":"clibm-web","folder":"clibm-web","default":false,"description":"Local web UI served by a single binary"},
+{"name":"clibm-workflow-lint","folder":"clibm-workflow-lint","default":true,"description":"Kanban WIP limit and workflow policy linter"}
+]'
+# <<< clibm-catalog-fallback <<<
+
+clibm_load_catalog() {
+  if [ -n "$CATALOG_SOURCE" ]; then
+    return 0
+  fi
+  local catalog_file local_core_dir="" base tmp_file="" line name def
+  if [ -z "${CLIBM_FORCE_REMOTE:-}" ] && local_core_dir=$(clibm_resolve_local_source_dir "clibm" "" "$SCRIPT_DIR") \
+     && [ -f "${local_core_dir}/plugins/catalog.json" ]; then
+    catalog_file="${local_core_dir}/plugins/catalog.json"
+    CATALOG_SOURCE="local clone (${local_core_dir}/plugins)"
+  else
+    base="${RAW_BASE_URL:-$(clibm_raw_repo_base)}"
+    base="${base%/}"
+    tmp_file=$(mktemp "${TMPDIR:-/tmp}/clibm-catalog.XXXXXX")
+    if clibm_download_url "${base}/plugins/catalog.json" "$tmp_file" 2>/dev/null && [ -s "$tmp_file" ]; then
+      catalog_file="$tmp_file"
+      CATALOG_SOURCE="${base}/plugins"
+    else
+      echo "WARNING: could not download ${base}/plugins/catalog.json; using the plugin list built into this installer." >&2
+      printf '%s\n' "$CLIBM_CATALOG_FALLBACK" > "$tmp_file"
+      catalog_file="$tmp_file"
+      CATALOG_SOURCE="built-in list"
+    fi
+  fi
+  while IFS= read -r line; do
+    name=$(clibm_json_string_field "$line" "name")
+    [ -z "$name" ] && continue
+    def=false
+    if printf '%s\n' "$line" | grep -Eq '"default"[[:space:]]*:[[:space:]]*true'; then
+      def=true
+    fi
+    CATALOG_NAMES+=("$name")
+    CATALOG_FOLDERS+=("$(clibm_json_string_field "$line" "folder")")
+    CATALOG_DEFAULTS+=("$def")
+    CATALOG_DESCS+=("$(clibm_json_string_field "$line" "description")")
+  done <<EOF
+$(clibm_registry_lines "$catalog_file")
+EOF
+  if [ -n "$tmp_file" ]; then
+    rm -f "$tmp_file"
+  fi
+  if [ "${#CATALOG_NAMES[@]}" -eq 0 ]; then
+    echo "ERROR: the plugin catalog (${CATALOG_SOURCE}) lists no plugins." >&2
+    return 1
+  fi
+}
+
+clibm_catalog_defaults() {
+  local i
+  for i in "${!CATALOG_NAMES[@]}"; do
+    if [ "${CATALOG_DEFAULTS[$i]}" = true ]; then
+      printf '%s\n' "${CATALOG_NAMES[$i]}"
+    fi
+  done
+}
+
+clibm_catalog_folder() {
+  local i
+  for i in "${!CATALOG_NAMES[@]}"; do
+    if [ "${CATALOG_NAMES[$i]}" = "$1" ]; then
+      printf '%s\n' "${CATALOG_FOLDERS[$i]:-$1}"
+      return 0
+    fi
+  done
+  printf '%s\n' "$1"
+}
+
+clibm_print_catalog() {
+  local i mark
+  echo "Available plugins (${CATALOG_SOURCE}):"
+  for i in "${!CATALOG_NAMES[@]}"; do
+    mark=" "
+    if [ "${CATALOG_DEFAULTS[$i]}" = true ]; then
+      mark="*"
+    fi
+    printf '  %d) [%s] %-20s %s\n' "$((i + 1))" "$mark" "${CATALOG_NAMES[$i]}" "${CATALOG_DESCS[$i]}"
+  done
+  echo "  [*] = default plugin"
+}
+
+# Turns a selection ("1,4", "tui web", "clibm-mcp", "all", "defaults", "none") into
+# catalog names, one per line, in the order given. Returns 1 on an unknown entry.
+clibm_resolve_plugin_selection() {
+  local input tok idx i n found out=""
+  local -a toks=()
+  input=$(printf '%s' "$1" | tr ',;' '  ')
+  read -r -a toks <<< "$input" || true
+  for tok in ${toks[@]+"${toks[@]}"}; do
+    tok=$(printf '%s' "$tok" | tr '[:upper:]' '[:lower:]')
+    case "$tok" in
+      all|'*')
+        for i in "${!CATALOG_NAMES[@]}"; do out="${out}${CATALOG_NAMES[$i]}"$'\n'; done
+        continue
+        ;;
+      default|defaults)
+        out="${out}$(clibm_catalog_defaults)"$'\n'
+        continue
+        ;;
+      none|core)
+        continue
+        ;;
+    esac
+    found=""
+    if [[ "$tok" =~ ^[0-9]+$ ]]; then
+      idx=$((10#$tok - 1))
+      if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#CATALOG_NAMES[@]}" ]; then
+        found="${CATALOG_NAMES[$idx]}"
+      fi
+    else
+      for i in "${!CATALOG_NAMES[@]}"; do
+        n="${CATALOG_NAMES[$i]}"
+        if [ "$tok" = "$n" ] || [ "clibm-${tok}" = "$n" ] || [ "$tok" = "${CATALOG_FOLDERS[$i]}" ]; then
+          found="$n"
+          break
+        fi
+      done
+    fi
+    if [ -z "$found" ]; then
+      echo "Unknown plugin '${tok}'. Use a number or name from the list (or 'all' / 'none')." >&2
+      return 1
+    fi
+    out="${out}${found}"$'\n'
+  done
+  printf '%s' "$out" | awk 'NF && !seen[$0]++'
+}
+
+if [ "$LIST_PLUGINS" = true ]; then
+  clibm_load_catalog
+  clibm_print_catalog
+  exit 0
+fi
+
 echo "===================================================================="
 echo " CLIBM v0.1.0 -- Interactive Core Installation Wizard (UTF-8)"
 echo "===================================================================="
 
-# 1. Core Mode (Pure vs With Default Plugins)
+if [ -n "$PROFILE" ]; then
+  case "$(printf '%s' "$PROFILE" | tr '[:upper:]' '[:lower:]')" in
+    pure|core) PROFILE="pure" ;;
+    with-defaults|defaults) PROFILE="with-defaults" ;;
+    custom|select) PROFILE="custom" ;;
+    *)
+      echo "ERROR: unknown profile '${PROFILE}' (expected pure, with-defaults or custom)." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# 1. Install profile: core only, core + default plugins, core + chosen plugins
 if [ -z "$PROFILE" ]; then
   if [ "$NON_INTERACTIVE" = true ]; then
     PROFILE="pure"
   else
     echo ""
-    echo "[1/5] Select CLIBM Core Installation Profile:"
-    echo "  1) Pure Core (without plugins -- 100% pure engine) [Default]"
-    echo "  2) Core + Default Plugins (builds dep-audit, export-md, workflow-lint)"
-    clibm_prompt "Select option [1-2, default: 1]: " choice_profile
+    echo "[1/5] Select CLIBM installation profile:"
+    echo "  1) Core only (no plugins) [Default]"
+    echo "  2) Core + default plugins (dep-audit, export-md, workflow-lint)"
+    echo "  3) Core + choose plugins"
+    clibm_prompt "Select option [1-3, default: 1]: " choice_profile
     case "${choice_profile:-1}" in
       2) PROFILE="with-defaults" ;;
+      3) PROFILE="custom" ;;
       *) PROFILE="pure" ;;
     esac
+  fi
+fi
+
+SELECTED_PLUGINS=()
+if [ "$PROFILE" = "with-defaults" ]; then
+  clibm_load_catalog
+  while IFS= read -r p; do
+    [ -n "$p" ] && SELECTED_PLUGINS+=("$p")
+  done <<EOF
+$(clibm_catalog_defaults)
+EOF
+elif [ "$PROFILE" = "custom" ]; then
+  clibm_load_catalog
+  if [ -n "$PLUGINS_ARG" ]; then
+    if ! selection=$(clibm_resolve_plugin_selection "$PLUGINS_ARG"); then
+      exit 1
+    fi
+  elif [ "$NON_INTERACTIVE" = true ]; then
+    selection=$(clibm_catalog_defaults)
+  else
+    echo ""
+    clibm_print_catalog
+    while true; do
+      clibm_prompt "Plugins to install (e.g. 1,4,5 | 'all' | 'none' | Enter = defaults): " choice_plugins
+      if [ -z "$choice_plugins" ]; then
+        selection=$(clibm_catalog_defaults)
+        break
+      fi
+      if selection=$(clibm_resolve_plugin_selection "$choice_plugins"); then
+        break
+      fi
+    done
+  fi
+  while IFS= read -r p; do
+    [ -n "$p" ] && SELECTED_PLUGINS+=("$p")
+  done <<EOF
+$selection
+EOF
+  if [ "${#SELECTED_PLUGINS[@]}" -eq 0 ]; then
+    echo "==> No plugins selected: installing the core only."
+    PROFILE="pure"
+  else
+    echo "==> Selected plugins: ${SELECTED_PLUGINS[*]}"
   fi
 fi
 
@@ -1203,6 +1436,9 @@ echo ""
 echo "--------------------------------------------------------------------"
 echo " Installation Summary (Encoding: UTF-8):"
 echo "   Profile        : $PROFILE"
+if [ "${#SELECTED_PLUGINS[@]}" -gt 0 ]; then
+  echo "   Plugins        : ${SELECTED_PLUGINS[*]}"
+fi
 echo "   Language       : $LANGUAGE"
 echo "   Auto-Commit    : $AUTO_COMMIT"
 echo "   Install Path   : $INSTALL_DIR"
@@ -1227,54 +1463,93 @@ json_or_null() {
   printf '  "source_repo": %s,\n' "$(json_or_null "$SOURCE_REPO")"
   printf '  "source_ref": %s,\n' "$(json_or_null "$SOURCE_REF")"
   printf '  "source_commit": %s,\n' "$(json_or_null "$BUILT_COMMIT")"
-  printf '  "version": %s\n' "$(json_or_null "$CORE_VERSION")"
+  printf '  "version": %s' "$(json_or_null "$CORE_VERSION")"
+  if [ "${#SELECTED_PLUGINS[@]}" -gt 0 ]; then
+    printf ',\n  "plugins": [%s]\n' "$(printf '%s\n' "${SELECTED_PLUGINS[@]}" | awk 'NF { printf "%s\"%s\"", (n++ ? ", " : ""), $0 }')"
+  else
+    printf '\n'
+  fi
   printf '}\n'
 } > "${GLOBAL_CFG_DIR}/install-config.json"
 
-if [ "$PROFILE" = "with-defaults" ]; then
-  echo "==> Installing default standalone plugins (clibm-dep-audit, clibm-export-md, clibm-workflow-lint)..."
-  EFFECTIVE_RAW_BASE="${RAW_BASE_URL:-$(clibm_raw_repo_base)}"
-  EFFECTIVE_RAW_BASE="${EFFECTIVE_RAW_BASE%/}"
-  for def_plugin in clibm-dep-audit clibm-export-md clibm-workflow-lint; do
-    LOCAL_PLUGIN_DIR=""
-    if LOCAL_PLUGIN_DIR=$(clibm_resolve_local_source_dir "$def_plugin" "plugins/${def_plugin}" "$SCRIPT_DIR") && [ -f "${LOCAL_PLUGIN_DIR}/install.sh" ]; then
-      echo "   -> [Local Mode] Building and installing ${def_plugin}..."
-      if [ "$MODIFY_PATH" = true ]; then
-        (cd "$LOCAL_PLUGIN_DIR" && INSTALL_DIR="$INSTALL_DIR" ./install.sh -y)
-      else
-        (cd "$LOCAL_PLUGIN_DIR" && INSTALL_DIR="$INSTALL_DIR" ./install.sh -y --no-modify-path)
+# Builds and installs each plugin with its own installer (local folder in a clone,
+# otherwise downloaded from GitHub). A failed plugin does not stop the others; the
+# names end up in FAILED_PLUGINS.
+FAILED_PLUGINS=()
+clibm_install_plugins() {
+  local plugin folder local_plugin_dir tmp_plugin_sh raw_base
+  local -a plugin_args=(-y)
+  if [ "$MODIFY_PATH" != true ]; then
+    plugin_args+=(--no-modify-path)
+  fi
+  raw_base="${RAW_BASE_URL:-$(clibm_raw_repo_base)}"
+  raw_base="${raw_base%/}"
+  for plugin in "$@"; do
+    folder=$(clibm_catalog_folder "$plugin")
+    local_plugin_dir=""
+    echo ""
+    if [ -z "${CLIBM_FORCE_REMOTE:-}" ] \
+       && local_plugin_dir=$(clibm_resolve_local_source_dir "$plugin" "plugins/${folder}" "$SCRIPT_DIR") \
+       && [ -f "${local_plugin_dir}/install.sh" ]; then
+      echo "   -> [Local Mode] Building and installing ${plugin}..."
+      if ! (cd "$local_plugin_dir" && INSTALL_DIR="$INSTALL_DIR" bash ./install.sh "${plugin_args[@]}"); then
+        FAILED_PLUGINS+=("$plugin")
       fi
     else
-      echo "   -> [Remote Mode] Fetching and installing ${def_plugin} from GitHub..."
-      TMP_PLUGIN_SH=$(mktemp "${TMPDIR:-/tmp}/${def_plugin}-install.XXXXXX.sh")
-      if clibm_download_url "${EFFECTIVE_RAW_BASE}/plugins/${def_plugin}/install.sh" "$TMP_PLUGIN_SH"; then
-        if [ "$MODIFY_PATH" = true ]; then
-          INSTALL_DIR="$INSTALL_DIR" CLIBM_RAW_BASE="$EFFECTIVE_RAW_BASE" bash "$TMP_PLUGIN_SH" -y
-        else
-          INSTALL_DIR="$INSTALL_DIR" CLIBM_RAW_BASE="$EFFECTIVE_RAW_BASE" bash "$TMP_PLUGIN_SH" -y --no-modify-path
+      echo "   -> [Remote Mode] Fetching and installing ${plugin} from ${raw_base}..."
+      tmp_plugin_sh=$(mktemp "${TMPDIR:-/tmp}/${plugin}-install.XXXXXX")
+      if clibm_download_url "${raw_base}/plugins/${folder}/install.sh" "$tmp_plugin_sh"; then
+        if ! INSTALL_DIR="$INSTALL_DIR" CLIBM_RAW_BASE="$raw_base" bash "$tmp_plugin_sh" "${plugin_args[@]}"; then
+          FAILED_PLUGINS+=("$plugin")
         fi
       else
-        echo "WARNING: could not download the ${def_plugin} installer; install it later with: clibm plugin install ${def_plugin}" >&2
+        echo "WARNING: could not download the ${plugin} installer." >&2
+        FAILED_PLUGINS+=("$plugin")
       fi
-      rm -f "$TMP_PLUGIN_SH"
+      rm -f "$tmp_plugin_sh"
     fi
   done
-else
-  # Pure core: initialize empty plugin registry if none exists (UTF-8)
-  if [ ! -f "${GLOBAL_CFG_DIR}/plugins/registry.json" ]; then
-    printf '[]\n' > "${GLOBAL_CFG_DIR}/plugins/registry.json"
-  fi
-  echo "==> Pure Core active (0 pre-installed plugins)."
-  echo "    Install any plugin later via its folder or raw GitHub URL."
+}
+
+if [ ! -f "${GLOBAL_CFG_DIR}/plugins/registry.json" ]; then
+  printf '[]\n' > "${GLOBAL_CFG_DIR}/plugins/registry.json"
 fi
 
+if [ "${#SELECTED_PLUGINS[@]}" -gt 0 ]; then
+  echo "==> Installing ${#SELECTED_PLUGINS[@]} plugin(s): ${SELECTED_PLUGINS[*]}"
+  clibm_install_plugins "${SELECTED_PLUGINS[@]}"
+else
+  echo "==> Core only (0 plugins installed)."
+  echo "    Add plugins later with: clibm plugin install <name>  (list: ./install.sh --list-plugins)"
+fi
+
+echo ""
 echo "===================================================================="
-echo " CLIBM v0.1.0 Installation Complete!"
+if [ "${#FAILED_PLUGINS[@]}" -gt 0 ]; then
+  echo " CLIBM v0.1.0 installed, but some plugins failed."
+else
+  echo " CLIBM v0.1.0 Installation Complete!"
+fi
 echo " Binary Location : ${INSTALL_DIR}/clibm"
 echo " User PATH       : ${PATH_STATUS}"
+if [ "${#SELECTED_PLUGINS[@]}" -gt 0 ]; then
+  echo " Plugins         : ${SELECTED_PLUGINS[*]}"
+fi
+for p in ${FAILED_PLUGINS[@]+"${FAILED_PLUGINS[@]}"}; do
+  echo " FAILED          : ${p} -- retry with: clibm plugin install ${p}"
+done
+for p in ${SELECTED_PLUGINS[@]+"${SELECTED_PLUGINS[@]}"}; do
+  case "$p" in
+    clibm-mcp) echo " Note            : clibm-mcp uses stdio; for HTTP run: clibm plugin install mcp --transport http" ;;
+    clibm-web) echo " Note            : clibm-web uses port 7878; rerun plugins/clibm-web/install.sh --port <N> to change it" ;;
+  esac
+done
 if [ "$MODIFY_PATH" = true ]; then
   echo " Open a new terminal (or reload your shell profile) to use 'clibm'."
 else
   echo " Note: User PATH was not modified (--no-modify-path)."
 fi
 echo "===================================================================="
+if [ "${#FAILED_PLUGINS[@]}" -gt 0 ]; then
+  exit 1
+fi

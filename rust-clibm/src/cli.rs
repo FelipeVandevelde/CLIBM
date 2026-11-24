@@ -24,7 +24,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Initialize a new .clibm repository in the current directory (Pure Core by default).
+    /// Initialize a new .clibm repository in the current directory. The install profile
+    /// defaults to the installer's choice (pure, with-defaults or custom), else pure.
     /// Refuses to run if the current directory already has a .clibm repository.
     Init {
         #[arg(long, default_value = "default-workspace")]
@@ -33,7 +34,7 @@ pub enum Commands {
         code: String,
         #[arg(long, default_value = "CLIBM Core Project")]
         name: String,
-        /// Record the "with-defaults" profile and point out which of the 3 default plugins
+        /// Record the "with-defaults" profile and point out which of the default plugins
         /// (clibm-dep-audit, clibm-export-md, clibm-workflow-lint) still need `clibm plugin install`
         #[arg(long)]
         with_defaults: bool,

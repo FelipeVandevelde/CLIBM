@@ -1164,7 +1164,7 @@ export function executeCliCommand(
       const diff = diffTrees(state, 'HEAD', 'WORKING_TREE', headCommit.tree_hash, state.stagedTreeHash);
       const lines = [
         `Active workspace: ${activeWs.id} (${activeWs.name}) -> project ${tree.active_project_id}`,
-        `Core profile:     ${state.config.install_profile === 'pure' ? 'pure (100% Pure Core)' : 'with-defaults'} | Installed plugins: ${state.plugins.length}`,
+        `Core profile:     ${state.config.install_profile === 'pure' ? 'pure (100% Pure Core)' : state.config.install_profile} | Installed plugins: ${state.plugins.length}`,
         `Language & Path:  lang=${state.config.language} | install_path=${state.config.install_path} | mcp_transport=${state.config.mcp_transport}`,
         `Auto-Commit mode: ${state.config.auto_commit ? 'ENABLED (records every change individually)' : 'DISABLED (manual clibm commit)'}`,
         `On branch:        ${branch}`,
@@ -1194,7 +1194,13 @@ export function executeCliCommand(
           output: [
             'CLIBM Repository & Installation Configuration (.clibm/config.json):',
             '-'.repeat(66),
-            `  install_profile              = ${c.install_profile} (${c.install_profile === 'pure' ? '100% Pure Core without built-in plugins' : 'Core + 3 Default Plugins'})`,
+            `  install_profile              = ${c.install_profile} (${
+              c.install_profile === 'pure'
+                ? '100% Pure Core without built-in plugins'
+                : c.install_profile === 'custom'
+                  ? 'Core + plugins chosen from the catalog'
+                  : 'Core + 3 Default Plugins'
+            })`,
             `  language                     = ${c.language}`,
             `  auto_commit                  = ${c.auto_commit} ${c.auto_commit ? '(records each change individually)' : '(manual commit mode)'}`,
             `  install_path                 = ${c.install_path}`,
@@ -1238,11 +1244,13 @@ export function executeCliCommand(
 
         if (key === 'install_profile') {
           const norm = rawVal.toLowerCase();
-          if (norm !== 'pure' && norm !== 'with-defaults') {
-            throw new Error(`Invalid install_profile '${rawVal}'. Expected 'pure' or 'with-defaults'.`);
+          if (norm !== 'pure' && norm !== 'with-defaults' && norm !== 'custom') {
+            throw new Error(`Invalid install_profile '${rawVal}' (expected pure, with-defaults, custom)`);
           }
           state.config.install_profile = norm as CoreInstallProfile;
-          if (norm === 'pure') {
+          if (norm === 'custom') {
+            // Custom: the plugins are the ones the user picked; leave them as they are.
+          } else if (norm === 'pure') {
             // Remove the 3 default plugins if switching back to pure core
             state.plugins = state.plugins.filter(
               (p) =>

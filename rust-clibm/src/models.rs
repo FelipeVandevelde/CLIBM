@@ -103,7 +103,8 @@ fn default_hook_timeout_secs() -> u64 {
 /// Automatic commits are enabled by default (`auto_commit = true`) so every modification
 /// is recorded individually without requiring manual commit commands.
 /// Core starts pure (`install_profile = "pure"`, 0 built-in plugins) unless the user selects
-/// `"with-defaults"` during installation.
+/// `"with-defaults"` (the default plugins) or `"custom"` (plugins picked from the catalog)
+/// during installation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClibmConfig {
     #[serde(default = "default_true")]

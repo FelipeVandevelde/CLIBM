@@ -17,7 +17,8 @@ export interface CasObject<T = unknown> {
   Payload: T;
 }
 
-export type CoreInstallProfile = 'pure' | 'with-defaults';
+/** Core only, core + the default plugins, or core + plugins chosen from the catalog. */
+export type CoreInstallProfile = 'pure' | 'with-defaults' | 'custom';
 export type ClibmLanguage = 'en' | 'pt-BR' | 'es';
 export type McpTransportMode = 'both' | 'stdio' | 'http';
 
