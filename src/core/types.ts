@@ -25,7 +25,7 @@ export type McpTransportMode = 'both' | 'stdio' | 'http';
 /**
  * Repository & machine installation configuration stored in `.clibm/config.json`.
  * `auto_commit` is enabled by default (`true`) so every individual modification
- * automatically creates an immutable BLAKE3 commit on the active branch.
+ * automatically creates an immutable BLAKE3 commit on top of HEAD.
  * `install_profile` defaults to `'pure'` (0 pre-installed plugins).
  */
 export interface ClibmConfig {
