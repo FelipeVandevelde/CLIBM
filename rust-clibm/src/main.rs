@@ -294,52 +294,25 @@ fn main() -> Result<()> {
 
         Commands::Workspace { action } => match action {
             WorkspaceCommands::List => {
-                let (_, tree) = engine.load_working_tree()?;
-                let mut rows = Vec::new();
-                for (wid, whash) in &tree.workspaces {
-                    let ws: WorkspacePayload =
-                        engine.cas.get_typed_payload(whash, OBJ_WORKSPACE)?;
-                    rows.push((wid.clone(), whash.clone(), ws));
-                }
-                rows.sort_by(|a, b| {
-                    a.2.name
-                        .to_lowercase()
-                        .cmp(&b.2.name.to_lowercase())
-                        .then_with(|| a.0.cmp(&b.0))
-                });
+                let rows = engine.list_workspaces()?;
                 if cli.json {
-                    let out: Vec<serde_json::Value> = rows
-                        .iter()
-                        .map(|(wid, whash, ws)| {
-                            serde_json::json!({
-                                "id": wid,
-                                "hash": whash,
-                                "active": wid == &tree.active_workspace_id,
-                                "workspace": ws,
-                            })
-                        })
-                        .collect();
-                    return print_json(&out);
+                    return print_json(&rows);
                 }
                 println!(
-                    "  {:<8} {:<10} {:<24} {:<10} DESCRIPTION",
-                    "ID", "HASH", "NAME (A->Z)", "PROJECTS"
+                    "  {:<8} {:<10} {:<24} {:<9} {:<6} DESCRIPTION",
+                    "ID", "HASH", "NAME (A->Z)", "PROJECTS", "TASKS"
                 );
                 println!("{}", "-".repeat(82));
-                for (wid, whash, ws) in rows {
-                    let marker = if wid == tree.active_workspace_id {
-                        "*"
-                    } else {
-                        " "
-                    };
+                for r in rows {
                     println!(
-                        "{} {:<8} {:<10} {:<24} {:<10} {}",
-                        marker,
-                        wid,
-                        &whash[..8],
-                        ws.name,
-                        ws.project_ids.len(),
-                        ws.description
+                        "{} {:<8} {:<10} {:<24} {:<9} {:<6} {}",
+                        if r.active { "*" } else { " " },
+                        r.id,
+                        &r.hash[..8],
+                        r.workspace.name,
+                        r.projects,
+                        r.tasks,
+                        r.workspace.description
                     );
                 }
             }
@@ -365,6 +338,44 @@ fn main() -> Result<()> {
                     ws.id, ws.name
                 );
                 print_auto_commit_notice(auto_commit);
+            }
+            WorkspaceCommands::Edit {
+                workspace,
+                name,
+                description,
+            } => {
+                let res = engine.edit_workspace(&workspace, name, description)?;
+                report_entity(&res, &format!("Updated workspace {}", res.id), cli.json)?;
+            }
+            WorkspaceCommands::Delete { workspace, move_to } => {
+                let res = engine.delete_workspace(&workspace, move_to.as_deref())?;
+                if cli.json {
+                    return print_json(&res);
+                }
+                println!(
+                    "Deleted workspace {} ('{}') (it remains in earlier commits)",
+                    res.id, res.name
+                );
+                if !res.moved_projects.is_empty() {
+                    println!(
+                        "  Moved {} project(s) to {}: {}",
+                        res.moved_projects.len(),
+                        move_to.as_deref().unwrap_or_default(),
+                        res.moved_projects.join(", ")
+                    );
+                }
+                if !res.deleted_projects.is_empty() {
+                    println!(
+                        "  Deleted {} empty project(s) and their boards: {}",
+                        res.deleted_projects.len(),
+                        res.deleted_projects.join(", ")
+                    );
+                }
+                println!(
+                    "  Active workspace: {} | Active project: {}",
+                    res.active_workspace_id, res.active_project_id
+                );
+                print_auto_commit_notice(res.commit);
             }
         },
 
@@ -397,10 +408,16 @@ fn main() -> Result<()> {
                 name,
                 code,
                 description,
+                workspace,
                 switch,
             } => {
-                let (prj, hash, auto_commit) =
-                    engine.create_project(&name, &code, &description, switch)?;
+                let (prj, hash, auto_commit) = engine.create_project_in(
+                    workspace.as_deref(),
+                    &name,
+                    &code,
+                    &description,
+                    switch,
+                )?;
                 if cli.json {
                     return print_json(&serde_json::json!({
                         "id": prj.id, "hash": hash, "commit": auto_commit, "project": prj, "active": switch

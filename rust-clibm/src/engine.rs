@@ -137,6 +137,36 @@ pub struct ProjectDeleteResult {
     pub commit: Option<String>,
 }
 
+/// One row of [`ClibmEngine::list_workspaces`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceSummary {
+    pub id: String,
+    pub hash: String,
+    pub active: bool,
+    /// Number of projects in the workspace.
+    pub projects: usize,
+    /// Number of tasks in the workspace's projects.
+    pub tasks: usize,
+    pub workspace: WorkspacePayload,
+}
+
+/// Result of [`ClibmEngine::delete_workspace`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceDeleteResult {
+    pub id: String,
+    pub name: String,
+    /// Projects moved whole to the `--move-to` workspace (they keep their IDs, boards
+    /// and tasks).
+    pub moved_projects: Vec<String>,
+    /// Empty projects deleted together with the workspace.
+    pub deleted_projects: Vec<String>,
+    /// Active workspace after the deletion.
+    pub active_workspace_id: String,
+    /// Active project after the deletion.
+    pub active_project_id: String,
+    pub commit: Option<String>,
+}
+
 /// A column to add with [`ClibmEngine::add_column`].
 #[derive(Debug, Clone, Default)]
 pub struct NewColumn {
@@ -550,6 +580,64 @@ impl ClibmEngine {
         self.cas.get_typed_payload(hash, OBJ_WORKSPACE)
     }
 
+    /// Finds a workspace by ID (`WS-02`) or name, ignoring case.
+    pub fn resolve_workspace_ref(
+        &self,
+        tree: &TreeSnapshotPayload,
+        input: &str,
+    ) -> Result<WorkspacePayload> {
+        let q = input.trim();
+        if q.is_empty() {
+            bail!("Workspace reference cannot be empty");
+        }
+        let mut by_name = Vec::new();
+        for hash in tree.workspaces.values() {
+            let ws: WorkspacePayload = self.cas.get_typed_payload(hash, OBJ_WORKSPACE)?;
+            if ws.id.eq_ignore_ascii_case(q) {
+                return Ok(ws);
+            }
+            if ws.name.trim().eq_ignore_ascii_case(q) {
+                by_name.push(ws);
+            }
+        }
+        match by_name.len() {
+            1 => Ok(by_name.remove(0)),
+            0 => bail!(
+                "Workspace '{}' not found. Use its ID (WS-01) or name; see `clibm workspace list`.",
+                q
+            ),
+            _ => bail!(
+                "Workspace name '{}' is ambiguous: it matches {}. Use the workspace ID.",
+                q,
+                by_name.iter().map(|w| w.id.clone()).collect::<Vec<_>>().join(", ")
+            ),
+        }
+    }
+
+    /// Refuses a workspace name that another workspace already uses (ignoring case):
+    /// names are used to find workspaces.
+    fn ensure_workspace_name_free(
+        &self,
+        tree: &TreeSnapshotPayload,
+        name: &str,
+        except_id: Option<&str>,
+    ) -> Result<()> {
+        for hash in tree.workspaces.values() {
+            let ws: WorkspacePayload = self.cas.get_typed_payload(hash, OBJ_WORKSPACE)?;
+            if Some(ws.id.as_str()) == except_id {
+                continue;
+            }
+            if ws.name.trim().eq_ignore_ascii_case(name.trim()) {
+                bail!(
+                    "Workspace name '{}' is already used by {}. Pick another name.",
+                    name.trim(),
+                    ws.id
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Finds a project by ID (`PRJ-02`), code (`API`) or name, ignoring case.
     pub fn resolve_project_ref(&self, tree: &TreeSnapshotPayload, input: &str) -> Result<ProjectPayload> {
         let q = input.trim();
@@ -879,7 +967,12 @@ impl ClibmEngine {
         code: Option<&str>,
         description: &str,
     ) -> Result<(WorkspacePayload, String, Option<String>)> {
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("Workspace name cannot be empty");
+        }
         let (_, mut tree) = self.load_working_tree()?;
+        self.ensure_workspace_name_free(&tree, name, None)?;
         let ws_id = next_entity_id(tree.workspaces.keys(), "WS");
         let prj_id = next_entity_id(tree.projects.keys(), "PRJ");
         let brd_id = next_entity_id(tree.boards.keys(), "BRD");
@@ -968,11 +1061,7 @@ impl ClibmEngine {
         });
 
         let chosen = if let Some(q) = target {
-            let clean = q.trim();
-            loaded_workspaces
-                .into_iter()
-                .find(|w| w.id.eq_ignore_ascii_case(clean) || w.name.eq_ignore_ascii_case(clean))
-                .ok_or_else(|| anyhow!("Workspace '{}' not found", clean))?
+            self.resolve_workspace_ref(&tree, q)?
         } else {
             // Cycle to the next workspace in alphabetical order
             let current_idx = loaded_workspaces
@@ -1004,6 +1093,212 @@ impl ClibmEngine {
         Ok((chosen, auto_commit))
     }
 
+    /// Every workspace, ordered by name (ignoring case) then ID, with project and task
+    /// counts.
+    pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
+        let (_, tree) = self.load_working_tree()?;
+        let tasks = self.load_all_tasks(&tree)?;
+        let mut out = Vec::new();
+        for (wid, hash) in &tree.workspaces {
+            let ws: WorkspacePayload = self.cas.get_typed_payload(hash, OBJ_WORKSPACE)?;
+            let task_count = tasks
+                .values()
+                .filter(|t| ws.project_ids.iter().any(|p| p == &t.project_id))
+                .count();
+            out.push(WorkspaceSummary {
+                id: wid.clone(),
+                hash: hash.clone(),
+                active: wid == &tree.active_workspace_id,
+                projects: ws.project_ids.len(),
+                tasks: task_count,
+                workspace: ws,
+            });
+        }
+        out.sort_by(|a, b| {
+            a.workspace
+                .name
+                .to_lowercase()
+                .cmp(&b.workspace.name.to_lowercase())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(out)
+    }
+
+    /// Renames a workspace or changes its description. The new name must not be used by
+    /// another workspace.
+    pub fn edit_workspace(
+        &self,
+        workspace_ref: &str,
+        name: Option<String>,
+        description: Option<String>,
+    ) -> Result<MutationResult> {
+        let (_, mut tree) = self.load_working_tree()?;
+        let mut ws = self.resolve_workspace_ref(&tree, workspace_ref)?;
+        let old_hash = tree.workspaces[&ws.id].clone();
+        let before = ws.clone();
+        if let Some(n) = name {
+            let n = n.trim();
+            if n.is_empty() {
+                bail!("Workspace name cannot be empty");
+            }
+            self.ensure_workspace_name_free(&tree, n, Some(&ws.id))?;
+            ws.name = n.to_string();
+        }
+        if let Some(d) = description {
+            ws.description = d.trim().to_string();
+        }
+        if ws == before {
+            return Ok(MutationResult { id: ws.id, hash: old_hash, commit: None, changed: false });
+        }
+        let hash = self.cas.put_object(OBJ_WORKSPACE, &ws)?;
+        tree.workspaces.insert(ws.id.clone(), hash.clone());
+        let (_, commit) = self.record_mutation(
+            &tree,
+            &format!("auto(workspace): edit {} (\"{}\")", ws.id, ws.name),
+        )?;
+        Ok(MutationResult { id: ws.id, hash, commit, changed: true })
+    }
+
+    /// Deletes a workspace. Refuses to delete the last workspace, and a workspace whose
+    /// projects still have tasks unless `move_to` names the workspace that receives its
+    /// projects. With `move_to`, every project moves whole (board, tasks and IDs are kept);
+    /// without it, the workspace's empty projects and their boards are deleted with it.
+    pub fn delete_workspace(
+        &self,
+        workspace_ref: &str,
+        move_to: Option<&str>,
+    ) -> Result<WorkspaceDeleteResult> {
+        let (_, mut tree) = self.load_working_tree()?;
+        let ws = self.resolve_workspace_ref(&tree, workspace_ref)?;
+        if tree.workspaces.len() <= 1 {
+            bail!(
+                "Workspace {} ('{}') is the only workspace; a repository needs at least one.",
+                ws.id,
+                ws.name
+            );
+        }
+        let target = match move_to {
+            Some(r) => {
+                let t = self.resolve_workspace_ref(&tree, r)?;
+                if t.id == ws.id {
+                    bail!("--move-to must name a different workspace than the one being deleted");
+                }
+                Some(t)
+            }
+            None => None,
+        };
+
+        let tasks: Vec<TaskPayload> = self
+            .load_all_tasks(&tree)?
+            .into_values()
+            .filter(|t| ws.project_ids.iter().any(|p| p == &t.project_id))
+            .collect();
+
+        let was_active = tree.active_workspace_id == ws.id;
+        let target_id = target.as_ref().map(|t| t.id.clone());
+        let mut moved_projects = Vec::new();
+        let mut deleted_projects = Vec::new();
+        tree.workspaces.remove(&ws.id);
+
+        match target {
+            Some(mut target) => {
+                let now = Utc::now().to_rfc3339();
+                for pid in &ws.project_ids {
+                    let mut prj = self.load_project(&tree, pid)?;
+                    prj.workspace_id = target.id.clone();
+                    let h = self.cas.put_object(OBJ_PROJECT, &prj)?;
+                    tree.projects.insert(prj.id.clone(), h);
+                    if !target.project_ids.contains(pid) {
+                        target.project_ids.push(pid.clone());
+                    }
+                    moved_projects.push(pid.clone());
+                }
+                for mut t in tasks {
+                    t.metadata.insert("workspace_id".to_string(), target.id.clone());
+                    t.updated_at = now.clone();
+                    let h = self.cas.put_object(OBJ_TASK, &t)?;
+                    tree.tasks.insert(t.id.clone(), h);
+                }
+                let target_hash = self.cas.put_object(OBJ_WORKSPACE, &target)?;
+                tree.workspaces.insert(target.id.clone(), target_hash);
+                if was_active {
+                    // The active project moved along, so it stays active.
+                    tree.active_workspace_id = target.id.clone();
+                }
+            }
+            None => {
+                if !tasks.is_empty() {
+                    bail!(
+                        "Workspace {} ('{}') still has {} task(s) in {} project(s). Pass --move-to <workspace> to move its projects, or delete the tasks first.",
+                        ws.id,
+                        ws.name,
+                        tasks.len(),
+                        ws.project_ids.len()
+                    );
+                }
+                for pid in &ws.project_ids {
+                    if let Ok(prj) = self.load_project(&tree, pid) {
+                        for bid in &prj.board_ids {
+                            tree.boards.remove(bid);
+                        }
+                    }
+                    tree.projects.remove(pid);
+                    deleted_projects.push(pid.clone());
+                }
+                if was_active {
+                    let next = self
+                        .first_workspace_by_name(&tree)?
+                        .ok_or_else(|| anyhow!("No workspace left after deleting {}", ws.id))?;
+                    tree.active_workspace_id = next.id.clone();
+                    tree.active_project_id = next.project_ids.first().cloned().unwrap_or_default();
+                }
+            }
+        }
+        let message = match &target_id {
+            Some(tid) => format!(
+                "auto(workspace): delete {} (\"{}\"), projects moved to {}",
+                ws.id, ws.name, tid
+            ),
+            None => format!("auto(workspace): delete {} (\"{}\")", ws.id, ws.name),
+        };
+        let (tree_hash, commit) = self.record_mutation(&tree, &message)?;
+        if was_active {
+            let ws_name = self
+                .load_workspace(&tree, &tree.active_workspace_id)
+                .map(|w| w.name)
+                .unwrap_or_default();
+            self.fire_hook(
+                "on-workspace-switch",
+                &tree_hash,
+                json!({ "workspace_id": tree.active_workspace_id, "workspace_name": ws_name, "commit": commit }),
+            )?;
+        }
+        Ok(WorkspaceDeleteResult {
+            id: ws.id,
+            name: ws.name,
+            moved_projects,
+            deleted_projects,
+            active_workspace_id: tree.active_workspace_id,
+            active_project_id: tree.active_project_id,
+            commit,
+        })
+    }
+
+    /// The workspace that comes first by name (ignoring case), then ID.
+    fn first_workspace_by_name(&self, tree: &TreeSnapshotPayload) -> Result<Option<WorkspacePayload>> {
+        let mut all = Vec::new();
+        for hash in tree.workspaces.values() {
+            all.push(self.cas.get_typed_payload::<WorkspacePayload>(hash, OBJ_WORKSPACE)?);
+        }
+        all.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(all.into_iter().next())
+    }
+
     /// Transfers (or copies if `copy_mode` is true) a task to a target workspace: into
     /// `target_project` (ID, code or name of a project of that workspace) or else the
     /// workspace's first project.
@@ -1018,17 +1313,7 @@ impl ClibmEngine {
         let task_id = self.resolve_task_ref(&tree, task_ref)?;
         let mut task = self.load_task(&tree, &task_id)?;
 
-        let mut target_ws: Option<WorkspacePayload> = None;
-        for whash in tree.workspaces.values() {
-            let ws: WorkspacePayload = self.cas.get_typed_payload(whash, OBJ_WORKSPACE)?;
-            if ws.id.eq_ignore_ascii_case(target_workspace)
-                || ws.name.eq_ignore_ascii_case(target_workspace)
-            {
-                target_ws = Some(ws);
-                break;
-            }
-        }
-        let ws = target_ws.ok_or_else(|| anyhow!("Target workspace '{}' not found", target_workspace))?;
+        let ws = self.resolve_workspace_ref(&tree, target_workspace)?;
         let prj = match target_project {
             Some(p) => {
                 let prj = self.resolve_project_ref(&tree, p)?;
@@ -1125,6 +1410,20 @@ impl ClibmEngine {
         description: &str,
         switch: bool,
     ) -> Result<(ProjectPayload, String, Option<String>)> {
+        self.create_project_in(None, name, code, description, switch)
+    }
+
+    /// Like [`ClibmEngine::create_project`], in the workspace `workspace_ref` (ID or name)
+    /// or, when `None`, the active one. With `switch`, the new project and its workspace
+    /// become the active ones.
+    pub fn create_project_in(
+        &self,
+        workspace_ref: Option<&str>,
+        name: &str,
+        code: &str,
+        description: &str,
+        switch: bool,
+    ) -> Result<(ProjectPayload, String, Option<String>)> {
         let name = name.trim();
         if name.is_empty() {
             bail!("Project name cannot be empty");
@@ -1132,7 +1431,11 @@ impl ClibmEngine {
         let (_, mut tree) = self.load_working_tree()?;
         let code = normalize_project_code(code)?;
         self.ensure_code_free(&tree, &code)?;
-        let mut ws = self.load_workspace(&tree, &tree.active_workspace_id.clone())?;
+        let mut ws = match workspace_ref {
+            Some(r) => self.resolve_workspace_ref(&tree, r)?,
+            None => self.load_workspace(&tree, &tree.active_workspace_id.clone())?,
+        };
+        let workspace_changed = switch && tree.active_workspace_id != ws.id;
 
         let prj_id = next_entity_id(tree.projects.keys(), "PRJ");
         let brd_id = next_entity_id(tree.boards.keys(), "BRD");
@@ -1162,12 +1465,20 @@ impl ClibmEngine {
         tree.workspaces.insert(ws.id.clone(), ws_hash);
         if switch {
             tree.active_project_id = prj_id.clone();
+            tree.active_workspace_id = ws.id.clone();
         }
 
-        let (_, auto_commit) = self.record_mutation(
+        let (tree_hash, auto_commit) = self.record_mutation(
             &tree,
             &format!("auto(project): create {} {} \"{}\" in {}", prj_id, code, name, ws.id),
         )?;
+        if workspace_changed {
+            self.fire_hook(
+                "on-workspace-switch",
+                &tree_hash,
+                json!({ "workspace_id": ws.id, "workspace_name": ws.name, "commit": auto_commit }),
+            )?;
+        }
         Ok((project, prj_hash, auto_commit))
     }
 

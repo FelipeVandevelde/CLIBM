@@ -15,6 +15,7 @@
       --accent-text: #09090b;
       --error-bg: #3f1d1d;
       --error-border: #7f1d1d;
+      --danger: #f87171;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -36,17 +37,23 @@
     }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
     .toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-    input, select, button {
+    .switchers { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .switchers label { font-size: 12px; color: var(--muted); }
+    input, select, button, textarea {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       padding: 8px 12px;
       border-radius: 6px;
       font-size: 13px;
+      font-family: inherit;
     }
     button { cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
     button.primary { background: var(--accent-bg); color: var(--accent-text); border-color: var(--accent-bg); font-weight: 600; }
-    #notice { display: none; background: var(--error-bg); border: 1px solid var(--error-border); border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; font-size: 13px; white-space: pre-wrap; }
+    button.danger { border-color: var(--error-border); color: var(--danger); }
+    button.small { padding: 3px 8px; font-size: 11px; }
+    .notice { display: none; background: var(--error-bg); border: 1px solid var(--error-border); border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; font-size: 13px; white-space: pre-wrap; }
     .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
     .col { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-height: 280px; }
     .col h3 { font-size: 13px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
@@ -54,6 +61,32 @@
     .card-title { font-size: 13px; font-weight: 600; margin: 6px 0; overflow-wrap: anywhere; }
     .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
     .actions button { padding: 3px 8px; font-size: 11px; }
+
+    dialog {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      width: min(860px, 94vw);
+      max-height: 88vh;
+      margin: auto;
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+    .dialog-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; }
+    .ws { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .row .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .ws-name { font-weight: 600; font-size: 14px; }
+    .badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; border: 1px solid var(--muted); color: var(--muted); border-radius: 4px; padding: 0 5px; }
+    .projects { margin-top: 10px; border-top: 1px solid var(--border); }
+    .prj { padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .panel { margin-top: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 6px; display: grid; gap: 8px; }
+    .panel.danger { border-color: var(--error-border); }
+    .panel .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+    .panel label { font-size: 12px; color: var(--muted); display: grid; gap: 4px; }
+    .panel .check { display: flex; align-items: center; gap: 6px; }
+    .desc { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -62,13 +95,20 @@
       <h1 style="font-size: 18px;">CLIBM Web Dashboard</h1>
       <div id="meta" class="mono">Loading the project...</div>
     </div>
+    <div class="switchers">
+      <label for="wsSelect">Workspace</label>
+      <select id="wsSelect" aria-label="Active workspace"></select>
+      <label for="prjSelect">Project</label>
+      <select id="prjSelect" aria-label="Active project"></select>
+      <button id="manageBtn">Manage…</button>
+    </div>
     <div>
       <span id="fsck" class="mono" style="color: var(--text);"></span>
       <button id="fsckBtn" style="margin-left: 8px;">Verify (fsck)</button>
     </div>
   </header>
 
-  <div id="notice" role="alert"></div>
+  <div id="notice" class="notice" role="alert"></div>
 
   <div class="toolbar">
     <input id="taskTitle" placeholder="New task title..." style="min-width: 260px;" />
@@ -86,9 +126,32 @@
 
   <div id="board" class="board"></div>
 
+  <dialog id="manage" aria-labelledby="manageTitle">
+    <div class="dialog-head">
+      <h2 id="manageTitle" style="font-size: 16px;">Workspaces &amp; projects</h2>
+      <div class="row">
+        <button class="primary" id="newWsBtn">+ New workspace</button>
+        <button id="closeManage">Close</button>
+      </div>
+    </div>
+    <div id="dialogNotice" class="notice" role="alert"></div>
+    <div id="manageBody"></div>
+  </dialog>
+
   <script>
     // Session token injected by clibm-web; required for every change.
     const TOKEN = '__CLIBM_TOKEN__';
+
+    /** Latest /api/state answer. */
+    let data = null;
+    /**
+     * The inline form open in the Manage dialog, e.g. 'new-ws', 'edit-ws:WS-02',
+     * 'new-prj:WS-01', 'del-prj:PRJ-02'; null when none. While one is open the periodic
+     * refresh leaves the dialog alone so typing is never lost.
+     */
+    let openPanel = null;
+
+    const manage = document.getElementById('manage');
 
     function el(tag, className, text) {
       const node = document.createElement(tag);
@@ -97,15 +160,30 @@
       return node;
     }
 
+    function button(text, onClick, className) {
+      const b = el('button', className || 'small', text);
+      b.type = 'button';
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function input(label, value, placeholder) {
+      const wrap = el('label', '', label);
+      const i = el('input');
+      i.value = value || '';
+      if (placeholder) i.placeholder = placeholder;
+      wrap.append(i);
+      return { wrap, input: i };
+    }
+
     function showNotice(message) {
-      const n = document.getElementById('notice');
-      if (message) {
-        n.textContent = message;
-        n.style.display = 'block';
-      } else {
-        n.textContent = '';
-        n.style.display = 'none';
+      const n = document.getElementById(manage.open ? 'dialogNotice' : 'notice');
+      for (const id of ['notice', 'dialogNotice']) {
+        const other = document.getElementById(id);
+        if (other !== n) { other.textContent = ''; other.style.display = 'none'; }
       }
+      n.textContent = message || '';
+      n.style.display = message ? 'block' : 'none';
     }
 
     async function post(path, body) {
@@ -128,22 +206,43 @@
       }
     }
 
-    async function refresh() {
-      let data;
-      try {
-        const res = await fetch('/api/state');
-        data = await res.json();
-        if (!res.ok || data.ok === false) {
-          showNotice(data.error || 'Could not load the project');
-          return;
-        }
-      } catch (e) {
-        showNotice('The dashboard server is not reachable: ' + e.message);
-        return;
+    /** Runs a change, then closes the open inline form and redraws everything. */
+    async function change(path, body) {
+      const out = await post(path, body);
+      if (out) {
+        openPanel = null;
+        await refresh(true);
       }
+      return out;
+    }
 
+    function activeWorkspace() {
+      return data.workspaces.find(w => w.active) || data.workspaces[0];
+    }
+
+    function renderSwitchers() {
+      const wsSelect = document.getElementById('wsSelect');
+      const prjSelect = document.getElementById('prjSelect');
+      if (document.activeElement === wsSelect || document.activeElement === prjSelect) return;
+      wsSelect.replaceChildren();
+      for (const w of data.workspaces) {
+        const o = el('option', '', `${w.name} (${w.id})`);
+        o.value = w.id;
+        o.selected = w.active;
+        wsSelect.append(o);
+      }
+      prjSelect.replaceChildren();
+      for (const p of activeWorkspace().projects) {
+        const o = el('option', '', `${p.code} - ${p.name}`);
+        o.value = p.id;
+        o.selected = p.id === data.project.id;
+        prjSelect.append(o);
+      }
+    }
+
+    function renderBoard() {
       document.getElementById('meta').textContent =
-        `${data.project.code} - ${data.project.name} · HEAD: ${(data.head_commit || 'none').slice(0, 12)} ` +
+        `${data.workspace.name} › ${data.project.code} - ${data.project.name} · HEAD: ${(data.head_commit || 'none').slice(0, 12)} ` +
         `(${data.commits} commits) · ` +
         `tree: ${data.staged_tree_hash.slice(0, 12)} · tasks: ${data.tasks.length}` +
         (data.dirty ? ' · uncommitted changes' : '');
@@ -179,6 +278,201 @@
       }
     }
 
+    // --- Manage dialog ---
+
+    function toggle(panel) {
+      openPanel = openPanel === panel ? null : panel;
+      showNotice('');
+      renderManage();
+    }
+
+    function workspaceForm(ws) {
+      const panel = el('div', 'panel');
+      const fields = el('div', 'fields');
+      const name = input('Name', ws ? ws.name : '', 'e.g. backend');
+      fields.append(name.wrap);
+      let code = null;
+      if (!ws) {
+        code = input('First project code (optional)', '', 'e.g. BE');
+        fields.append(code.wrap);
+      }
+      const desc = input('Description', ws ? ws.description : '');
+      fields.append(desc.wrap);
+      panel.append(fields);
+      const row = el('div', 'row');
+      row.append(button(ws ? 'Save' : 'Create workspace', () => {
+        if (ws) {
+          change('/api/workspace/edit', { workspace: ws.id, name: name.input.value, description: desc.input.value });
+        } else {
+          change('/api/workspace', { name: name.input.value, code: code.input.value, description: desc.input.value });
+        }
+      }, 'small primary'));
+      row.append(button('Cancel', () => toggle(openPanel)));
+      panel.append(row);
+      setTimeout(() => name.input.focus(), 0);
+      return panel;
+    }
+
+    function projectForm(ws, prj) {
+      const panel = el('div', 'panel');
+      const fields = el('div', 'fields');
+      const name = input('Name', prj ? prj.name : '', 'e.g. Payments API');
+      fields.append(name.wrap);
+      const code = input(prj ? 'Code (cannot change)' : 'Code (task ID prefix)', prj ? prj.code : '', 'e.g. API');
+      if (prj) code.input.disabled = true;
+      fields.append(code.wrap);
+      const desc = input('Description', prj ? prj.description : '');
+      fields.append(desc.wrap);
+      panel.append(fields);
+      const row = el('div', 'row');
+      let sw = null;
+      if (!prj) {
+        const lab = el('label', 'check');
+        sw = el('input');
+        sw.type = 'checkbox';
+        lab.append(sw, document.createTextNode('Switch to it'));
+        row.append(lab);
+      }
+      row.append(button(prj ? 'Save' : 'Create project', () => {
+        if (prj) {
+          change('/api/project/edit', { project: prj.id, name: name.input.value, description: desc.input.value });
+        } else {
+          change('/api/project', {
+            workspace: ws.id, name: name.input.value, code: code.input.value,
+            description: desc.input.value, switch: sw.checked,
+          });
+        }
+      }, 'small primary'));
+      row.append(button('Cancel', () => toggle(openPanel)));
+      panel.append(row);
+      setTimeout(() => name.input.focus(), 0);
+      return panel;
+    }
+
+    /** Delete confirmation; `targets` are [id, label] pairs for where things can move. */
+    function deletePanel(message, taskCount, targetLabel, targets, onConfirm) {
+      const panel = el('div', 'panel danger');
+      panel.append(el('div', '', message));
+      let select = null;
+      if (taskCount > 0) {
+        const lab = el('label', '', targetLabel);
+        select = el('select');
+        for (const [id, label] of targets) {
+          const o = el('option', '', label);
+          o.value = id;
+          select.append(o);
+        }
+        lab.append(select);
+        panel.append(lab);
+      }
+      panel.append(el('div', 'desc', 'History is kept: `clibm restore` brings it back.'));
+      const row = el('div', 'row');
+      row.append(button('Delete', () => onConfirm(select ? select.value : null), 'small danger'));
+      row.append(button('Cancel', () => toggle(openPanel)));
+      panel.append(row);
+      return panel;
+    }
+
+    function renderManage() {
+      if (!data) return;
+      const body = document.getElementById('manageBody');
+      body.replaceChildren();
+      if (openPanel === 'new-ws') body.append(workspaceForm(null));
+
+      const allProjects = data.workspaces.flatMap(w => w.projects.map(p => ({ ...p, ws: w })));
+      for (const ws of data.workspaces) {
+        const box = el('section', 'ws');
+        const head = el('div', 'row');
+        const title = el('div', 'grow');
+        const nameLine = el('div', 'row');
+        nameLine.append(el('span', 'ws-name', ws.name), el('span', 'mono', ws.id));
+        if (ws.active) nameLine.append(el('span', 'badge', 'active'));
+        title.append(nameLine);
+        title.append(el('div', 'desc', `${ws.description} · ${ws.projects.length} project(s), ${ws.tasks} task(s)`));
+        head.append(title);
+        if (!ws.active) head.append(button('Switch', () => change('/api/workspace/switch', { workspace: ws.id })));
+        head.append(button('Edit', () => toggle('edit-ws:' + ws.id)));
+        const onlyWs = data.workspaces.length <= 1;
+        const delWs = button('Delete', () => toggle('del-ws:' + ws.id), 'small danger');
+        if (onlyWs) { delWs.disabled = true; delWs.title = 'The only workspace cannot be deleted'; }
+        head.append(delWs);
+        box.append(head);
+
+        if (openPanel === 'edit-ws:' + ws.id) box.append(workspaceForm(ws));
+        if (openPanel === 'del-ws:' + ws.id) {
+          const others = data.workspaces.filter(w => w.id !== ws.id).map(w => [w.id, `${w.name} (${w.id})`]);
+          box.append(deletePanel(
+            ws.tasks > 0
+              ? `Delete workspace '${ws.name}'? Its ${ws.projects.length} project(s) hold ${ws.tasks} task(s) and move, whole, to the workspace you pick.`
+              : `Delete workspace '${ws.name}'? Its ${ws.projects.length} empty project(s) and their boards are deleted too.`,
+            ws.tasks, 'Move its projects to', others,
+            target => change('/api/workspace/delete', { workspace: ws.id, move_to: target }),
+          ));
+        }
+
+        const list = el('div', 'projects');
+        for (const p of ws.projects) {
+          const item = el('div', 'prj');
+          const row = el('div', 'row');
+          const label = el('div', 'grow');
+          const line = el('div', 'row');
+          line.append(el('span', 'mono', p.id), el('strong', '', `${p.code} - ${p.name}`));
+          if (p.active) line.append(el('span', 'badge', 'active'));
+          label.append(line);
+          label.append(el('div', 'desc', `${p.description} · ${p.tasks} task(s)`));
+          row.append(label);
+          if (!p.active) row.append(button('Switch', () => change('/api/project/switch', { project: p.id })));
+          row.append(button('Edit', () => toggle('edit-prj:' + p.id)));
+          const delPrj = button('Delete', () => toggle('del-prj:' + p.id), 'small danger');
+          if (ws.projects.length <= 1) { delPrj.disabled = true; delPrj.title = 'A workspace needs at least one project'; }
+          row.append(delPrj);
+          item.append(row);
+          if (openPanel === 'edit-prj:' + p.id) item.append(projectForm(ws, p));
+          if (openPanel === 'del-prj:' + p.id) {
+            const others = allProjects.filter(o => o.id !== p.id).map(o => [o.id, `${o.code} - ${o.name} (${o.ws.name})`]);
+            item.append(deletePanel(
+              p.tasks > 0
+                ? `Delete project ${p.code} and its board? Its ${p.tasks} task(s) keep their IDs and move to the project you pick.`
+                : `Delete project ${p.code} and its board? It has no tasks.`,
+              p.tasks, 'Move its tasks to', others,
+              target => change('/api/project/delete', { project: p.id, move_to: target }),
+            ));
+          }
+          list.append(item);
+        }
+        box.append(list);
+        if (openPanel === 'new-prj:' + ws.id) {
+          box.append(projectForm(ws, null));
+        } else {
+          const add = el('div', 'actions');
+          add.append(button('+ New project', () => toggle('new-prj:' + ws.id)));
+          box.append(add);
+        }
+        body.append(box);
+      }
+    }
+
+    // --- Refresh ---
+
+    /** Reloads the state. The dialog is redrawn when `force` is set or no form is open in it. */
+    async function refresh(force) {
+      try {
+        const res = await fetch('/api/state');
+        const next = await res.json();
+        if (!res.ok || next.ok === false) {
+          showNotice(next.error || 'Could not load the project');
+          return;
+        }
+        data = next;
+      } catch (e) {
+        showNotice('The dashboard server is not reachable: ' + e.message);
+        return;
+      }
+      renderSwitchers();
+      renderBoard();
+      if (manage.open && (force || openPanel === null)) renderManage();
+    }
+
     async function runFsck() {
       const target = document.getElementById('fsck');
       target.textContent = 'Verifying...';
@@ -195,6 +489,27 @@
         target.textContent = 'fsck failed: ' + e.message;
       }
     }
+
+    // Blur first: renderSwitchers leaves a focused menu alone.
+    document.getElementById('wsSelect').addEventListener('change', async (e) => {
+      e.target.blur();
+      if (!await change('/api/workspace/switch', { workspace: e.target.value })) renderSwitchers();
+    });
+
+    document.getElementById('prjSelect').addEventListener('change', async (e) => {
+      e.target.blur();
+      if (!await change('/api/project/switch', { project: e.target.value })) renderSwitchers();
+    });
+
+    document.getElementById('manageBtn').addEventListener('click', () => {
+      openPanel = null;
+      showNotice('');
+      manage.showModal();
+      renderManage();
+    });
+    document.getElementById('closeManage').addEventListener('click', () => manage.close());
+    document.getElementById('newWsBtn').addEventListener('click', () => toggle('new-ws'));
+    manage.addEventListener('close', () => { openPanel = null; showNotice(''); });
 
     document.getElementById('addBtn').addEventListener('click', async () => {
       const input = document.getElementById('taskTitle');
@@ -218,7 +533,7 @@
     document.getElementById('fsckBtn').addEventListener('click', runFsck);
 
     refresh();
-    setInterval(refresh, 5000);
+    setInterval(() => refresh(false), 5000);
   </script>
 </body>
 </html>

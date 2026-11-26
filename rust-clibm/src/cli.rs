@@ -190,6 +190,23 @@ pub enum WorkspaceCommands {
         /// Optional workspace ID or name. If omitted, selects the next workspace alphabetically.
         target: Option<String>,
     },
+    /// Rename a workspace or change its description (names must be unique)
+    Edit {
+        /// Workspace ID (WS-02) or name
+        workspace: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Delete a workspace (refuses while its projects have tasks, unless --move-to)
+    Delete {
+        /// Workspace ID (WS-02) or name
+        workspace: String,
+        /// Workspace that receives the deleted workspace's projects, whole (boards and tasks keep their IDs)
+        #[arg(long)]
+        move_to: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -207,7 +224,10 @@ pub enum ProjectCommands {
         code: String,
         #[arg(short, long, default_value = "")]
         description: String,
-        /// Make the new project the active one
+        /// Workspace (ID or name) to create the project in; defaults to the active one
+        #[arg(short, long)]
+        workspace: Option<String>,
+        /// Make the new project (and its workspace) the active one
         #[arg(long)]
         switch: bool,
     },
