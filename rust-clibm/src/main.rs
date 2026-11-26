@@ -139,7 +139,7 @@ fn print_columns(engine: &ClibmEngine, json: bool) -> Result<()> {
 
 fn print_auto_commit_notice(auto_commit_hash: Option<String>) {
     if let Some(chash) = auto_commit_hash {
-        println!("  [auto-commit {}] Change recorded to branch history.", short(&chash));
+        println!("  [auto-commit {}] Change recorded in the history.", short(&chash));
     }
 }
 
@@ -1528,7 +1528,7 @@ fn main() -> Result<()> {
             println!("\n[3] Local Project CAS Repository Data:");
             if local_clibm_exists {
                 println!("    • Path: {}", local_clibm.display());
-                println!("      -> Note: Contains your project tasks, branches, and version history.");
+                println!("      -> Note: Contains your project tasks and their full version history.");
                 println!("         Preserve this folder if you want to keep your project data intact.");
             } else {
                 println!("    • (No .clibm repository in current directory: {})", cwd.display());
