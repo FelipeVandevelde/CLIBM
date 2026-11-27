@@ -350,7 +350,7 @@ export default function App() {
               type="button"
               onClick={downloadCoreOnlyZip}
               className="px-2.5 py-1 text-xs font-mono text-zinc-950 bg-zinc-200 hover:bg-white rounded flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer font-medium"
-              title="Download Core-Only Rust CLI without plugins (clibm-core-v0.1.0.zip)"
+              title="Download Core-Only Rust CLI without plugins (clibm-core.zip)"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Core-Only (.zip)</span>

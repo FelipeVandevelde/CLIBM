@@ -1,111 +1,13 @@
 /**
- * Registry of all Rust source files in `/rust-clibm/` (100% Pure Core + CLI + Standalone Plugins in `plugins/*`)
- * imported as raw strings so users can inspect, copy, or download:
- * 1. Pure Core-Only Package (`clibm-core-v0.1.0.zip`) — strictly `clibm_core` + `clibm` CLI with 0 plugins
- * 2. Individual Standalone Plugin Packages (`clibm-mcp-v0.1.0.zip`, `clibm-dep-audit-v0.1.0.zip`, `clibm-export-md-v0.1.0.zip`, `clibm-workflow-lint-v0.1.0.zip`, `clibm-tui-v0.1.0.zip`, `clibm-web-v0.1.0.zip`, `clibm-plugin-template-v0.1.0.zip`)
- * 3. Complete Bundle (`clibm-v0.1.0-workspace.zip`) — Pure Core CLI + all standalone plugin folders in `plugins/`
+ * Registry of the Rust sources in `rust-clibm/` for the in-browser viewer, and the links to the
+ * source ZIP bundles.
  *
- * All installation, update, and uninstallation files (`install.sh`, `install.ps1`, `update.sh`, `update.ps1`,
- * `uninstall.sh`, `uninstall.ps1`) and ZIP archives are UTF-8 (no BOM) encoded for maximum compatibility.
+ * The file list comes from `import.meta.glob` over `rust-clibm/`, so a new file shows up here
+ * without editing this module. The ZIPs themselves are not built in the browser any more:
+ * `scripts/build-bundles.sh` builds them from git in CI (`.github/workflows/bundles.yml`), which
+ * checks that each one builds and installs, and publishes them on GitHub Releases. The bundles are
+ * listed in `rust-clibm/bundles.json`.
  */
-
-import cargoToml from '../../rust-clibm/Cargo.toml?raw';
-import readmeMd from '../../rust-clibm/README.md?raw';
-import installSh from '../../rust-clibm/install.sh?raw';
-import installPs1 from '../../rust-clibm/install.ps1?raw';
-import mainRs from '../../rust-clibm/src/main.rs?raw';
-import libRs from '../../rust-clibm/src/lib.rs?raw';
-import cliRs from '../../rust-clibm/src/cli.rs?raw';
-import canonicalRs from '../../rust-clibm/src/canonical.rs?raw';
-import casRs from '../../rust-clibm/src/cas.rs?raw';
-import modelsRs from '../../rust-clibm/src/models.rs?raw';
-import indexRs from '../../rust-clibm/src/index.rs?raw';
-import versioningRs from '../../rust-clibm/src/versioning.rs?raw';
-import pluginRs from '../../rust-clibm/src/plugin.rs?raw';
-import engineRs from '../../rust-clibm/src/engine.rs?raw';
-import uninstallSh from '../../rust-clibm/uninstall.sh?raw';
-import uninstallPs1 from '../../rust-clibm/uninstall.ps1?raw';
-import updateSh from '../../rust-clibm/update.sh?raw';
-import updatePs1 from '../../rust-clibm/update.ps1?raw';
-import envPathSh from '../../rust-clibm/scripts/env-path.sh?raw';
-import envPathPs1 from '../../rust-clibm/scripts/env-path.ps1?raw';
-import syncEnvPathPs1 from '../../rust-clibm/scripts/sync-env-path.ps1?raw';
-
-// Standalone Plugins in `plugins/`
-import mcpCargoToml from '../../rust-clibm/plugins/clibm-mcp/Cargo.toml?raw';
-import mcpMainRs from '../../rust-clibm/plugins/clibm-mcp/src/main.rs?raw';
-import mcpConfigRs from '../../rust-clibm/plugins/clibm-mcp/src/config.rs?raw';
-import mcpErrorRs from '../../rust-clibm/plugins/clibm-mcp/src/error.rs?raw';
-import mcpProtocolModRs from '../../rust-clibm/plugins/clibm-mcp/src/protocol/mod.rs?raw';
-import mcpProtocolTypesRs from '../../rust-clibm/plugins/clibm-mcp/src/protocol/types.rs?raw';
-import mcpProtocolSchemaRs from '../../rust-clibm/plugins/clibm-mcp/src/protocol/schema.rs?raw';
-import mcpBackendModRs from '../../rust-clibm/plugins/clibm-mcp/src/backend/mod.rs?raw';
-import mcpBackendBridgeRs from '../../rust-clibm/plugins/clibm-mcp/src/backend/bridge.rs?raw';
-import mcpAdapterModRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/mod.rs?raw';
-import mcpAdapterDiscoveryRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/discovery.rs?raw';
-import mcpAdapterDispatcherRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/dispatcher.rs?raw';
-import mcpAdapterPermissionsRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/permissions.rs?raw';
-import mcpAdapterToolsRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/tools.rs?raw';
-import mcpAdapterValidatorRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/validator.rs?raw';
-import mcpAdapterResourcesRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/resources.rs?raw';
-import mcpAdapterPromptsRs from '../../rust-clibm/plugins/clibm-mcp/src/adapter/prompts.rs?raw';
-import mcpTransportModRs from '../../rust-clibm/plugins/clibm-mcp/src/transport/mod.rs?raw';
-import mcpTransportStdioRs from '../../rust-clibm/plugins/clibm-mcp/src/transport/stdio.rs?raw';
-import mcpTransportHttpRs from '../../rust-clibm/plugins/clibm-mcp/src/transport/http.rs?raw';
-import mcpReadmeMd from '../../rust-clibm/plugins/clibm-mcp/README.md?raw';
-import mcpInstallSh from '../../rust-clibm/plugins/clibm-mcp/install.sh?raw';
-import mcpInstallPs1 from '../../rust-clibm/plugins/clibm-mcp/install.ps1?raw';
-import mcpUninstallSh from '../../rust-clibm/plugins/clibm-mcp/uninstall.sh?raw';
-import mcpUninstallPs1 from '../../rust-clibm/plugins/clibm-mcp/uninstall.ps1?raw';
-
-import depAuditCargoToml from '../../rust-clibm/plugins/clibm-dep-audit/Cargo.toml?raw';
-import depAuditMainRs from '../../rust-clibm/plugins/clibm-dep-audit/src/main.rs?raw';
-import depAuditReadmeMd from '../../rust-clibm/plugins/clibm-dep-audit/README.md?raw';
-import depAuditInstallSh from '../../rust-clibm/plugins/clibm-dep-audit/install.sh?raw';
-import depAuditInstallPs1 from '../../rust-clibm/plugins/clibm-dep-audit/install.ps1?raw';
-import depAuditUninstallSh from '../../rust-clibm/plugins/clibm-dep-audit/uninstall.sh?raw';
-import depAuditUninstallPs1 from '../../rust-clibm/plugins/clibm-dep-audit/uninstall.ps1?raw';
-
-import exportMdCargoToml from '../../rust-clibm/plugins/clibm-export-md/Cargo.toml?raw';
-import exportMdMainRs from '../../rust-clibm/plugins/clibm-export-md/src/main.rs?raw';
-import exportMdReadmeMd from '../../rust-clibm/plugins/clibm-export-md/README.md?raw';
-import exportMdInstallSh from '../../rust-clibm/plugins/clibm-export-md/install.sh?raw';
-import exportMdInstallPs1 from '../../rust-clibm/plugins/clibm-export-md/install.ps1?raw';
-import exportMdUninstallSh from '../../rust-clibm/plugins/clibm-export-md/uninstall.sh?raw';
-import exportMdUninstallPs1 from '../../rust-clibm/plugins/clibm-export-md/uninstall.ps1?raw';
-
-import workflowLintCargoToml from '../../rust-clibm/plugins/clibm-workflow-lint/Cargo.toml?raw';
-import workflowLintMainRs from '../../rust-clibm/plugins/clibm-workflow-lint/src/main.rs?raw';
-import workflowLintReadmeMd from '../../rust-clibm/plugins/clibm-workflow-lint/README.md?raw';
-import workflowLintInstallSh from '../../rust-clibm/plugins/clibm-workflow-lint/install.sh?raw';
-import workflowLintInstallPs1 from '../../rust-clibm/plugins/clibm-workflow-lint/install.ps1?raw';
-import workflowLintUninstallSh from '../../rust-clibm/plugins/clibm-workflow-lint/uninstall.sh?raw';
-import workflowLintUninstallPs1 from '../../rust-clibm/plugins/clibm-workflow-lint/uninstall.ps1?raw';
-
-import tuiCargoToml from '../../rust-clibm/plugins/clibm-tui/Cargo.toml?raw';
-import tuiMainRs from '../../rust-clibm/plugins/clibm-tui/src/main.rs?raw';
-import tuiReadmeMd from '../../rust-clibm/plugins/clibm-tui/README.md?raw';
-import tuiInstallSh from '../../rust-clibm/plugins/clibm-tui/install.sh?raw';
-import tuiInstallPs1 from '../../rust-clibm/plugins/clibm-tui/install.ps1?raw';
-import tuiUninstallSh from '../../rust-clibm/plugins/clibm-tui/uninstall.sh?raw';
-import tuiUninstallPs1 from '../../rust-clibm/plugins/clibm-tui/uninstall.ps1?raw';
-
-import webCargoToml from '../../rust-clibm/plugins/clibm-web/Cargo.toml?raw';
-import webMainRs from '../../rust-clibm/plugins/clibm-web/src/main.rs?raw';
-import webUiHtml from '../../rust-clibm/plugins/clibm-web/src/ui.html?raw';
-import webReadmeMd from '../../rust-clibm/plugins/clibm-web/README.md?raw';
-import webInstallSh from '../../rust-clibm/plugins/clibm-web/install.sh?raw';
-import webInstallPs1 from '../../rust-clibm/plugins/clibm-web/install.ps1?raw';
-import webUninstallSh from '../../rust-clibm/plugins/clibm-web/uninstall.sh?raw';
-import webUninstallPs1 from '../../rust-clibm/plugins/clibm-web/uninstall.ps1?raw';
-
-import tplCargoToml from '../../rust-clibm/plugins/plugin-template/Cargo.toml?raw';
-import tplMainRs from '../../rust-clibm/plugins/plugin-template/src/main.rs?raw';
-import tplReadmeMd from '../../rust-clibm/plugins/plugin-template/README.md?raw';
-import tplInstallSh from '../../rust-clibm/plugins/plugin-template/install.sh?raw';
-import tplInstallPs1 from '../../rust-clibm/plugins/plugin-template/install.ps1?raw';
-import tplUninstallSh from '../../rust-clibm/plugins/plugin-template/uninstall.sh?raw';
-import tplUninstallPs1 from '../../rust-clibm/plugins/plugin-template/uninstall.ps1?raw';
 
 import {
   buildZipArchive,
@@ -124,9 +26,10 @@ export interface RustProjectFile {
     | 'CAS & Hashing'
     | 'Core Engine & Versioning'
     | 'Plugins (TUI & Web)'
-    | 'Build Scripts';
+    | 'Build Scripts'
+    | 'Tests';
   description: string;
-  language: 'rust' | 'toml' | 'markdown' | 'bash' | 'powershell' | 'html';
+  language: 'rust' | 'toml' | 'markdown' | 'bash' | 'powershell' | 'html' | 'json' | 'text';
   content: string;
   lines: number;
   isCoreOnly: boolean;
@@ -166,936 +69,578 @@ export interface DownloadablePluginPackage {
   installCommand: string;
   cliCommand: string;
   binaryInvoke: string;
+  /** Name of its source ZIP in rust-clibm/bundles.json (core + this plugin, or the plugin alone). */
+  bundleName: string;
+  /** File name of that ZIP on the bundles-latest release. */
   zipFilename: string;
   /** Plugin-specific installer choice; omitted when install.sh / install.ps1 asks nothing beyond the target directory. */
   installPrompt?: PluginInstallPromptSpec;
   files: ZipFileEntry[];
 }
 
+/** Every file under rust-clibm/ except build output, keyed by its path inside rust-clibm/. */
+const RUST_SOURCES: Record<string, string> = Object.fromEntries(
+  Object.entries(
+    import.meta.glob<string>(['../../rust-clibm/**/*', '!../../rust-clibm/**/target/**'], {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    })
+  ).map(([path, content]) => [
+    path.replace('../../rust-clibm/', ''),
+    // LF like the published ZIPs, whatever line endings this checkout uses.
+    withoutUtf8Bom(content).replace(/\r\n/g, '\n'),
+  ])
+);
+
+/** Contents of rust-clibm/<relativePath>. */
+function source(relativePath: string): string {
+  const content = RUST_SOURCES[relativePath];
+  if (content === undefined) throw new Error(`rust-clibm/${relativePath} is missing from the source registry`);
+  return content;
+}
+
+/** Rolling release that CI refreshes on every push to main. */
+export const BUNDLE_BASE_URL = 'https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest';
+
+export function bundleDownloadUrl(bundleName: string): string {
+  return `${BUNDLE_BASE_URL}/${bundleName}.zip`;
+}
+
+export const BUNDLE_CHECKSUMS_URL = `${BUNDLE_BASE_URL}/SHA256SUMS`;
+
 function countLines(str: string): number {
   return str.split('\n').length;
 }
 
-export const CORE_ONLY_CARGO_TOML = withoutUtf8Bom(cargoToml);
+/** Files that ship in the core-only ZIP: everything but plugins/ (except catalog.json) and tests/. */
+function isCorePath(relativePath: string): boolean {
+  if (relativePath === 'bundles.json') return false;
+  if (relativePath.startsWith('tests/')) return false;
+  return !relativePath.startsWith('plugins/') || relativePath === 'plugins/catalog.json';
+}
 
-export const RUST_PROJECT_FILES: RustProjectFile[] = [
-  {
-    relativePath: 'Cargo.toml',
-    zipPath: 'clibm/Cargo.toml',
+function languageOf(relativePath: string): RustProjectFile['language'] {
+  const ext = relativePath.slice(relativePath.lastIndexOf('.') + 1).toLowerCase();
+  const byExt: Record<string, RustProjectFile['language']> = {
+    rs: 'rust',
+    toml: 'toml',
+    lock: 'toml',
+    md: 'markdown',
+    sh: 'bash',
+    ps1: 'powershell',
+    html: 'html',
+    json: 'json',
+  };
+  return byExt[ext] ?? 'text';
+}
+
+function categoryOf(relativePath: string): RustProjectFile['category'] {
+  if (relativePath.startsWith('tests/') || relativePath.includes('/tests/')) return 'Tests';
+  if (relativePath.startsWith('plugins/')) return 'Plugins (TUI & Web)';
+  if (/\.(sh|ps1)$/.test(relativePath)) return 'Build Scripts';
+  if (relativePath.startsWith('src/')) return 'Core Engine & Versioning';
+  return 'Manifest & Docs';
+}
+
+function describe(relativePath: string): string {
+  if (relativePath.startsWith('plugins/')) {
+    const folder = relativePath.split('/')[1];
+    return `Part of the ${folder} plugin crate (plugins/${folder}).`;
+  }
+  if (relativePath.startsWith('tests/')) return 'End-to-end test of the clibm CLI (cargo test).';
+  return `rust-clibm/${relativePath}`;
+}
+
+/** The core's Cargo.toml as shipped in clibm-core.zip, where the core is the only workspace member. */
+export const CORE_ONLY_CARGO_TOML = source('Cargo.toml').replace(
+  /^members\s*=\s*\[[\s\S]*?\]/m,
+  'members = [\n    ".",\n]'
+);
+
+/** Files of plugins/<folder>/, manifest, README and scripts first, then sources. */
+function pluginFiles(folder: string): ZipFileEntry[] {
+  const prefix = `plugins/${folder}/`;
+  const order = ['Cargo.toml', 'README.md', 'install.sh', 'install.ps1', 'uninstall.sh', 'uninstall.ps1'];
+  const rank = (rel: string) => (order.includes(rel) ? order.indexOf(rel) : order.length);
+  return Object.keys(RUST_SOURCES)
+    .filter((p) => p.startsWith(prefix))
+    .map((p) => p.slice(prefix.length))
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+    .map((rel) => ({ path: `${folder}/${rel}`, content: RUST_SOURCES[prefix + rel] }));
+}
+
+/** Hand-written notes shown next to known files; any other file gets a generic note. */
+const FILE_NOTES: Record<string, { category: RustProjectFile['category']; description: string }> = {
+  'Cargo.toml': {
     category: 'Manifest & Docs',
     description:
       'Standalone Cargo package manifest configuring 100% pure clibm_core lib and clibm CLI binary.',
-    language: 'toml',
-    content: withoutUtf8Bom(cargoToml),
-    lines: countLines(cargoToml),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/main.rs',
-    zipPath: 'clibm/src/main.rs',
+  'src/main.rs': {
     category: 'CLI & Entrypoint',
     description:
       'Cross-platform native CLI binary entrypoint executing commands, Pure Core setup, and standalone plugin execution.',
-    language: 'rust',
-    content: withoutUtf8Bom(mainRs),
-    lines: countLines(mainRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/cli.rs',
-    zipPath: 'clibm/src/cli.rs',
+  'src/cli.rs': {
     category: 'CLI & Entrypoint',
     description:
       'Clap v4 command grammar including init (--with-defaults, --lang, --auto-commit, --install-path) and plugin install (--transport).',
-    language: 'rust',
-    content: withoutUtf8Bom(cliRs),
-    lines: countLines(cliRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/lib.rs',
-    zipPath: 'clibm/src/lib.rs',
+  'src/lib.rs': {
     category: 'CLI & Entrypoint',
-    description: 'Library crate root exposing the UI-agnostic, 100% pure clibm_core modules.',
-    language: 'rust',
-    content: withoutUtf8Bom(libRs),
-    lines: countLines(libRs),
-    isCoreOnly: true,
+    description:
+      'Library crate root exposing the UI-agnostic, 100% pure clibm_core modules.',
   },
-  {
-    relativePath: 'src/canonical.rs',
-    zipPath: 'clibm/src/canonical.rs',
+  'src/canonical.rs': {
     category: 'CAS & Hashing',
     description:
       'RFC 8785 Canonical JSON key-sorting serializer and BLAKE3 256-bit envelope hash calculation.',
-    language: 'rust',
-    content: withoutUtf8Bom(canonicalRs),
-    lines: countLines(canonicalRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/cas.rs',
-    zipPath: 'clibm/src/cas.rs',
+  'src/cas.rs': {
     category: 'CAS & Hashing',
     description:
       'Content-Addressable Storage (.clibm/objects/<shard>/<hash>.json), upward ongoing project discovery, and fsck verifier.',
-    language: 'rust',
-    content: withoutUtf8Bom(casRs),
-    lines: countLines(casRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/models.rs',
-    zipPath: 'clibm/src/models.rs',
+  'src/models.rs': {
     category: 'Core Engine & Versioning',
     description:
       'Immutable payload structs for Workspace, Project, Task, KanbanBoard, TreeSnapshot, Commit, and ClibmConfig (install_profile, language, install_path, mcp_transport).',
-    language: 'rust',
-    content: withoutUtf8Bom(modelsRs),
-    lines: countLines(modelsRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/engine.rs',
-    zipPath: 'clibm/src/engine.rs',
+  'src/engine.rs': {
     category: 'Core Engine & Versioning',
     description:
       'Headless ClibmEngine coordinating workspaces, projects, tasks, Kanban workflow rules, and portable bundles.',
-    language: 'rust',
-    content: withoutUtf8Bom(engineRs),
-    lines: countLines(engineRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/versioning.rs',
-    zipPath: 'clibm/src/versioning.rs',
+  'src/versioning.rs': {
     category: 'Core Engine & Versioning',
     description:
       'Git-inspired commit DAG traversal, structural diffing, task history extraction, and 3-way branch merging.',
-    language: 'rust',
-    content: withoutUtf8Bom(versioningRs),
-    lines: countLines(versioningRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/index.rs',
-    zipPath: 'clibm/src/index.rs',
+  'src/index.rs': {
     category: 'Core Engine & Versioning',
     description:
       'Computed secondary indices (.clibm/index/computed.json) and DFS circular dependency detector.',
-    language: 'rust',
-    content: withoutUtf8Bom(indexRs),
-    lines: countLines(indexRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'src/plugin.rs',
-    zipPath: 'clibm/src/plugin.rs',
+  'src/plugin.rs': {
     category: 'Core Engine & Versioning',
     description:
       'Pure Core plugin registry (~/.clibm/plugins/registry.json) with UTF-8 scaffolding and embedded user PATH helper templates.',
-    language: 'rust',
-    content: withoutUtf8Bom(pluginRs),
-    lines: countLines(pluginRs),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'README.md',
-    zipPath: 'clibm/README.md',
+  'README.md': {
     category: 'Manifest & Docs',
-    description: 'Build instructions, user PATH ledger reference, and CLI guide for running CLIBM and plugins on Linux and Windows.',
-    language: 'markdown',
-    content: withoutUtf8Bom(readmeMd),
-    lines: countLines(readmeMd),
-    isCoreOnly: true,
+    description:
+      'Build instructions, user PATH ledger reference, and CLI guide for running CLIBM and plugins on Linux and Windows.',
   },
-  {
-    relativePath: 'install.sh',
-    zipPath: 'clibm/install.sh',
+  'install.sh': {
     category: 'Build Scripts',
     description:
       'UTF-8 Linux/macOS interactive Core Installation Wizard (Profile, Language, Auto-Commit, Install Path, and User PATH registration with --no-modify-path).',
-    language: 'bash',
-    content: withoutUtf8Bom(installSh),
-    lines: countLines(installSh),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'install.ps1',
-    zipPath: 'clibm/install.ps1',
+  'install.ps1': {
     category: 'Build Scripts',
     description:
       'UTF-8 Windows PowerShell interactive Core Installation Wizard (Profile, Language, Auto-Commit, Custom Path, and REG_EXPAND_SZ User PATH registration with -NoModifyPath).',
-    language: 'powershell',
-    content: withoutUtf8Bom(installPs1),
-    lines: countLines(installPs1),
-    isCoreOnly: true,
   },
-  {
-    relativePath: 'update.sh',
-    zipPath: 'clibm/update.sh',
+  'update.sh': {
     category: 'Build Scripts',
-    description: 'UTF-8 Linux/macOS GitHub repository updater script supporting --repo, --branch, and --plugins.',
-    language: 'bash',
-    content: withoutUtf8Bom(updateSh),
-    lines: countLines(updateSh),
-    isCoreOnly: true,
+    description:
+      'UTF-8 Linux/macOS GitHub repository updater script supporting --repo, --branch, and --plugins.',
   },
-  {
-    relativePath: 'update.ps1',
-    zipPath: 'clibm/update.ps1',
+  'update.ps1': {
     category: 'Build Scripts',
-    description: 'UTF-8 Windows PowerShell GitHub repository updater script supporting -Repo, -Branch, and -Plugins.',
-    language: 'powershell',
-    content: withoutUtf8Bom(updatePs1),
-    lines: countLines(updatePs1),
-    isCoreOnly: true,
+    description:
+      'UTF-8 Windows PowerShell GitHub repository updater script supporting -Repo, -Branch, and -Plugins.',
   },
-  {
-    relativePath: 'uninstall.sh',
-    zipPath: 'clibm/uninstall.sh',
+  'uninstall.sh': {
     category: 'Build Scripts',
-    description: 'UTF-8 Linux/macOS uninstaller removing clibm/plugin binaries and CLIBM-added user PATH entries while preserving .clibm data unless --purge is passed.',
-    language: 'bash',
-    content: withoutUtf8Bom(uninstallSh),
-    lines: countLines(uninstallSh),
-    isCoreOnly: true,
+    description:
+      'UTF-8 Linux/macOS uninstaller removing clibm/plugin binaries and CLIBM-added user PATH entries while preserving .clibm data unless --purge is passed.',
   },
-  {
-    relativePath: 'uninstall.ps1',
-    zipPath: 'clibm/uninstall.ps1',
+  'uninstall.ps1': {
     category: 'Build Scripts',
-    description: 'UTF-8 Windows PowerShell uninstaller removing clibm/plugin binaries and CLIBM-added user PATH entries while preserving .clibm data unless -Purge is passed.',
-    language: 'powershell',
-    content: withoutUtf8Bom(uninstallPs1),
-    lines: countLines(uninstallPs1),
-    isCoreOnly: true,
+    description:
+      'UTF-8 Windows PowerShell uninstaller removing clibm/plugin binaries and CLIBM-added user PATH entries while preserving .clibm data unless -Purge is passed.',
   },
-  {
-    relativePath: 'scripts/env-path.sh',
-    zipPath: 'clibm/scripts/env-path.sh',
+  'scripts/env-path.sh': {
     category: 'Build Scripts',
-    description: 'Shared POSIX/Bash user PATH helper (~/.clibm/lib/env-path.sh) managing profile marker blocks and ~/.clibm/path-ledger reference counting.',
-    language: 'bash',
-    content: withoutUtf8Bom(envPathSh),
-    lines: countLines(envPathSh),
-    isCoreOnly: true,
+    description:
+      'Shared POSIX/Bash user PATH helper (~/.clibm/lib/env-path.sh) managing profile marker blocks and ~/.clibm/path-ledger reference counting.',
   },
-  {
-    relativePath: 'scripts/env-path.ps1',
-    zipPath: 'clibm/scripts/env-path.ps1',
+  'scripts/env-path.ps1': {
     category: 'Build Scripts',
-    description: 'Shared Windows PowerShell user PATH helper (~/.clibm/lib/env-path.ps1) managing REG_EXPAND_SZ HKCU:\\Environment Path and ~/.clibm/path-ledger.',
-    language: 'powershell',
-    content: withoutUtf8Bom(envPathPs1),
-    lines: countLines(envPathPs1),
-    isCoreOnly: true,
+    description:
+      'Shared Windows PowerShell user PATH helper (~/.clibm/lib/env-path.ps1) managing REG_EXPAND_SZ HKCU:\\Environment Path and ~/.clibm/path-ledger.',
   },
-  {
-    relativePath: 'scripts/sync-env-path.ps1',
-    zipPath: 'clibm/scripts/sync-env-path.ps1',
+  'scripts/sync-env-path.ps1': {
     category: 'Build Scripts',
-    description: 'Developer synchronization & drift-verification script (-Check) keeping embedded env-path helpers aligned across all standalone plugin scripts.',
-    language: 'powershell',
-    content: withoutUtf8Bom(syncEnvPathPs1),
-    lines: countLines(syncEnvPathPs1),
-    isCoreOnly: true,
+    description:
+      'Developer synchronization & drift-verification script (-Check) keeping embedded env-path helpers aligned across all standalone plugin scripts.',
   },
-
-  // Standalone AI MCP Plugin (plugins/clibm-mcp)
-  {
-    relativePath: 'plugins/clibm-mcp/Cargo.toml',
-    zipPath: 'clibm/plugins/clibm-mcp/Cargo.toml',
+  'plugins/clibm-mcp/Cargo.toml': {
     category: 'Plugins (TUI & Web)',
-    description: 'Standalone Cargo manifest for the self-hosted Model Context Protocol (MCP) server plugin.',
-    language: 'toml',
-    content: withoutUtf8Bom(mcpCargoToml),
-    lines: countLines(mcpCargoToml),
-    isCoreOnly: false,
+    description:
+      'Standalone Cargo manifest for the self-hosted Model Context Protocol (MCP) server plugin.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/main.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/main.rs',
+  'plugins/clibm-mcp/src/main.rs': {
     category: 'Plugins (TUI & Web)',
     description:
       'Modular MCP entry point with compile-time transport selection and dual-transport runtime.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpMainRs),
-    lines: countLines(mcpMainRs),
-    isCoreOnly: false,
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/config.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/config.rs',
+  'plugins/clibm-mcp/src/config.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Configuration loader and CLI parser for clibm-mcp.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpConfigRs),
-    lines: countLines(mcpConfigRs),
-    isCoreOnly: false,
+    description:
+      'Configuration loader and CLI parser for clibm-mcp.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/error.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/error.rs',
+  'plugins/clibm-mcp/src/error.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Standard JSON-RPC 2.0 and MCP error definitions.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpErrorRs),
-    lines: countLines(mcpErrorRs),
-    isCoreOnly: false,
+    description:
+      'Standard JSON-RPC 2.0 and MCP error definitions.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/protocol/mod.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/protocol/mod.rs',
+  'plugins/clibm-mcp/src/protocol/mod.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'MCP protocol module declaration.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpProtocolModRs),
-    lines: countLines(mcpProtocolModRs),
-    isCoreOnly: false,
+    description:
+      'MCP protocol module declaration.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/protocol/types.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/protocol/types.rs',
+  'plugins/clibm-mcp/src/protocol/types.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'JSON-RPC request, response, and protocol version definitions.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpProtocolTypesRs),
-    lines: countLines(mcpProtocolTypesRs),
-    isCoreOnly: false,
+    description:
+      'JSON-RPC request, response, and protocol version definitions.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/protocol/schema.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/protocol/schema.rs',
+  'plugins/clibm-mcp/src/protocol/schema.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'MCP schema data models for tools, resources, and prompts.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpProtocolSchemaRs),
-    lines: countLines(mcpProtocolSchemaRs),
-    isCoreOnly: false,
+    description:
+      'MCP schema data models for tools, resources, and prompts.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/backend/mod.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/backend/mod.rs',
+  'plugins/clibm-mcp/src/backend/mod.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'CLIBM backend bridge module declaration.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpBackendModRs),
-    lines: countLines(mcpBackendModRs),
-    isCoreOnly: false,
+    description:
+      'CLIBM backend bridge module declaration.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/backend/bridge.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/backend/bridge.rs',
+  'plugins/clibm-mcp/src/backend/bridge.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Bridge to the local CLIBM CLI and CAS repository.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpBackendBridgeRs),
-    lines: countLines(mcpBackendBridgeRs),
-    isCoreOnly: false,
+    description:
+      'Bridge to the local CLIBM CLI and CAS repository.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/mod.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/mod.rs',
+  'plugins/clibm-mcp/src/adapter/mod.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Shared MCP adapter orchestrating registries and request handling.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterModRs),
-    lines: countLines(mcpAdapterModRs),
-    isCoreOnly: false,
+    description:
+      'Shared MCP adapter orchestrating registries and request handling.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/discovery.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/discovery.rs',
+  'plugins/clibm-mcp/src/adapter/discovery.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Dynamic plugin tool discovery from registry.json and live reloading monitor.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterDiscoveryRs),
-    lines: countLines(mcpAdapterDiscoveryRs),
-    isCoreOnly: false,
+    description:
+      'Dynamic plugin tool discovery from registry.json and live reloading monitor.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/dispatcher.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/dispatcher.rs',
+  'plugins/clibm-mcp/src/adapter/dispatcher.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Request dispatcher routing JSON-RPC methods to registries.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterDispatcherRs),
-    lines: countLines(mcpAdapterDispatcherRs),
-    isCoreOnly: false,
+    description:
+      'Request dispatcher routing JSON-RPC methods to registries.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/permissions.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/permissions.rs',
+  'plugins/clibm-mcp/src/adapter/permissions.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Permission and sandbox policy manager for tools and resources.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterPermissionsRs),
-    lines: countLines(mcpAdapterPermissionsRs),
-    isCoreOnly: false,
+    description:
+      'Permission and sandbox policy manager for tools and resources.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/tools.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/tools.rs',
+  'plugins/clibm-mcp/src/adapter/tools.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'MCP tool registry with clibm_status, task_list, task_add, board_move, workspace_switch.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterToolsRs),
-    lines: countLines(mcpAdapterToolsRs),
-    isCoreOnly: false,
+    description:
+      'MCP tool registry with clibm_status, task_list, task_add, board_move, workspace_switch.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/validator.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/validator.rs',
+  'plugins/clibm-mcp/src/adapter/validator.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'JSON Schema validator for MCP dynamic plugin tools.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterValidatorRs),
-    lines: countLines(mcpAdapterValidatorRs),
-    isCoreOnly: false,
+    description:
+      'JSON Schema validator for MCP dynamic plugin tools.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/resources.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/resources.rs',
+  'plugins/clibm-mcp/src/adapter/resources.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'MCP resource registry for staged trees, repo config, and Kanban boards.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterResourcesRs),
-    lines: countLines(mcpAdapterResourcesRs),
-    isCoreOnly: false,
+    description:
+      'MCP resource registry for staged trees, repo config, and Kanban boards.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/adapter/prompts.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/adapter/prompts.rs',
+  'plugins/clibm-mcp/src/adapter/prompts.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'MCP prompt registry providing guided planning and commit summary templates.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpAdapterPromptsRs),
-    lines: countLines(mcpAdapterPromptsRs),
-    isCoreOnly: false,
+    description:
+      'MCP prompt registry providing guided planning and commit summary templates.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/transport/mod.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/transport/mod.rs',
+  'plugins/clibm-mcp/src/transport/mod.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Pluggable transport trait and declarations.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpTransportModRs),
-    lines: countLines(mcpTransportModRs),
-    isCoreOnly: false,
+    description:
+      'Pluggable transport trait and declarations.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/transport/stdio.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/transport/stdio.rs',
+  'plugins/clibm-mcp/src/transport/stdio.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Zero-overhead STDIO JSON-RPC 2.0 transport for IDEs and CLI agents.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpTransportStdioRs),
-    lines: countLines(mcpTransportStdioRs),
-    isCoreOnly: false,
+    description:
+      'Zero-overhead STDIO JSON-RPC 2.0 transport for IDEs and CLI agents.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/src/transport/http.rs',
-    zipPath: 'clibm/plugins/clibm-mcp/src/transport/http.rs',
+  'plugins/clibm-mcp/src/transport/http.rs': {
     category: 'Plugins (TUI & Web)',
-    description: 'Local HTTP JSON-RPC 2.0 server transport using tiny_http.',
-    language: 'rust',
-    content: withoutUtf8Bom(mcpTransportHttpRs),
-    lines: countLines(mcpTransportHttpRs),
-    isCoreOnly: false,
+    description:
+      'Local HTTP JSON-RPC 2.0 server transport using tiny_http.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/README.md',
-    zipPath: 'clibm/plugins/clibm-mcp/README.md',
+  'plugins/clibm-mcp/README.md': {
     category: 'Plugins (TUI & Web)',
-    description: 'Documentation for configuring clibm-mcp transport options (both, stdio, http) and connecting AI agents.',
-    language: 'markdown',
-    content: withoutUtf8Bom(mcpReadmeMd),
-    lines: countLines(mcpReadmeMd),
-    isCoreOnly: false,
+    description:
+      'Documentation for configuring clibm-mcp transport options (both, stdio, http) and connecting AI agents.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/install.sh',
-    zipPath: 'clibm/plugins/clibm-mcp/install.sh',
+  'plugins/clibm-mcp/install.sh': {
     category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer for clibm-mcp letting the user choose stdio (default), both, or http transport.',
-    language: 'bash',
-    content: withoutUtf8Bom(mcpInstallSh),
-    lines: countLines(mcpInstallSh),
-    isCoreOnly: false,
+    description:
+      'UTF-8 interactive Linux installer for clibm-mcp letting the user choose stdio (default), both, or http transport.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/install.ps1',
-    zipPath: 'clibm/plugins/clibm-mcp/install.ps1',
+  'plugins/clibm-mcp/install.ps1': {
     category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer for clibm-mcp letting the user choose stdio (default), both, or http.',
-    language: 'powershell',
-    content: withoutUtf8Bom(mcpInstallPs1),
-    lines: countLines(mcpInstallPs1),
-    isCoreOnly: false,
+    description:
+      'UTF-8 interactive Windows PowerShell installer for clibm-mcp letting the user choose stdio (default), both, or http.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/uninstall.sh',
-    zipPath: 'clibm/plugins/clibm-mcp/uninstall.sh',
+  'plugins/clibm-mcp/uninstall.sh': {
     category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Linux uninstaller for clibm-mcp with interactive keep/purge config choice.',
-    language: 'bash',
-    content: withoutUtf8Bom(mcpUninstallSh),
-    lines: countLines(mcpUninstallSh),
-    isCoreOnly: false,
+    description:
+      'UTF-8 Linux uninstaller for clibm-mcp with interactive keep/purge config choice.',
   },
-  {
-    relativePath: 'plugins/clibm-mcp/uninstall.ps1',
-    zipPath: 'clibm/plugins/clibm-mcp/uninstall.ps1',
+  'plugins/clibm-mcp/uninstall.ps1': {
     category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Windows PowerShell uninstaller for clibm-mcp.',
-    language: 'powershell',
-    content: withoutUtf8Bom(mcpUninstallPs1),
-    lines: countLines(mcpUninstallPs1),
-    isCoreOnly: false,
+    description:
+      'UTF-8 Windows PowerShell uninstaller for clibm-mcp.',
   },
+  'plugins/clibm-dep-audit/Cargo.toml': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone Cargo manifest for the extracted DAG & Critical Path Auditor plugin.',
+  },
+  'plugins/clibm-dep-audit/src/main.rs': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone DFS circular dependency and critical-path blocker analyzer crate.',
+  },
+  'plugins/clibm-dep-audit/README.md': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Documentation for installing and running clibm-dep-audit from plugins/clibm-dep-audit.',
+  },
+  'plugins/clibm-dep-audit/install.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Linux installer for clibm-dep-audit.',
+  },
+  'plugins/clibm-dep-audit/install.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Windows PowerShell installer for clibm-dep-audit.',
+  },
+  'plugins/clibm-dep-audit/uninstall.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Linux uninstaller for clibm-dep-audit.',
+  },
+  'plugins/clibm-dep-audit/uninstall.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Windows PowerShell uninstaller for clibm-dep-audit.',
+  },
+  'plugins/clibm-export-md/Cargo.toml': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone Cargo manifest for the extracted Markdown Sprint Exporter plugin.',
+  },
+  'plugins/clibm-export-md/src/main.rs': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone Markdown table and sprint report generator over BLAKE3 CAS snapshots.',
+  },
+  'plugins/clibm-export-md/README.md': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Documentation for installing and running clibm-export-md from plugins/clibm-export-md.',
+  },
+  'plugins/clibm-export-md/install.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Linux installer for clibm-export-md.',
+  },
+  'plugins/clibm-export-md/install.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Windows PowerShell installer for clibm-export-md.',
+  },
+  'plugins/clibm-export-md/uninstall.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Linux uninstaller for clibm-export-md.',
+  },
+  'plugins/clibm-export-md/uninstall.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Windows PowerShell uninstaller for clibm-export-md.',
+  },
+  'plugins/clibm-workflow-lint/Cargo.toml': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone Cargo manifest for the extracted Kanban WIP & Policy Linter plugin.',
+  },
+  'plugins/clibm-workflow-lint/src/main.rs': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone Kanban WIP limit, assignee policy, and dependency completion validator crate.',
+  },
+  'plugins/clibm-workflow-lint/README.md': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Documentation for installing and running clibm-workflow-lint from plugins/clibm-workflow-lint.',
+  },
+  'plugins/clibm-workflow-lint/install.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Linux installer for clibm-workflow-lint.',
+  },
+  'plugins/clibm-workflow-lint/install.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Windows PowerShell installer for clibm-workflow-lint.',
+  },
+  'plugins/clibm-workflow-lint/uninstall.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Linux uninstaller for clibm-workflow-lint.',
+  },
+  'plugins/clibm-workflow-lint/uninstall.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Windows PowerShell uninstaller for clibm-workflow-lint.',
+  },
+  'plugins/clibm-tui/Cargo.toml': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone Cargo manifest for the Ratatui + Crossterm terminal UI plugin (built from its own folder).',
+  },
+  'plugins/clibm-tui/README.md': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Documentation for building clibm-tui in its own folder and running it inside ongoing projects.',
+  },
+  'plugins/clibm-tui/src/main.rs': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Self-contained Ratatui split-pane TUI plugin attaching to ongoing .clibm projects.',
+  },
+  'plugins/clibm-tui/install.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Linux installer for clibm-tui.',
+  },
+  'plugins/clibm-tui/install.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Windows PowerShell installer for clibm-tui.',
+  },
+  'plugins/clibm-tui/uninstall.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Linux uninstaller for clibm-tui.',
+  },
+  'plugins/clibm-tui/uninstall.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Windows PowerShell uninstaller for clibm-tui.',
+  },
+  'plugins/clibm-web/Cargo.toml': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Standalone Cargo manifest for the single-binary local HTTP server and embedded web UI plugin.',
+  },
+  'plugins/clibm-web/README.md': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Documentation for building clibm-web in its own folder and running it inside ongoing projects.',
+  },
+  'plugins/clibm-web/src/main.rs': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Self-contained Rust HTTP server binding to 127.0.0.1:7878 over any ongoing .clibm project.',
+  },
+  'plugins/clibm-web/src/ui.html': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Zero-dependency self-hosted HTML/JS application embedded into the clibm-web binary via include_str!.',
+  },
+  'plugins/clibm-web/install.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Linux installer for clibm-web.',
+  },
+  'plugins/clibm-web/install.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Windows PowerShell installer for clibm-web.',
+  },
+  'plugins/clibm-web/uninstall.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Linux uninstaller for clibm-web.',
+  },
+  'plugins/clibm-web/uninstall.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Windows PowerShell uninstaller for clibm-web.',
+  },
+  'plugins/plugin-template/Cargo.toml': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Official starter Cargo manifest for creating new standalone CLIBM plugins.',
+  },
+  'plugins/plugin-template/src/main.rs': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Official starter Rust source implementing CLIBM_PLUGIN_CONTRACT_V1 JSON stdin/stdout and direct project inspection.',
+  },
+  'plugins/plugin-template/README.md': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'Developer guide for scaffolding, compiling, installing, and running custom CLIBM plugins.',
+  },
+  'plugins/plugin-template/install.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Linux installer script for the plugin template.',
+  },
+  'plugins/plugin-template/install.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 interactive Windows PowerShell installer script for the plugin template.',
+  },
+  'plugins/plugin-template/uninstall.sh': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Linux uninstaller script for removing the compiled template plugin binary.',
+  },
+  'plugins/plugin-template/uninstall.ps1': {
+    category: 'Plugins (TUI & Web)',
+    description:
+      'UTF-8 Windows PowerShell uninstaller script for removing the compiled template plugin binary.',
+  },
+};
 
+export const RUST_PROJECT_FILES: RustProjectFile[] = Object.keys(RUST_SOURCES)
+  .sort((a, b) => fileRank(a) - fileRank(b) || a.localeCompare(b))
+  .map((relativePath) => {
+    const content = RUST_SOURCES[relativePath];
+    const note = FILE_NOTES[relativePath];
+    return {
+      relativePath,
+      zipPath: `clibm-workspace/${relativePath}`,
+      category: note?.category ?? categoryOf(relativePath),
+      description: note?.description ?? describe(relativePath),
+      language: languageOf(relativePath),
+      content,
+      lines: countLines(content),
+      isCoreOnly: isCorePath(relativePath),
+    };
+  });
 
-  // Extracted Default Plugin 1: plugins/clibm-dep-audit
-  {
-    relativePath: 'plugins/clibm-dep-audit/Cargo.toml',
-    zipPath: 'clibm/plugins/clibm-dep-audit/Cargo.toml',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Cargo manifest for the extracted DAG & Critical Path Auditor plugin.',
-    language: 'toml',
-    content: withoutUtf8Bom(depAuditCargoToml),
-    lines: countLines(depAuditCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-dep-audit/src/main.rs',
-    zipPath: 'clibm/plugins/clibm-dep-audit/src/main.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone DFS circular dependency and critical-path blocker analyzer crate.',
-    language: 'rust',
-    content: withoutUtf8Bom(depAuditMainRs),
-    lines: countLines(depAuditMainRs),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-dep-audit/README.md',
-    zipPath: 'clibm/plugins/clibm-dep-audit/README.md',
-    category: 'Plugins (TUI & Web)',
-    description: 'Documentation for installing and running clibm-dep-audit from plugins/clibm-dep-audit.',
-    language: 'markdown',
-    content: withoutUtf8Bom(depAuditReadmeMd),
-    lines: countLines(depAuditReadmeMd),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-dep-audit/install.sh',
-    zipPath: 'clibm/plugins/clibm-dep-audit/install.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer for clibm-dep-audit.',
-    language: 'bash',
-    content: withoutUtf8Bom(depAuditInstallSh),
-    lines: countLines(depAuditInstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-dep-audit/install.ps1',
-    zipPath: 'clibm/plugins/clibm-dep-audit/install.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer for clibm-dep-audit.',
-    language: 'powershell',
-    content: withoutUtf8Bom(depAuditInstallPs1),
-    lines: countLines(depAuditInstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-dep-audit/uninstall.sh',
-    zipPath: 'clibm/plugins/clibm-dep-audit/uninstall.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Linux uninstaller for clibm-dep-audit.',
-    language: 'bash',
-    content: withoutUtf8Bom(depAuditUninstallSh),
-    lines: countLines(depAuditUninstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-dep-audit/uninstall.ps1',
-    zipPath: 'clibm/plugins/clibm-dep-audit/uninstall.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Windows PowerShell uninstaller for clibm-dep-audit.',
-    language: 'powershell',
-    content: withoutUtf8Bom(depAuditUninstallPs1),
-    lines: countLines(depAuditUninstallPs1),
-    isCoreOnly: false,
-  },
-
-  // Extracted Default Plugin 2: plugins/clibm-export-md
-  {
-    relativePath: 'plugins/clibm-export-md/Cargo.toml',
-    zipPath: 'clibm/plugins/clibm-export-md/Cargo.toml',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Cargo manifest for the extracted Markdown Sprint Exporter plugin.',
-    language: 'toml',
-    content: withoutUtf8Bom(exportMdCargoToml),
-    lines: countLines(exportMdCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-export-md/src/main.rs',
-    zipPath: 'clibm/plugins/clibm-export-md/src/main.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Markdown table and sprint report generator over BLAKE3 CAS snapshots.',
-    language: 'rust',
-    content: withoutUtf8Bom(exportMdMainRs),
-    lines: countLines(exportMdMainRs),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-export-md/README.md',
-    zipPath: 'clibm/plugins/clibm-export-md/README.md',
-    category: 'Plugins (TUI & Web)',
-    description: 'Documentation for installing and running clibm-export-md from plugins/clibm-export-md.',
-    language: 'markdown',
-    content: withoutUtf8Bom(exportMdReadmeMd),
-    lines: countLines(exportMdReadmeMd),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-export-md/install.sh',
-    zipPath: 'clibm/plugins/clibm-export-md/install.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer for clibm-export-md.',
-    language: 'bash',
-    content: withoutUtf8Bom(exportMdInstallSh),
-    lines: countLines(exportMdInstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-export-md/install.ps1',
-    zipPath: 'clibm/plugins/clibm-export-md/install.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer for clibm-export-md.',
-    language: 'powershell',
-    content: withoutUtf8Bom(exportMdInstallPs1),
-    lines: countLines(exportMdInstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-export-md/uninstall.sh',
-    zipPath: 'clibm/plugins/clibm-export-md/uninstall.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Linux uninstaller for clibm-export-md.',
-    language: 'bash',
-    content: withoutUtf8Bom(exportMdUninstallSh),
-    lines: countLines(exportMdUninstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-export-md/uninstall.ps1',
-    zipPath: 'clibm/plugins/clibm-export-md/uninstall.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Windows PowerShell uninstaller for clibm-export-md.',
-    language: 'powershell',
-    content: withoutUtf8Bom(exportMdUninstallPs1),
-    lines: countLines(exportMdUninstallPs1),
-    isCoreOnly: false,
-  },
-
-  // Extracted Default Plugin 3: plugins/clibm-workflow-lint
-  {
-    relativePath: 'plugins/clibm-workflow-lint/Cargo.toml',
-    zipPath: 'clibm/plugins/clibm-workflow-lint/Cargo.toml',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Cargo manifest for the extracted Kanban WIP & Policy Linter plugin.',
-    language: 'toml',
-    content: withoutUtf8Bom(workflowLintCargoToml),
-    lines: countLines(workflowLintCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-workflow-lint/src/main.rs',
-    zipPath: 'clibm/plugins/clibm-workflow-lint/src/main.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Kanban WIP limit, assignee policy, and dependency completion validator crate.',
-    language: 'rust',
-    content: withoutUtf8Bom(workflowLintMainRs),
-    lines: countLines(workflowLintMainRs),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-workflow-lint/README.md',
-    zipPath: 'clibm/plugins/clibm-workflow-lint/README.md',
-    category: 'Plugins (TUI & Web)',
-    description: 'Documentation for installing and running clibm-workflow-lint from plugins/clibm-workflow-lint.',
-    language: 'markdown',
-    content: withoutUtf8Bom(workflowLintReadmeMd),
-    lines: countLines(workflowLintReadmeMd),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-workflow-lint/install.sh',
-    zipPath: 'clibm/plugins/clibm-workflow-lint/install.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer for clibm-workflow-lint.',
-    language: 'bash',
-    content: withoutUtf8Bom(workflowLintInstallSh),
-    lines: countLines(workflowLintInstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-workflow-lint/install.ps1',
-    zipPath: 'clibm/plugins/clibm-workflow-lint/install.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer for clibm-workflow-lint.',
-    language: 'powershell',
-    content: withoutUtf8Bom(workflowLintInstallPs1),
-    lines: countLines(workflowLintInstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-workflow-lint/uninstall.sh',
-    zipPath: 'clibm/plugins/clibm-workflow-lint/uninstall.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Linux uninstaller for clibm-workflow-lint.',
-    language: 'bash',
-    content: withoutUtf8Bom(workflowLintUninstallSh),
-    lines: countLines(workflowLintUninstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-workflow-lint/uninstall.ps1',
-    zipPath: 'clibm/plugins/clibm-workflow-lint/uninstall.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Windows PowerShell uninstaller for clibm-workflow-lint.',
-    language: 'powershell',
-    content: withoutUtf8Bom(workflowLintUninstallPs1),
-    lines: countLines(workflowLintUninstallPs1),
-    isCoreOnly: false,
-  },
-
-  // TUI & Web Plugins
-  {
-    relativePath: 'plugins/clibm-tui/Cargo.toml',
-    zipPath: 'clibm/plugins/clibm-tui/Cargo.toml',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Cargo manifest for the Ratatui + Crossterm terminal UI plugin (built from its own folder).',
-    language: 'toml',
-    content: withoutUtf8Bom(tuiCargoToml),
-    lines: countLines(tuiCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-tui/README.md',
-    zipPath: 'clibm/plugins/clibm-tui/README.md',
-    category: 'Plugins (TUI & Web)',
-    description: 'Documentation for building clibm-tui in its own folder and running it inside ongoing projects.',
-    language: 'markdown',
-    content: withoutUtf8Bom(tuiReadmeMd),
-    lines: countLines(tuiReadmeMd),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-tui/src/main.rs',
-    zipPath: 'clibm/plugins/clibm-tui/src/main.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Self-contained Ratatui split-pane TUI plugin attaching to ongoing .clibm projects.',
-    language: 'rust',
-    content: withoutUtf8Bom(tuiMainRs),
-    lines: countLines(tuiMainRs),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-tui/install.sh',
-    zipPath: 'clibm/plugins/clibm-tui/install.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer for clibm-tui.',
-    language: 'bash',
-    content: withoutUtf8Bom(tuiInstallSh),
-    lines: countLines(tuiInstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-tui/install.ps1',
-    zipPath: 'clibm/plugins/clibm-tui/install.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer for clibm-tui.',
-    language: 'powershell',
-    content: withoutUtf8Bom(tuiInstallPs1),
-    lines: countLines(tuiInstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-tui/uninstall.sh',
-    zipPath: 'clibm/plugins/clibm-tui/uninstall.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Linux uninstaller for clibm-tui.',
-    language: 'bash',
-    content: withoutUtf8Bom(tuiUninstallSh),
-    lines: countLines(tuiUninstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-tui/uninstall.ps1',
-    zipPath: 'clibm/plugins/clibm-tui/uninstall.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Windows PowerShell uninstaller for clibm-tui.',
-    language: 'powershell',
-    content: withoutUtf8Bom(tuiUninstallPs1),
-    lines: countLines(tuiUninstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/Cargo.toml',
-    zipPath: 'clibm/plugins/clibm-web/Cargo.toml',
-    category: 'Plugins (TUI & Web)',
-    description: 'Standalone Cargo manifest for the single-binary local HTTP server and embedded web UI plugin.',
-    language: 'toml',
-    content: withoutUtf8Bom(webCargoToml),
-    lines: countLines(webCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/README.md',
-    zipPath: 'clibm/plugins/clibm-web/README.md',
-    category: 'Plugins (TUI & Web)',
-    description: 'Documentation for building clibm-web in its own folder and running it inside ongoing projects.',
-    language: 'markdown',
-    content: withoutUtf8Bom(webReadmeMd),
-    lines: countLines(webReadmeMd),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/src/main.rs',
-    zipPath: 'clibm/plugins/clibm-web/src/main.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Self-contained Rust HTTP server binding to 127.0.0.1:7878 over any ongoing .clibm project.',
-    language: 'rust',
-    content: withoutUtf8Bom(webMainRs),
-    lines: countLines(webMainRs),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/src/ui.html',
-    zipPath: 'clibm/plugins/clibm-web/src/ui.html',
-    category: 'Plugins (TUI & Web)',
-    description: 'Zero-dependency self-hosted HTML/JS application embedded into the clibm-web binary via include_str!.',
-    language: 'html',
-    content: withoutUtf8Bom(webUiHtml),
-    lines: countLines(webUiHtml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/install.sh',
-    zipPath: 'clibm/plugins/clibm-web/install.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer for clibm-web.',
-    language: 'bash',
-    content: withoutUtf8Bom(webInstallSh),
-    lines: countLines(webInstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/install.ps1',
-    zipPath: 'clibm/plugins/clibm-web/install.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer for clibm-web.',
-    language: 'powershell',
-    content: withoutUtf8Bom(webInstallPs1),
-    lines: countLines(webInstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/uninstall.sh',
-    zipPath: 'clibm/plugins/clibm-web/uninstall.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Linux uninstaller for clibm-web.',
-    language: 'bash',
-    content: withoutUtf8Bom(webUninstallSh),
-    lines: countLines(webUninstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/clibm-web/uninstall.ps1',
-    zipPath: 'clibm/plugins/clibm-web/uninstall.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Windows PowerShell uninstaller for clibm-web.',
-    language: 'powershell',
-    content: withoutUtf8Bom(webUninstallPs1),
-    lines: countLines(webUninstallPs1),
-    isCoreOnly: false,
-  },
-
-  // Plugin Template
-  {
-    relativePath: 'plugins/plugin-template/Cargo.toml',
-    zipPath: 'clibm/plugins/plugin-template/Cargo.toml',
-    category: 'Plugins (TUI & Web)',
-    description: 'Official starter Cargo manifest for creating new standalone CLIBM plugins.',
-    language: 'toml',
-    content: withoutUtf8Bom(tplCargoToml),
-    lines: countLines(tplCargoToml),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/plugin-template/src/main.rs',
-    zipPath: 'clibm/plugins/plugin-template/src/main.rs',
-    category: 'Plugins (TUI & Web)',
-    description: 'Official starter Rust source implementing CLIBM_PLUGIN_CONTRACT_V1 JSON stdin/stdout and direct project inspection.',
-    language: 'rust',
-    content: withoutUtf8Bom(tplMainRs),
-    lines: countLines(tplMainRs),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/plugin-template/README.md',
-    zipPath: 'clibm/plugins/plugin-template/README.md',
-    category: 'Plugins (TUI & Web)',
-    description: 'Developer guide for scaffolding, compiling, installing, and running custom CLIBM plugins.',
-    language: 'markdown',
-    content: withoutUtf8Bom(tplReadmeMd),
-    lines: countLines(tplReadmeMd),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/plugin-template/install.sh',
-    zipPath: 'clibm/plugins/plugin-template/install.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Linux installer script for the plugin template.',
-    language: 'bash',
-    content: withoutUtf8Bom(tplInstallSh),
-    lines: countLines(tplInstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/plugin-template/install.ps1',
-    zipPath: 'clibm/plugins/plugin-template/install.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 interactive Windows PowerShell installer script for the plugin template.',
-    language: 'powershell',
-    content: withoutUtf8Bom(tplInstallPs1),
-    lines: countLines(tplInstallPs1),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/plugin-template/uninstall.sh',
-    zipPath: 'clibm/plugins/plugin-template/uninstall.sh',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Linux uninstaller script for removing the compiled template plugin binary.',
-    language: 'bash',
-    content: withoutUtf8Bom(tplUninstallSh),
-    lines: countLines(tplUninstallSh),
-    isCoreOnly: false,
-  },
-  {
-    relativePath: 'plugins/plugin-template/uninstall.ps1',
-    zipPath: 'clibm/plugins/plugin-template/uninstall.ps1',
-    category: 'Plugins (TUI & Web)',
-    description: 'UTF-8 Windows PowerShell uninstaller script for removing the compiled template plugin binary.',
-    language: 'powershell',
-    content: withoutUtf8Bom(tplUninstallPs1),
-    lines: countLines(tplUninstallPs1),
-    isCoreOnly: false,
-  },
-];
+function fileRank(relativePath: string): number {
+  const i = Object.keys(FILE_NOTES).indexOf(relativePath);
+  if (i !== -1) return i;
+  return isCorePath(relativePath) ? 1000 : 2000;
+}
 
 export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
   {
@@ -1109,11 +654,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     architectureNotes:
       'Modular crate in plugins/clibm-mcp. Features compile-time transport gating (transport-stdio, transport-http) with a decoupled Shared Adapter (ToolRegistry, ResourceRegistry, PromptRegistry, PermissionManager, RequestDispatcher). All install/uninstall scripts are UTF-8 encoded.',
     stack: 'Rust 2021 · MCP 2024-11-05 · Modular Transports (stdio / tiny_http) · UTF-8',
-    hooks: ['mcp-stdio', 'mcp-http-sse', 'on-ai-tool-call'],
+    hooks: ['mcp-stdio', 'mcp-http'],
     installCommand: 'cd plugins/clibm-mcp && ./install.sh --transport both',
     cliCommand: 'clibm plugin run mcp',
     binaryInvoke: 'clibm-mcp',
-    zipFilename: 'clibm-mcp-v0.2.0.zip',
+    bundleName: 'clibm-mcp',
+    zipFilename: 'clibm-mcp.zip',
     installPrompt: {
       flagName: '--transport',
       ps1ParamName: '-Transport',
@@ -1139,33 +685,7 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
         },
       ],
     },
-    files: [
-      { path: 'clibm-mcp/Cargo.toml', content: withoutUtf8Bom(mcpCargoToml) },
-      { path: 'clibm-mcp/README.md', content: withoutUtf8Bom(mcpReadmeMd) },
-      { path: 'clibm-mcp/install.sh', content: withoutUtf8Bom(mcpInstallSh) },
-      { path: 'clibm-mcp/install.ps1', content: withoutUtf8Bom(mcpInstallPs1) },
-      { path: 'clibm-mcp/uninstall.sh', content: withoutUtf8Bom(mcpUninstallSh) },
-      { path: 'clibm-mcp/uninstall.ps1', content: withoutUtf8Bom(mcpUninstallPs1) },
-      { path: 'clibm-mcp/src/main.rs', content: withoutUtf8Bom(mcpMainRs) },
-      { path: 'clibm-mcp/src/config.rs', content: withoutUtf8Bom(mcpConfigRs) },
-      { path: 'clibm-mcp/src/error.rs', content: withoutUtf8Bom(mcpErrorRs) },
-      { path: 'clibm-mcp/src/protocol/mod.rs', content: withoutUtf8Bom(mcpProtocolModRs) },
-      { path: 'clibm-mcp/src/protocol/types.rs', content: withoutUtf8Bom(mcpProtocolTypesRs) },
-      { path: 'clibm-mcp/src/protocol/schema.rs', content: withoutUtf8Bom(mcpProtocolSchemaRs) },
-      { path: 'clibm-mcp/src/backend/mod.rs', content: withoutUtf8Bom(mcpBackendModRs) },
-      { path: 'clibm-mcp/src/backend/bridge.rs', content: withoutUtf8Bom(mcpBackendBridgeRs) },
-      { path: 'clibm-mcp/src/adapter/mod.rs', content: withoutUtf8Bom(mcpAdapterModRs) },
-      { path: 'clibm-mcp/src/adapter/discovery.rs', content: withoutUtf8Bom(mcpAdapterDiscoveryRs) },
-      { path: 'clibm-mcp/src/adapter/dispatcher.rs', content: withoutUtf8Bom(mcpAdapterDispatcherRs) },
-      { path: 'clibm-mcp/src/adapter/permissions.rs', content: withoutUtf8Bom(mcpAdapterPermissionsRs) },
-      { path: 'clibm-mcp/src/adapter/tools.rs', content: withoutUtf8Bom(mcpAdapterToolsRs) },
-      { path: 'clibm-mcp/src/adapter/validator.rs', content: withoutUtf8Bom(mcpAdapterValidatorRs) },
-      { path: 'clibm-mcp/src/adapter/resources.rs', content: withoutUtf8Bom(mcpAdapterResourcesRs) },
-      { path: 'clibm-mcp/src/adapter/prompts.rs', content: withoutUtf8Bom(mcpAdapterPromptsRs) },
-      { path: 'clibm-mcp/src/transport/mod.rs', content: withoutUtf8Bom(mcpTransportModRs) },
-      { path: 'clibm-mcp/src/transport/stdio.rs', content: withoutUtf8Bom(mcpTransportStdioRs) },
-      { path: 'clibm-mcp/src/transport/http.rs', content: withoutUtf8Bom(mcpTransportHttpRs) },
-    ],
+    files: pluginFiles('clibm-mcp'),
   },
   {
     id: 'clibm-dep-audit',
@@ -1178,11 +698,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     architectureNotes:
       'Standalone Cargo crate in plugins/clibm-dep-audit. Install from its folder via ./install.sh (or select Core + Default Plugins during core installation), then run via `clibm plugin run dep-audit`.',
     stack: 'Rust 2021 · DFS Cycle Detector · CLIBM_PLUGIN_CONTRACT_V1 · UTF-8',
-    hooks: ['pre-commit', 'on-task-depend'],
+    hooks: ['on-task-depend'],
     installCommand: 'cd plugins/clibm-dep-audit && ./install.sh',
     cliCommand: 'clibm plugin run dep-audit',
     binaryInvoke: 'clibm-dep-audit',
-    zipFilename: 'clibm-dep-audit-v0.1.0.zip',
+    bundleName: 'clibm-dep-audit',
+    zipFilename: 'clibm-dep-audit.zip',
     installPrompt: {
       flagName: '--hooks',
       ps1ParamName: '-Hooks',
@@ -1203,15 +724,7 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
         },
       ],
     },
-    files: [
-      { path: 'clibm-dep-audit/Cargo.toml', content: withoutUtf8Bom(depAuditCargoToml) },
-      { path: 'clibm-dep-audit/README.md', content: withoutUtf8Bom(depAuditReadmeMd) },
-      { path: 'clibm-dep-audit/install.sh', content: withoutUtf8Bom(depAuditInstallSh) },
-      { path: 'clibm-dep-audit/install.ps1', content: withoutUtf8Bom(depAuditInstallPs1) },
-      { path: 'clibm-dep-audit/uninstall.sh', content: withoutUtf8Bom(depAuditUninstallSh) },
-      { path: 'clibm-dep-audit/uninstall.ps1', content: withoutUtf8Bom(depAuditUninstallPs1) },
-      { path: 'clibm-dep-audit/src/main.rs', content: withoutUtf8Bom(depAuditMainRs) },
-    ],
+    files: pluginFiles('clibm-dep-audit'),
   },
   {
     id: 'clibm-export-md',
@@ -1224,11 +737,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     architectureNotes:
       'Standalone Cargo crate in plugins/clibm-export-md. Reads canonical task and board payloads from .clibm/objects without mutating state.',
     stack: 'Rust 2021 · Canonical JSON Reader · CLIBM_PLUGIN_CONTRACT_V1 · UTF-8',
-    hooks: ['on-export', 'post-commit'],
+    hooks: ['on-export'],
     installCommand: 'cd plugins/clibm-export-md && ./install.sh',
     cliCommand: 'clibm plugin run export-md',
     binaryInvoke: 'clibm-export-md',
-    zipFilename: 'clibm-export-md-v0.1.0.zip',
+    bundleName: 'clibm-export-md',
+    zipFilename: 'clibm-export-md.zip',
     installPrompt: {
       flagName: '--hooks',
       ps1ParamName: '-Hooks',
@@ -1249,15 +763,7 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
         },
       ],
     },
-    files: [
-      { path: 'clibm-export-md/Cargo.toml', content: withoutUtf8Bom(exportMdCargoToml) },
-      { path: 'clibm-export-md/README.md', content: withoutUtf8Bom(exportMdReadmeMd) },
-      { path: 'clibm-export-md/install.sh', content: withoutUtf8Bom(exportMdInstallSh) },
-      { path: 'clibm-export-md/install.ps1', content: withoutUtf8Bom(exportMdInstallPs1) },
-      { path: 'clibm-export-md/uninstall.sh', content: withoutUtf8Bom(exportMdUninstallSh) },
-      { path: 'clibm-export-md/uninstall.ps1', content: withoutUtf8Bom(exportMdUninstallPs1) },
-      { path: 'clibm-export-md/src/main.rs', content: withoutUtf8Bom(exportMdMainRs) },
-    ],
+    files: pluginFiles('clibm-export-md'),
   },
   {
     id: 'clibm-workflow-lint',
@@ -1268,13 +774,14 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     summary:
       'Extracted from core into plugins/clibm-workflow-lint: enforces Kanban column Work-In-Progress (WIP) limits, assignee requirements, and unblocked dependency policies.',
     architectureNotes:
-      'Standalone Cargo crate in plugins/clibm-workflow-lint. Hooks into pre-move and pre-commit events to validate workflow invariants defined in KanbanBoardPayload.',
+      'Standalone Cargo crate in plugins/clibm-workflow-lint. Runs on post-commit (or only on demand) to validate the workflow rules defined in KanbanBoardPayload.',
     stack: 'Rust 2021 · Workflow Policy Engine · CLIBM_PLUGIN_CONTRACT_V1 · UTF-8',
-    hooks: ['pre-move', 'pre-commit'],
+    hooks: ['post-commit'],
     installCommand: 'cd plugins/clibm-workflow-lint && ./install.sh',
     cliCommand: 'clibm plugin run workflow-lint',
     binaryInvoke: 'clibm-workflow-lint',
-    zipFilename: 'clibm-workflow-lint-v0.1.0.zip',
+    bundleName: 'clibm-workflow-lint',
+    zipFilename: 'clibm-workflow-lint.zip',
     installPrompt: {
       flagName: '--hooks',
       ps1ParamName: '-Hooks',
@@ -1295,15 +802,7 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
         },
       ],
     },
-    files: [
-      { path: 'clibm-workflow-lint/Cargo.toml', content: withoutUtf8Bom(workflowLintCargoToml) },
-      { path: 'clibm-workflow-lint/README.md', content: withoutUtf8Bom(workflowLintReadmeMd) },
-      { path: 'clibm-workflow-lint/install.sh', content: withoutUtf8Bom(workflowLintInstallSh) },
-      { path: 'clibm-workflow-lint/install.ps1', content: withoutUtf8Bom(workflowLintInstallPs1) },
-      { path: 'clibm-workflow-lint/uninstall.sh', content: withoutUtf8Bom(workflowLintUninstallSh) },
-      { path: 'clibm-workflow-lint/uninstall.ps1', content: withoutUtf8Bom(workflowLintUninstallPs1) },
-      { path: 'clibm-workflow-lint/src/main.rs', content: withoutUtf8Bom(workflowLintMainRs) },
-    ],
+    files: pluginFiles('clibm-workflow-lint'),
   },
   {
     id: 'clibm-tui',
@@ -1314,24 +813,17 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     summary:
       'Standalone Ratatui + Crossterm Terminal User Interface crate built from its own folder and executed inside any ongoing .clibm project.',
     architectureNotes:
-      'Self-contained Cargo crate with zero relative path coupling. Install from inside plugins/clibm-tui via ./install.sh (or clibm plugin install .), then run inside any ongoing project via `clibm plugin run tui` or `clibm-tui`.',
+      'Cargo crate in plugins/clibm-tui that builds against the core library (its ZIP ships the core with it). Install from inside plugins/clibm-tui via ./install.sh (or clibm plugin install .), then run inside any ongoing project via `clibm plugin run tui` or `clibm-tui`.',
     stack: 'Rust 2021 · ratatui 0.29 · crossterm 0.28 · blake3 1.5 · UTF-8',
-    hooks: ['interactive-tui', 'on-board-move', 'pre-commit'],
+    hooks: ['interactive-tui'],
     installCommand: 'cd plugins/clibm-tui && ./install.sh',
     cliCommand: 'clibm plugin run tui',
     binaryInvoke: 'clibm-tui',
-    zipFilename: 'clibm-tui-v0.1.0.zip',
+    bundleName: 'clibm-tui',
+    zipFilename: 'clibm-tui.zip',
     // No installPrompt: the TUI always accepts both Vim keys (h/j/k/l) and arrow keys,
     // so install.sh / install.ps1 only ask for the target directory.
-    files: [
-      { path: 'clibm-tui/Cargo.toml', content: withoutUtf8Bom(tuiCargoToml) },
-      { path: 'clibm-tui/README.md', content: withoutUtf8Bom(tuiReadmeMd) },
-      { path: 'clibm-tui/install.sh', content: withoutUtf8Bom(tuiInstallSh) },
-      { path: 'clibm-tui/install.ps1', content: withoutUtf8Bom(tuiInstallPs1) },
-      { path: 'clibm-tui/uninstall.sh', content: withoutUtf8Bom(tuiUninstallSh) },
-      { path: 'clibm-tui/uninstall.ps1', content: withoutUtf8Bom(tuiUninstallPs1) },
-      { path: 'clibm-tui/src/main.rs', content: withoutUtf8Bom(tuiMainRs) },
-    ],
+    files: pluginFiles('clibm-tui'),
   },
   {
     id: 'clibm-web',
@@ -1344,11 +836,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     architectureNotes:
       'Embeds ui.html at compile time via include_str! and discovers the ongoing .clibm repository in the current or parent directory. Install from plugins/clibm-web via ./install.sh, then run inside your project via `clibm plugin run web` or `clibm-web --port 7878`.',
     stack: 'Rust 2021 · tiny_http 0.12 · blake3 1.5 · Embedded HTML5 · UTF-8',
-    hooks: ['http-bridge', 'on-state-query', 'on-task-mutate'],
+    hooks: ['http-bridge'],
     installCommand: 'cd plugins/clibm-web && ./install.sh',
     cliCommand: 'clibm plugin run web -- --port 7878',
     binaryInvoke: 'clibm-web --port 7878',
-    zipFilename: 'clibm-web-v0.1.0.zip',
+    bundleName: 'clibm-web',
+    zipFilename: 'clibm-web.zip',
     installPrompt: {
       flagName: '--port',
       ps1ParamName: '-Port',
@@ -1369,16 +862,7 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
         },
       ],
     },
-    files: [
-      { path: 'clibm-web/Cargo.toml', content: withoutUtf8Bom(webCargoToml) },
-      { path: 'clibm-web/README.md', content: withoutUtf8Bom(webReadmeMd) },
-      { path: 'clibm-web/install.sh', content: withoutUtf8Bom(webInstallSh) },
-      { path: 'clibm-web/install.ps1', content: withoutUtf8Bom(webInstallPs1) },
-      { path: 'clibm-web/uninstall.sh', content: withoutUtf8Bom(webUninstallSh) },
-      { path: 'clibm-web/uninstall.ps1', content: withoutUtf8Bom(webUninstallPs1) },
-      { path: 'clibm-web/src/main.rs', content: withoutUtf8Bom(webMainRs) },
-      { path: 'clibm-web/src/ui.html', content: withoutUtf8Bom(webUiHtml) },
-    ],
+    files: pluginFiles('clibm-web'),
   },
   {
     id: 'plugin-template',
@@ -1391,11 +875,12 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
     architectureNotes:
       'Use `clibm plugin new <name>` or customize this template directly to create new CLIBM extensions in under 60 seconds. Includes UTF-8 encoded Cargo.toml, src/main.rs, README.md, install.sh, install.ps1, uninstall.sh, and uninstall.ps1.',
     stack: 'Rust 2021 · serde_json · CLIBM_PLUGIN_CONTRACT_V1 · UTF-8',
-    hooks: ['pre-commit', 'post-commit', 'on-task-move', 'on-workspace-switch'],
+    hooks: ['pre-commit', 'on-task-move'],
     installCommand: 'cd plugins/plugin-template && ./install.sh',
     cliCommand: 'clibm plugin new my-plugin',
     binaryInvoke: 'clibm plugin run clibm-plugin-template',
-    zipFilename: 'clibm-plugin-template-v0.1.0.zip',
+    bundleName: 'clibm-plugin-template',
+    zipFilename: 'clibm-plugin-template.zip',
     installPrompt: {
       flagName: '--hooks',
       ps1ParamName: '-Hooks',
@@ -1417,21 +902,31 @@ export const OFFICIAL_PLUGIN_PACKAGES: DownloadablePluginPackage[] = [
         {
           value: 'all-hooks',
           label: '3) All Lifecycle Hooks',
-          detail: 'Subscribe to pre-commit, post-commit, on-task-move, on-workspace-switch, on-export',
+          detail: 'Subscribe to pre-commit, post-commit, pre-move, on-task-move, on-task-depend, on-workspace-switch, on-export',
         },
       ],
     },
-    files: [
-      { path: 'plugin-template/Cargo.toml', content: withoutUtf8Bom(tplCargoToml) },
-      { path: 'plugin-template/README.md', content: withoutUtf8Bom(tplReadmeMd) },
-      { path: 'plugin-template/src/main.rs', content: withoutUtf8Bom(tplMainRs) },
-      { path: 'plugin-template/install.sh', content: withoutUtf8Bom(tplInstallSh) },
-      { path: 'plugin-template/install.ps1', content: withoutUtf8Bom(tplInstallPs1) },
-      { path: 'plugin-template/uninstall.sh', content: withoutUtf8Bom(tplUninstallSh) },
-      { path: 'plugin-template/uninstall.ps1', content: withoutUtf8Bom(tplUninstallPs1) },
-    ],
+    files: pluginFiles('plugin-template'),
   },
 ];
+
+/**
+ * The template's Cargo.toml for a crate that lives outside the CLIBM repository: drops the
+ * [dev-dependencies] on the core (path "../..", only used by the template's own tests, which are
+ * not generated) and makes the crate its own workspace root, like `clibm plugin new` does.
+ */
+function standaloneTemplateCargoToml(toml: string): string {
+  const lines = toml.split('\n');
+  const start = lines.findIndex((l) => l.trim() === '[dev-dependencies]');
+  if (start !== -1) {
+    let first = start;
+    while (first > 0 && lines[first - 1].trim().startsWith('#')) first--;
+    let end = start + 1;
+    while (end < lines.length && !lines[end].trim().startsWith('[')) end++;
+    lines.splice(first, end - first);
+  }
+  return `${lines.join('\n').trimEnd()}\n\n# Its own workspace, so it builds wherever it is unpacked.\n[workspace]\n`;
+}
 
 /**
  * Dynamically generates the UTF-8 encoded source and installation/uninstallation
@@ -1454,7 +949,7 @@ export function buildCustomPluginTemplateFiles(
   const cleanHooks = hooks.length > 0 ? hooks : ['pre-commit', 'on-task-move'];
 
   const customCargoToml = withoutUtf8Bom(
-    tplCargoToml
+    standaloneTemplateCargoToml(source('plugins/plugin-template/Cargo.toml'))
       .replace(/clibm-plugin-template/g, crateName)
       .replace(
         'Official starter template for building standalone CLIBM plugins in Rust',
@@ -1463,7 +958,7 @@ export function buildCustomPluginTemplateFiles(
   );
 
   const customMainRs = withoutUtf8Bom(
-    tplMainRs
+    source('plugins/plugin-template/src/main.rs')
       .replace(/clibm-plugin-template/g, crateName)
       .replace(
         '//! CLIBM Official Plugin Starter Template',
@@ -1480,19 +975,19 @@ export function buildCustomPluginTemplateFiles(
   const hooksPs1 = cleanHooks.map((h) => `"${h}"`).join(', ');
 
   const customInstallSh = withoutUtf8Bom(
-    tplInstallSh
+    source('plugins/plugin-template/install.sh')
       .replace(/clibm-plugin-template/g, crateName)
       .replace('TPL_HOOKS="pre-commit,on-task-move"', `TPL_HOOKS="${hooksCsv}"`)
       .replace('PLUGIN_DESC="Standalone CLIBM plugin (${BIN_NAME})"', `PLUGIN_DESC="${safeDesc}"`)
   );
   const customInstallPs1 = withoutUtf8Bom(
-    tplInstallPs1
+    source('plugins/plugin-template/install.ps1')
       .replace(/clibm-plugin-template/g, crateName)
       .replace('"default-hooks" { @("pre-commit", "on-task-move") }', `"default-hooks" { @(${hooksPs1}) }`)
       .replace('$PluginDesc = "Standalone CLIBM plugin ($BinName)"', `$PluginDesc = "${safeDesc}"`)
   );
-  const customUninstallSh = withoutUtf8Bom(tplUninstallSh.replace(/clibm-plugin-template/g, crateName));
-  const customUninstallPs1 = withoutUtf8Bom(tplUninstallPs1.replace(/clibm-plugin-template/g, crateName));
+  const customUninstallSh = withoutUtf8Bom(source('plugins/plugin-template/uninstall.sh').replace(/clibm-plugin-template/g, crateName));
+  const customUninstallPs1 = withoutUtf8Bom(source('plugins/plugin-template/uninstall.ps1').replace(/clibm-plugin-template/g, crateName));
 
   return {
     crateName,
@@ -1518,42 +1013,34 @@ export function downloadCustomPluginTemplateZip(
   triggerBlobDownload(zipBlob, `${crateName}-v0.1.0.zip`);
 }
 
-/**
- * Downloads the 100% Pure Core-Only CLIBM package (`clibm-core-v0.1.0.zip`),
- * containing strictly `clibm_core` + `clibm` CLI binary with zero external plugins.
- * All files are UTF-8 (no BOM) encoded.
- */
+/** Starts the browser download of a file published on the bundles-latest release. */
+function downloadPublishedFile(url: string): void {
+  const link = document.createElement('a');
+  link.href = url;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/** Core CLI only (`clibm-core.zip`): the clibm CLI and the clibm_core library, no plugins. */
 export function downloadCoreOnlyZip(): void {
-  const entries: ZipFileEntry[] = RUST_PROJECT_FILES.filter((f) => f.isCoreOnly).map((f) => ({
-    path: f.zipPath.replace(/^clibm\//, 'clibm-core/'),
-    content: withoutUtf8Bom(f.content),
-  }));
-  const zipBlob = buildZipArchive(entries);
-  triggerBlobDownload(zipBlob, 'clibm-core-v0.1.0.zip');
+  downloadPublishedFile(bundleDownloadUrl('clibm-core'));
 }
 
-/**
- * Downloads the complete CLIBM bundle (`clibm-v0.1.0-workspace.zip`),
- * including `clibm_core`, `clibm` CLI, and all standalone plugin crates in `plugins/`.
- * All files are UTF-8 (no BOM) encoded.
- */
+/** Full Cargo workspace (`clibm-workspace.zip`): core, every official plugin and the tests. */
 export function downloadRustCargoZip(): void {
-  const entries: ZipFileEntry[] = RUST_PROJECT_FILES.map((f) => ({
-    path: f.zipPath,
-    content: withoutUtf8Bom(f.content),
-  }));
-  const zipBlob = buildZipArchive(entries);
-  triggerBlobDownload(zipBlob, 'clibm-v0.1.0-workspace.zip');
+  downloadPublishedFile(bundleDownloadUrl('clibm-workspace'));
 }
 
+/** A plugin's ZIP: the core plus that plugin (`clibm-mcp.zip` holds the MCP server alone). */
 export function downloadPluginZip(pluginId: string): void {
   const pkg = OFFICIAL_PLUGIN_PACKAGES.find((p) => p.id === pluginId);
   if (!pkg) return;
-  const zipBlob = buildZipArchive(pkg.files);
-  triggerBlobDownload(zipBlob, pkg.zipFilename);
+  downloadPublishedFile(bundleDownloadUrl(pkg.bundleName));
 }
 
 export function downloadStandaloneWebHtml(): void {
-  const blob = createUtf8Blob(webUiHtml, 'text/html;charset=utf-8');
+  const blob = createUtf8Blob(source('plugins/clibm-web/src/ui.html'), 'text/html;charset=utf-8');
   triggerBlobDownload(blob, 'clibm-web-standalone.html');
 }

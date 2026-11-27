@@ -352,7 +352,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                   type="button"
                   onClick={() => downloadPluginZip(pkg.id)}
                   className="px-3 py-2 text-xs font-medium bg-zinc-950 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                  title="Download UTF-8 encoded plugin crate .zip"
+                  title="Download this plugin's source ZIP (with the core it builds against) from the bundles-latest release"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>.zip</span>
@@ -796,7 +796,7 @@ export const PluginMarketplaceView: React.FC<PluginMarketplaceViewProps> = ({
                 Inspecting Plugin Crate: {inspectedPlugin.crateName}
               </span>
               <span aria-hidden="true">·</span>
-              <span>Archive: {inspectedPlugin.zipFilename}</span>
+              <span>Release asset: {inspectedPlugin.zipFilename}</span>
               <span aria-hidden="true">·</span>
               <span>Encoding: UTF-8 (no BOM)</span>
             </div>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Download, Copy, Check, FileCode, Terminal, FolderGit2, Package } from 'lucide-react';
 import {
   RUST_PROJECT_FILES,
+  BUNDLE_CHECKSUMS_URL,
   CORE_ONLY_CARGO_TOML,
   downloadCoreOnlyZip,
   downloadRustCargoZip,
@@ -54,7 +55,7 @@ export const RustPackageView: React.FC = () => {
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.sh | bash
 
 # Option B — Local Install from Downloaded Core-Only Archive:
-unzip clibm-core-v0.1.0.zip && cd clibm-core
+unzip clibm-core.zip && cd clibm-core
 ./install.sh
 
 # Initialize a project in a new terminal session:
@@ -69,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.sh | bash
 
 # Option B — Local Install from Complete Bundle Archive:
-unzip clibm-v0.1.0-workspace.zip && cd clibm
+unzip clibm-workspace.zip && cd clibm-workspace
 ./install.sh
 (cd plugins/clibm-tui && ./install.sh)
 (cd plugins/clibm-web && ./install.sh)
@@ -87,7 +88,7 @@ clibm plugin run web -- --port 7878  # or run binary directly: clibm-web --port 
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/install.ps1 | iex
 
 # Option B — Local Install from Downloaded Core-Only Archive:
-Expand-Archive -Path .\\clibm-core-v0.1.0.zip -DestinationPath .
+Expand-Archive -Path .\\clibm-core.zip -DestinationPath .
 cd clibm-core
 .\\install.ps1
 
@@ -103,8 +104,8 @@ irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rus
 irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/plugins/clibm-web/install.ps1 | iex
 
 # Option B — Local Install from Complete Bundle Archive:
-Expand-Archive -Path .\\clibm-v0.1.0-workspace.zip -DestinationPath .
-cd clibm
+Expand-Archive -Path .\\clibm-workspace.zip -DestinationPath .
+cd clibm-workspace
 .\\install.ps1
 Push-Location plugins\\clibm-tui ; .\\install.ps1 ; Pop-Location
 Push-Location plugins\\clibm-web ; .\\install.ps1 ; Pop-Location
@@ -137,9 +138,9 @@ clibm plugin run web -- --port 7878  # or run binary directly: clibm-web --port 
               Download CLIBM Core CLI (Without Plugins) or Complete Bundle
             </h2>
             <p className="text-sm text-zinc-300 leading-relaxed">
-              Choose the <strong className="text-white">Core-Only Package (`clibm-core-v0.1.0.zip`)</strong>{' '}
+              Choose the <strong className="text-white">Core-Only Package (`clibm-core.zip`)</strong>{' '}
               for a pure headless engine and CLI binary with zero TUI or HTTP dependencies, or download
-              the <strong className="text-white">Complete Bundle (`clibm-v0.1.0-workspace.zip`)</strong>{' '}
+              the <strong className="text-white">Complete Bundle (`clibm-workspace.zip`)</strong>{' '}
               containing the core alongside standalone <code className="text-zinc-200">plugins/clibm-tui</code> and{' '}
               <code className="text-zinc-200">plugins/clibm-web</code> folders (each with its own{' '}
               <code className="text-zinc-200">README.md</code> and install scripts).
@@ -153,7 +154,7 @@ clibm plugin run web -- --port 7878  # or run binary directly: clibm-web --port 
               className="px-4 py-2.5 text-xs font-semibold bg-zinc-100 hover:bg-white text-zinc-950 rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Download className="w-4 h-4" />
-              <span>Download Core CLI Only (clibm-core-v0.1.0.zip)</span>
+              <span>Download Core CLI Only (clibm-core.zip)</span>
             </button>
             <button
               type="button"
@@ -163,6 +164,15 @@ clibm plugin run web -- --port 7878  # or run binary directly: clibm-web --port 
               <Package className="w-4 h-4 text-zinc-300" />
               <span>Download Complete Bundle + Plugins (.zip)</span>
             </button>
+            <a
+              href={BUNDLE_CHECKSUMS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
+              title="SHA-256 checksums of every ZIP on the bundles-latest release"
+            >
+              SHA256SUMS
+            </a>
           </div>
         </div>
 
