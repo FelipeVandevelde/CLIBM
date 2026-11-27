@@ -23,6 +23,7 @@
 - [System Architecture](#system-architecture)
 - [Monorepo Structure](#monorepo-structure)
 - [Quick Install](#quick-install)
+- [Source Downloads (ZIP)](#source-downloads-zip)
 - [Quick Start — Native Rust CLI](#quick-start--native-rust-cli)
 - [Quick Start — Web Workbench & Simulator](#quick-start--web-workbench--simulator)
 - [Plugin Ecosystem (`CLIBM_PLUGIN_CONTRACT_V1`)](#plugin-ecosystem-clibm_plugin_contract_v1)
@@ -151,9 +152,11 @@ CLIBM/
 ├── src/                       # Web workbench & in-browser simulator
 │   ├── App.tsx, components/   # Views (terminal, Kanban, CAS inspector, plugins, ...)
 │   ├── core/                  # TypeScript simulation of the CLIBM engine
-│   └── rust/                  # Rust source registry & in-browser ZIP builder
+│   └── rust/                  # Rust source viewer registry & download links
+├── scripts/                   # build-bundles.sh, smoke-bundle.sh/.ps1 (source ZIPs, used by CI)
 └── rust-clibm/                # Native Rust implementation (Cargo workspace)
     ├── Cargo.toml             # Workspace + `clibm` package (binary `clibm`, library `clibm_core`)
+    ├── bundles.json           # Source ZIPs built and published by CI
     ├── install.* / uninstall.* / update.*   # Installers (PowerShell and Bash)
     ├── scripts/               # Shared PATH, ledger, build and registry helpers (env-path)
     ├── src/
@@ -207,6 +210,31 @@ curl -fsSL https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/m
 ```powershell
 iex (irm https://raw.githubusercontent.com/FelipeVandevelde/CLIBM/refs/heads/main/rust-clibm/uninstall.ps1)
 ```
+
+## Source Downloads (ZIP)
+
+If you would rather not clone the repository, download a source ZIP, unpack it and run its
+installer (`./install.sh` or `.install.ps1`) from the unpacked folder. CI builds every ZIP from
+the repository, checks that it builds and installs on Linux, macOS and Windows, and publishes it.
+The [`bundles-latest`](https://github.com/FelipeVandevelde/CLIBM/releases/tag/bundles-latest)
+pre-release always has the ZIPs of the current `main`; tagged releases (`v*`) have versioned
+copies (`<name>-<version>.zip`).
+
+| ZIP | Contents |
+|---|---|
+| [`clibm-core.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-core.zip) | Core CLI only (`clibm` + `clibm_core`), no plugins |
+| [`clibm-workspace.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-workspace.zip) | Full workspace: core, every official plugin, plugin template and tests |
+| [`clibm-dep-audit.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-dep-audit.zip) | Core + `clibm-dep-audit` |
+| [`clibm-export-md.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-export-md.zip) | Core + `clibm-export-md` |
+| [`clibm-workflow-lint.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-workflow-lint.zip) | Core + `clibm-workflow-lint` |
+| [`clibm-tui.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-tui.zip) | Core + `clibm-tui` |
+| [`clibm-web.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-web.zip) | Core + `clibm-web` |
+| [`clibm-plugin-template.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-plugin-template.zip) | Core + the plugin template |
+| [`clibm-mcp.zip`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/clibm-mcp.zip) | `clibm-mcp` on its own (it talks to the `clibm` CLI, so it does not build against the core) |
+
+The plugin ZIPs ship the core because those plugins build against the `clibm_core` library. Install
+the core first (`./install.sh`), then the plugin (`cd plugins/<plugin> && ./install.sh`). Check a
+download with [`SHA256SUMS`](https://github.com/FelipeVandevelde/CLIBM/releases/download/bundles-latest/SHA256SUMS): `sha256sum -c --ignore-missing SHA256SUMS`.
 
 ---
 
@@ -659,7 +687,15 @@ cargo build --workspace
 cargo test --workspace                                   # unit + end-to-end tests
 powershell -File scripts/sync-env-path.ps1 -Check        # shared installer helpers in sync
 cd .. && npm run lint && npm run build                   # web workbench
+bash scripts/build-bundles.sh                            # source ZIPs into dist-bundles/
 ```
+
+The source ZIPs are listed in `rust-clibm/bundles.json`. `scripts/build-bundles.sh` builds them from
+git (the staged index, or `--ref <commit>`), and `scripts/smoke-bundle.sh dist-bundles <name>`
+unpacks one, builds it with `--locked`, installs it into a temporary home and uninstalls it. The
+`Bundles` workflow (`.github/workflows/bundles.yml`) runs both for every ZIP on Linux, macOS and
+Windows, then publishes `bundles-latest` on pushes to `main` and a versioned release on `v*` tags
+(the tag must match the version in `rust-clibm/Cargo.toml`).
 
 After editing `rust-clibm/scripts/env-path.*`, run `scripts/sync-env-path.ps1` to copy the
 helpers into every install/uninstall script.
