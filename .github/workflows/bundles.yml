@@ -1,0 +1,162 @@
+name: Bundles
+
+# Builds the source ZIP bundles listed in rust-clibm/bundles.json, checks that
+# each one builds and installs on Linux, macOS and Windows, and publishes them:
+# - pull requests: ZIPs attached to the workflow run as an artifact only
+# - push to main:  rolling pre-release "bundles-latest" (fixed download URLs)
+# - tag v*:        versioned release (the tag must match rust-clibm/Cargo.toml)
+
+on:
+  pull_request:
+    paths:
+      - "rust-clibm/**"
+      - "scripts/build-bundles.sh"
+      - "scripts/smoke-bundle.*"
+      - "LICENSE.txt"
+      - ".github/workflows/bundles.yml"
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "rust-clibm/**"
+      - "scripts/build-bundles.sh"
+      - "scripts/smoke-bundle.*"
+      - "LICENSE.txt"
+      - ".github/workflows/bundles.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bundles-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build ZIPs
+    runs-on: ubuntu-latest
+    outputs:
+      bundles: ${{ steps.list.outputs.bundles }}
+      version: ${{ steps.list.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-clibm
+          cache-targets: false
+      - name: Build bundles
+        run: bash scripts/build-bundles.sh --ref HEAD
+      - name: List bundles
+        id: list
+        run: |
+          echo "bundles=$(jq -R -s -c 'split("\n") | map(select(length > 0))' dist-bundles/bundles.txt)" >> "$GITHUB_OUTPUT"
+          echo "version=$(cat dist-bundles/VERSION)" >> "$GITHUB_OUTPUT"
+          cat dist-bundles/release/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clibm-bundles
+          path: |
+            dist-bundles/release
+            dist-bundles/latest
+            dist-bundles/bundles.txt
+            dist-bundles/VERSION
+          if-no-files-found: error
+
+  verify:
+    name: Verify ${{ matrix.bundle }} (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        bundle: ${{ fromJson(needs.build.outputs.bundles) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-clibm
+          cache-targets: false
+          key: bundle-${{ matrix.bundle }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: clibm-bundles
+          path: dist-bundles
+      - name: Smoke test (bash)
+        if: runner.os != 'Windows'
+        run: bash scripts/smoke-bundle.sh dist-bundles "${{ matrix.bundle }}"
+      - name: Smoke test (PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke-bundle.ps1 -BundlesDir dist-bundles -Name "${{ matrix.bundle }}"
+
+  publish-latest:
+    name: Publish bundles-latest
+    needs: [build, verify]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: bundles-publish-latest
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: bundles-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clibm-bundles
+          path: dist-bundles
+      - name: Create or move the bundles-latest pre-release
+        run: |
+          notes="Source ZIPs built from main at ${GITHUB_SHA} (version ${{ needs.build.outputs.version }}).
+          Download a file at https://github.com/${GH_REPO}/releases/download/${TAG}/<name>.zip and check it with SHA256SUMS."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${TAG}" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+            gh release edit "$TAG" --prerelease --title "Latest bundles (main)" --notes "$notes"
+          else
+            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" --title "Latest bundles (main)" --notes "$notes"
+          fi
+      - name: Upload the ZIPs
+        run: |
+          gh release upload "$TAG" dist-bundles/latest/*.zip dist-bundles/latest/SHA256SUMS --clobber
+          # Remove assets of bundles that no longer exist.
+          keep="$(cd dist-bundles/latest && ls)"
+          gh release view "$TAG" --json assets -q '.assets[].name' | while IFS= read -r asset; do
+            if ! grep -qxF "$asset" <<<"$keep"; then
+              echo "Deleting stale asset $asset"
+              gh release delete-asset "$TAG" "$asset" --yes
+            fi
+          done
+
+  publish-release:
+    name: Publish versioned release
+    needs: [build, verify]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clibm-bundles
+          path: dist-bundles
+      - name: Check the tag matches the crate version
+        run: |
+          expected="v${{ needs.build.outputs.version }}"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match rust-clibm/Cargo.toml (expected $expected)"
+            exit 1
+          fi
+      - name: Create the release
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist-bundles/release/*.zip dist-bundles/release/SHA256SUMS \
+            --verify-tag --title "CLIBM $GITHUB_REF_NAME" --generate-notes

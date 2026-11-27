@@ -1,0 +1,81 @@
+{
+  "comment": "Source ZIP bundles built by scripts/build-bundles.sh and published by .github/workflows/bundles.yml. 'members' are the Cargo workspace members kept in the bundle ('.' is the core); 'all' keeps the whole workspace. 'standalone' ships one crate on its own. 'smoke' is what scripts/smoke-bundle.* checks after installing: 'run' = clibm plugin run, 'version' = <binary> --version, 'installed' = binary present.",
+  "bundles": [
+    {
+      "name": "clibm-core",
+      "title": "Core CLI only",
+      "description": "The clibm CLI and the clibm_core library, with no plugins.",
+      "members": ["."]
+    },
+    {
+      "name": "clibm-workspace",
+      "title": "Core + all official plugins",
+      "description": "The full Cargo workspace: core, every official plugin, the plugin template and the test suite.",
+      "members": "all",
+      "tests": true
+    },
+    {
+      "name": "clibm-dep-audit",
+      "title": "Core + clibm-dep-audit",
+      "description": "DAG critical path and circular dependency auditor, with the core it builds against.",
+      "plugin": "clibm-dep-audit",
+      "folder": "clibm-dep-audit",
+      "members": [".", "plugins/clibm-dep-audit"],
+      "smoke": "run"
+    },
+    {
+      "name": "clibm-export-md",
+      "title": "Core + clibm-export-md",
+      "description": "Markdown sprint report exporter, with the core it builds against.",
+      "plugin": "clibm-export-md",
+      "folder": "clibm-export-md",
+      "members": [".", "plugins/clibm-export-md"],
+      "smoke": "run"
+    },
+    {
+      "name": "clibm-workflow-lint",
+      "title": "Core + clibm-workflow-lint",
+      "description": "Kanban WIP limit and workflow policy linter, with the core it builds against.",
+      "plugin": "clibm-workflow-lint",
+      "folder": "clibm-workflow-lint",
+      "members": [".", "plugins/clibm-workflow-lint"],
+      "smoke": "run"
+    },
+    {
+      "name": "clibm-tui",
+      "title": "Core + clibm-tui",
+      "description": "Terminal user interface, with the core it builds against.",
+      "plugin": "clibm-tui",
+      "folder": "clibm-tui",
+      "members": [".", "plugins/clibm-tui"],
+      "smoke": "installed"
+    },
+    {
+      "name": "clibm-web",
+      "title": "Core + clibm-web",
+      "description": "Local web UI served by a single binary, with the core it builds against.",
+      "plugin": "clibm-web",
+      "folder": "clibm-web",
+      "members": [".", "plugins/clibm-web"],
+      "smoke": "installed"
+    },
+    {
+      "name": "clibm-plugin-template",
+      "title": "Core + plugin template",
+      "description": "Starter crate for new plugins, with the core its integration tests use.",
+      "plugin": "clibm-plugin-template",
+      "folder": "plugin-template",
+      "members": [".", "plugins/plugin-template"],
+      "smoke": "installed"
+    },
+    {
+      "name": "clibm-mcp",
+      "title": "clibm-mcp (standalone)",
+      "description": "MCP server for AI agents (stdio / HTTP). It talks to the clibm CLI, so it builds on its own.",
+      "plugin": "clibm-mcp",
+      "folder": "clibm-mcp",
+      "standalone": "plugins/clibm-mcp",
+      "smoke": "version"
+    }
+  ]
+}

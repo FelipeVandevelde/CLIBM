@@ -33,6 +33,14 @@ its machine state in `~/.clibm`; project `.clibm` folders are only deleted with 
 `-Purge` (current folder). From this folder: `./uninstall.sh [-y] [--purge]` or
 `.\uninstall.ps1 [-Yes] [-Purge]`.
 
+## Source ZIPs
+
+Prebuilt source ZIPs of the core and of each plugin (with the core it builds against) are on the
+[`bundles-latest`](https://github.com/FelipeVandevelde/CLIBM/releases/tag/bundles-latest) release;
+see "Source Downloads (ZIP)" in the [root README](../README.md#source-downloads-zip). They are
+listed in [`bundles.json`](bundles.json) and built by `scripts/build-bundles.sh` at the
+repository root.
+
 ## Installing from this folder
 
 ```bash
