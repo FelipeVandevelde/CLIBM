@@ -107,7 +107,7 @@ export const ShowcaseView: React.FC<ShowcaseViewProps> = ({
                   className="px-5 py-3 text-sm font-semibold bg-zinc-100 hover:bg-white text-zinc-950 rounded-lg flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Download Core CLI Only (clibm-core-v0.1.0.zip)</span>
+                  <span>Download Core CLI Only (clibm-core.zip)</span>
                 </button>
 
                 <button
@@ -437,7 +437,7 @@ export const ShowcaseView: React.FC<ShowcaseViewProps> = ({
               </h3>
               <p className="text-sm text-zinc-300 leading-relaxed">
                 Need strictly the command-line tool and headless engine? Download{' '}
-                <code className="text-zinc-200">clibm-core-v0.1.0.zip</code> containing only{' '}
+                <code className="text-zinc-200">clibm-core.zip</code> containing only{' '}
                 <code className="text-zinc-200">clibm_core</code> and <code className="text-zinc-200">clibm</code>{' '}
                 with zero TUI or HTTP dependencies.
               </p>

@@ -282,7 +282,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
                 className="px-3.5 py-1.5 text-xs font-semibold bg-zinc-100 hover:bg-white text-zinc-950 rounded flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Download clibm-tui-v0.1.0.zip (Rust Crate)</span>
+                <span>Download clibm-tui.zip (Rust Crate)</span>
               </button>
             </div>
           </div>
@@ -514,7 +514,7 @@ export const TuiAndWebPluginsView: React.FC<TuiAndWebPluginsViewProps> = ({
                 className="px-3.5 py-1.5 text-xs font-semibold bg-zinc-100 hover:bg-white text-zinc-950 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Download clibm-web-v0.1.0.zip (Rust Server)</span>
+                <span>Download clibm-web.zip (Rust Server)</span>
               </button>
             </div>
           </div>

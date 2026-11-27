@@ -52,29 +52,29 @@ const DOC_CHAPTERS: DocChapter[] = [
     number: '01',
     title: 'Getting Started & Native Installation',
     summary:
-      'Compile and run the standalone Core CLI (`clibm-core-v0.1.0.zip`) or the Full Cargo Workspace on Linux and Windows.',
+      'Compile and run the standalone Core CLI (`clibm-core.zip`) or the Full Cargo Workspace on Linux and Windows.',
     sections: [
       {
-        heading: 'Option A — Core CLI Only (`clibm-core-v0.1.0.zip`)',
+        heading: 'Option A — Core CLI Only (`clibm-core.zip`)',
         body: [
-          'For users who want strictly the headless `clibm_core` engine and standard `clibm` command-line binary without any TUI or HTTP server dependencies, download `clibm-core-v0.1.0.zip`. It compiles in seconds using only `serde`, `serde_json`, `blake3`, `clap`, `chrono`, and `anyhow`.',
+          'For users who want strictly the headless `clibm_core` engine and standard `clibm` command-line binary without any TUI or HTTP server dependencies, download `clibm-core.zip`. It compiles in seconds using only `serde`, `serde_json`, `blake3`, `clap`, `chrono`, `anyhow` and `thiserror`. Every ZIP is built from the repository by CI, checked to build and install on Linux, macOS and Windows, and published with a SHA256SUMS file on the `bundles-latest` GitHub release.',
         ],
         codeBlock: `# Build the standalone Core CLI binary (zero external UI plugins)
-unzip clibm-core-v0.1.0.zip
+unzip clibm-core.zip
 cd clibm-core
-cargo build --release
+cargo build --release --locked
 
 # Resulting native binary (Linux & Windows):
 # ./target/release/clibm       (or .\\target\\release\\clibm.exe)`,
       },
       {
-        heading: 'Option B — Full Workspace + TUI & Web Plugins (`clibm-v0.1.0-workspace.zip`)',
+        heading: 'Option B — Full Workspace + TUI & Web Plugins (`clibm-workspace.zip`)',
         body: [
           'To build the core CLI together with the official `clibm-tui` (Ratatui + Crossterm) and `clibm-web` (localhost HTTP server) plugins, download the Full Workspace archive.',
         ],
-        codeBlock: `unzip clibm-v0.1.0-workspace.zip
-cd clibm
-cargo build --release --workspace`,
+        codeBlock: `unzip clibm-workspace.zip
+cd clibm-workspace
+cargo build --release --locked --workspace`,
       },
       {
         heading: 'Interactive Quick-Start Commands',
