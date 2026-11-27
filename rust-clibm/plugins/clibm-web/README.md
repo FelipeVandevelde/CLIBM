@@ -45,6 +45,12 @@ clibm plugin run web -- --port 8080    # or: clibm-web --port 8080
 Open the printed address in your browser. The dashboard shows the active project's board,
 lets you add and move tasks, commit, and run `fsck`. A refused move shows CLIBM's reason.
 
+The **Workspace** and **Project** menus in the header switch the active workspace and
+project. **Manage…** opens a dialog that lists every workspace with its projects, where you
+can create, edit, switch and delete them. Deleting something that still has tasks asks
+where they go: a project's tasks move to another project, and a workspace's projects move,
+whole, to another workspace. Everything stays in the history (`clibm restore`).
+
 ## Security
 
 The server is meant for your own browser only:
@@ -60,11 +66,21 @@ The server is meant for your own browser only:
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | The dashboard |
-| `GET` | `/api/state` | HEAD commit and history size, uncommitted changes, active project, board and its tasks |
+| `GET` | `/api/state` | HEAD commit and history size, uncommitted changes, active workspace and project, board and its tasks, and `workspaces` (each with its `projects`) |
 | `GET` | `/api/fsck` | Integrity check of every stored object |
 | `POST` | `/api/task` | `{"title", "priority"?, "column_id"?}` — create a task |
 | `POST` | `/api/move` | `{"task_id", "column_id", "force"?}` — move a task (`task_id` accepts `101`, `APP-101` or a hash prefix) |
 | `POST` | `/api/commit` | `{"message"}` — commit the working tree |
+| `POST` | `/api/workspace/switch` | `{"workspace"}` — make a workspace active (ID or name) |
+| `POST` | `/api/workspace` | `{"name", "code"?, "description"?}` — create a workspace with its first project |
+| `POST` | `/api/workspace/edit` | `{"workspace", "name"?, "description"?}` — rename or describe a workspace |
+| `POST` | `/api/workspace/delete` | `{"workspace", "move_to"?}` — delete a workspace (`move_to` receives its projects) |
+| `POST` | `/api/project/switch` | `{"project"}` — make a project active (ID, code or name) |
+| `POST` | `/api/project` | `{"name", "code", "description"?, "workspace"?, "switch"?}` — create a project |
+| `POST` | `/api/project/edit` | `{"project", "name"?, "description"?}` — rename or describe a project |
+| `POST` | `/api/project/delete` | `{"project", "move_to"?}` — delete a project (`move_to` receives its tasks) |
+
+Successful changes answer `{"ok": true, "result": ...}` with the core's result.
 
 Refused writes answer `409` with `{"ok": false, "error": "..."}`; missing token or foreign
 origin answer `403`.

@@ -367,7 +367,7 @@ one-liners (see its README).
 | `pre-commit` / `post-commit` | around every commit (automatic or `clibm commit`) | `pre-commit` |
 | `pre-move` / `on-task-move` | around `clibm board move` | `pre-move` |
 | `on-task-depend` | after `clibm task depend` | no |
-| `on-workspace-switch` | after `clibm workspace switch` | no |
+| `on-workspace-switch` | after the active workspace changes: `workspace switch`, `project switch` or `project create --switch` into another workspace, or deleting the active workspace | no |
 | `on-export` | after `clibm export` | no |
 
 A plugin that answers `ok: false` (or fails, or exceeds `hook_timeout_secs`, default 10) on a
@@ -434,19 +434,26 @@ installed yet. `clibm config set install_profile` accepts the same three values.
 ### Workspaces
 
 ```bash
-clibm workspace list
+clibm workspace list                                         # * marks the active one; project and task counts
 clibm workspace create <NAME> [-c <CODE>] [-d <DESCRIPTION>]
-clibm workspace switch [<ID_OR_NAME>]            # without a target: next workspace alphabetically
+clibm workspace switch [<ID_OR_NAME>]                        # without a target: next workspace alphabetically
+clibm workspace edit <ID_OR_NAME> [--name <NAME>] [-d <DESC>]
+clibm workspace delete <ID_OR_NAME> [--move-to <ID_OR_NAME>]
 ```
 
-`workspace create` also creates the workspace's first project and board. Its project code
-(`-c`, or the first letters of the name) must not be used by another project.
+- `workspace create` also creates the workspace's first project and board. Its project code
+  (`-c`, or the first letters of the name) must not be used by another project.
+- Workspace names are unique (ignoring case), because commands find workspaces by name.
+- `workspace delete` refuses to delete the last workspace, and a workspace whose projects
+  still have tasks unless `--move-to` names the workspace that receives its projects. They
+  move whole: boards, tasks, task IDs and dependencies are kept. Without `--move-to`, the
+  workspace's empty projects and their boards are deleted with it.
 
 ### Projects
 
 ```bash
 clibm project list [--all-workspaces]                         # * marks the active project
-clibm project create <NAME> -c <CODE> [-d <DESC>] [--switch]  # new project + board in the active workspace
+clibm project create <NAME> -c <CODE> [-d <DESC>] [-w <WS>] [--switch]  # new project + board (active workspace unless -w)
 clibm project switch <ID|CODE|NAME>                           # switches workspace too when needed
 clibm project edit <ID|CODE|NAME> [--name <NAME>] [-d <DESC>]
 clibm project delete <ID|CODE|NAME> [--move-to <ID|CODE|NAME>]

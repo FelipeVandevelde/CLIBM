@@ -142,6 +142,169 @@ struct CommitRequest {
     message: String,
 }
 
+#[derive(Deserialize)]
+struct WorkspaceRef {
+    workspace: String,
+}
+
+#[derive(Deserialize)]
+struct NewWorkspaceRequest {
+    name: String,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    description: String,
+}
+
+#[derive(Deserialize)]
+struct EditWorkspaceRequest {
+    workspace: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DeleteWorkspaceRequest {
+    workspace: String,
+    #[serde(default)]
+    move_to: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ProjectRef {
+    project: String,
+}
+
+#[derive(Deserialize)]
+struct NewProjectRequest {
+    name: String,
+    code: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    workspace: Option<String>,
+    #[serde(default)]
+    switch: bool,
+}
+
+#[derive(Deserialize)]
+struct EditProjectRequest {
+    project: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DeleteProjectRequest {
+    project: String,
+    #[serde(default)]
+    move_to: Option<String>,
+}
+
+/// Every workspace with its projects, for the switchers and the Manage dialog.
+fn workspaces_snapshot(engine: &ClibmEngine) -> Result<Value> {
+    let projects = engine.list_projects(true)?;
+    let out: Vec<Value> = engine
+        .list_workspaces()?
+        .into_iter()
+        .map(|w| {
+            let prjs: Vec<Value> = projects
+                .iter()
+                .filter(|p| p.workspace_id == w.id)
+                .map(|p| {
+                    json!({
+                        "id": p.id,
+                        "code": p.project.code,
+                        "name": p.project.name,
+                        "description": p.project.description,
+                        "tasks": p.tasks,
+                        "active": p.active,
+                    })
+                })
+                .collect();
+            json!({
+                "id": w.id,
+                "name": w.workspace.name,
+                "description": w.workspace.description,
+                "active": w.active,
+                "tasks": w.tasks,
+                "projects": prjs,
+            })
+        })
+        .collect();
+    Ok(Value::Array(out))
+}
+
+/// `{ ok: true, result }` on success, 409 with the core's message on failure.
+fn core_reply<T: serde::Serialize>(result: Result<T>) -> Reply {
+    match result {
+        Ok(r) => Reply::json(200, json!({ "ok": true, "result": r })),
+        Err(e) => Reply::error(409, e.to_string()),
+    }
+}
+
+/// Parses the body as `T` and runs `f` with it through [`core_reply`].
+fn with_body<T, R>(body: &str, f: impl FnOnce(T) -> Result<R>) -> Reply
+where
+    T: serde::de::DeserializeOwned,
+    R: serde::Serialize,
+{
+    match parse_body::<T>(body) {
+        Ok(req) => core_reply(f(req)),
+        Err(reply) => reply,
+    }
+}
+
+/// Handles the workspace and project routes; `None` when `path` is not one of them.
+fn handle_management(engine: &ClibmEngine, path: &str, body: &str) -> Option<Reply> {
+    let reply = match path {
+        "/api/workspace/switch" => with_body(body, |r: WorkspaceRef| {
+            engine
+                .switch_workspace(Some(&r.workspace))
+                .map(|(ws, commit)| json!({ "workspace": ws, "commit": commit }))
+        }),
+        "/api/workspace" => with_body(body, |r: NewWorkspaceRequest| {
+            engine
+                .create_workspace(&r.name, r.code.as_deref().filter(|c| !c.trim().is_empty()), &r.description)
+                .map(|(ws, hash, commit)| json!({ "workspace": ws, "hash": hash, "commit": commit }))
+        }),
+        "/api/workspace/edit" => with_body(body, |r: EditWorkspaceRequest| {
+            engine.edit_workspace(&r.workspace, r.name, r.description)
+        }),
+        "/api/workspace/delete" => with_body(body, |r: DeleteWorkspaceRequest| {
+            engine.delete_workspace(&r.workspace, r.move_to.as_deref().filter(|m| !m.is_empty()))
+        }),
+        "/api/project/switch" => with_body(body, |r: ProjectRef| {
+            engine
+                .switch_project(&r.project)
+                .map(|(prj, commit)| json!({ "project": prj, "commit": commit }))
+        }),
+        "/api/project" => with_body(body, |r: NewProjectRequest| {
+            engine
+                .create_project_in(
+                    r.workspace.as_deref().filter(|w| !w.is_empty()),
+                    &r.name,
+                    &r.code,
+                    &r.description,
+                    r.switch,
+                )
+                .map(|(prj, hash, commit)| json!({ "project": prj, "hash": hash, "commit": commit }))
+        }),
+        "/api/project/edit" => with_body(body, |r: EditProjectRequest| {
+            engine.edit_project(&r.project, r.name, r.description)
+        }),
+        "/api/project/delete" => with_body(body, |r: DeleteProjectRequest| {
+            engine.delete_project(&r.project, r.move_to.as_deref().filter(|m| !m.is_empty()))
+        }),
+        _ => return None,
+    };
+    Some(reply)
+}
+
 /// Current board of the active project with its tasks.
 fn state_snapshot(engine: &ClibmEngine) -> Result<Value> {
     let st = engine.status()?;
@@ -157,6 +320,8 @@ fn state_snapshot(engine: &ClibmEngine) -> Result<Value> {
     }
     Ok(json!({
         "ok": true,
+        "workspace": { "id": st.active_workspace_id, "name": st.active_workspace_name },
+        "workspaces": workspaces_snapshot(engine)?,
         "head_commit": st.head_commit,
         "commits": st.commits,
         "history_note": st.history_note,
@@ -268,6 +433,7 @@ pub fn handle_request(
                 Err(e) => Reply::error(409, e.to_string()),
             }
         }
+        ("POST", p) => handle_management(engine, p, body).unwrap_or_else(|| Reply::error(404, "Not found")),
         _ => Reply::error(404, "Not found"),
     }
 }
@@ -501,6 +667,131 @@ mod tests {
         let v: Value = serde_json::from_str(&state.body).unwrap();
         assert_eq!(v["tasks"][0]["task"]["column_id"], "in-progress");
         assert_eq!(v["project"]["code"], "APP");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const MANAGEMENT_ROUTES: &[&str] = &[
+        "/api/workspace/switch",
+        "/api/workspace",
+        "/api/workspace/edit",
+        "/api/workspace/delete",
+        "/api/project/switch",
+        "/api/project",
+        "/api/project/edit",
+        "/api/project/delete",
+    ];
+
+    #[test]
+    fn management_routes_need_the_token_and_same_origin() {
+        let dir = std::env::temp_dir().join(format!("clibm-web-auth-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine = ClibmEngine::open_exact(&dir).without_hooks();
+        engine.init("ws", "APP", "App").unwrap();
+        let host = Some("127.0.0.1:7878");
+        for route in MANAGEMENT_ROUTES {
+            let body = r#"{"name":"x","code":"X","workspace":"WS-01","project":"APP"}"#;
+            let no_token = handle_request(&engine, &ctx(), "POST", route, host, None, None, body);
+            assert_eq!(no_token.status, 403, "{} without token", route);
+            let foreign = handle_request(
+                &engine, &ctx(), "POST", route, host, Some("http://evil.example"), Some("secret-token"), body,
+            );
+            assert_eq!(foreign.status, 403, "{} from another origin", route);
+        }
+        // Nothing was changed.
+        assert_eq!(engine.list_workspaces().unwrap().len(), 1);
+        assert_eq!(engine.list_projects(true).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn workspaces_and_projects_can_be_managed_from_the_web() {
+        use clibm_core::versioning::VersioningEngine;
+
+        let dir = std::env::temp_dir().join(format!("clibm-web-manage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine = ClibmEngine::open_exact(&dir).without_hooks();
+        engine.init("ws", "APP", "App").unwrap();
+        let c = ctx();
+        let host = Some("127.0.0.1:7878");
+        let post = |url: &str, body: &str| {
+            handle_request(&engine, &c, "POST", url, host, Some("http://127.0.0.1:7878"), Some("secret-token"), body)
+        };
+        let state = || -> Value {
+            let r = handle_request(&engine, &c, "GET", "/api/state", host, None, None, "");
+            assert_eq!(r.status, 200, "{}", r.body);
+            serde_json::from_str(&r.body).unwrap()
+        };
+        let commits = || VersioningEngine::log_history(&engine.cas, None).unwrap().len();
+        let ok = |r: Reply| -> Value {
+            assert_eq!(r.status, 200, "{}", r.body);
+            serde_json::from_str(&r.body).unwrap()
+        };
+
+        assert_eq!(post("/api/task", r#"{"title":"App task"}"#).status, 200);
+
+        // Create a workspace and a project in it without switching.
+        let before = commits();
+        ok(post("/api/workspace", r#"{"name":"backend","code":"BE","description":"Server side"}"#));
+        ok(post("/api/project", r#"{"name":"Jobs","code":"job","workspace":"backend"}"#));
+        assert_eq!(commits(), before + 2, "one commit per change");
+        let s = state();
+        assert_eq!(s["workspace"]["id"], "WS-01");
+        assert_eq!(s["project"]["code"], "APP");
+        let ws = s["workspaces"].as_array().unwrap();
+        assert_eq!(ws.len(), 2);
+        let be = ws.iter().find(|w| w["name"] == "backend").unwrap();
+        assert_eq!(be["description"], "Server side");
+        assert_eq!(be["projects"].as_array().unwrap().len(), 2);
+
+        // Switching to a project of another workspace switches the workspace too.
+        ok(post("/api/project/switch", r#"{"project":"JOB"}"#));
+        let s = state();
+        assert_eq!(s["workspace"]["name"], "backend");
+        assert_eq!(s["project"]["code"], "JOB");
+        ok(post("/api/workspace/switch", r#"{"workspace":"ws"}"#));
+        assert_eq!(state()["project"]["code"], "APP");
+
+        // Edit both.
+        let res = ok(post("/api/workspace/edit", r#"{"workspace":"backend","name":"Server"}"#));
+        assert_eq!(res["result"]["changed"], true);
+        ok(post("/api/project/edit", r#"{"project":"JOB","description":"Cron jobs"}"#));
+        let s = state();
+        let server = s["workspaces"].as_array().unwrap().iter().find(|w| w["id"] == "WS-02").unwrap().clone();
+        assert_eq!(server["name"], "Server");
+        let job = server["projects"].as_array().unwrap().iter().find(|p| p["code"] == "JOB").unwrap().clone();
+        assert_eq!(job["description"], "Cron jobs");
+
+        // Refusals come back as 409 with the core's message; bad JSON is a 400.
+        let dup = post("/api/workspace", r#"{"name":"server"}"#);
+        assert_eq!(dup.status, 409);
+        assert!(dup.body.contains("already used"), "{}", dup.body);
+        let busy = post("/api/project/delete", r#"{"project":"APP"}"#);
+        assert_eq!(busy.status, 409, "{}", busy.body);
+        assert!(busy.body.contains("only project"), "{}", busy.body);
+        assert_eq!(post("/api/project", "{not json").status, 400);
+        assert_eq!(post("/api/nowhere", "{}").status, 404);
+
+        // Delete a project with tasks by moving them, then a workspace by moving its projects.
+        ok(post("/api/project", r#"{"name":"Extra","code":"EXT","switch":true}"#));
+        assert_eq!(state()["project"]["code"], "EXT");
+        let refused = post("/api/project/delete", r#"{"project":"APP"}"#);
+        assert!(refused.body.contains("still has 1 task"), "{}", refused.body);
+        let res = ok(post("/api/project/delete", r#"{"project":"APP","move_to":"EXT"}"#));
+        assert_eq!(res["result"]["moved_tasks"], json!(["APP-101"]));
+        let refused = post("/api/workspace/delete", r#"{"workspace":"ws"}"#);
+        assert!(refused.body.contains("still has 1 task"), "{}", refused.body);
+        let res = ok(post("/api/workspace/delete", r#"{"workspace":"ws","move_to":"Server"}"#));
+        assert_eq!(res["result"]["active_workspace_id"], "WS-02");
+        let s = state();
+        assert_eq!(s["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(s["project"]["code"], "EXT", "the active project moved along");
+        assert_eq!(s["tasks"].as_array().unwrap().len(), 1);
+
+        let report = engine.cas.fsck().unwrap();
+        assert_eq!(report.verified_objects, report.total_objects);
+        assert!(report.corrupted_hashes.is_empty() && report.legacy_hashes.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
